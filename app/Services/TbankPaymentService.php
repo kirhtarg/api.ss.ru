@@ -24,15 +24,6 @@ class TbankPaymentService
         $this->settings = $settings;
         $this->provider = $settings['dolyame_provider'] ?? 'tbank';
 
-        // Debug: Log ALL settings keys to see what's actually available
-        Log::debug('TbankPaymentService constructor: ALL settings keys', [
-            'all_keys' => array_keys($settings),
-            'dolyame_keys' => array_filter(array_keys($settings), function ($key) {
-                return strpos($key, 'dolyame') !== false;
-            }),
-        ]);
-
-        // Debug: Log the settings being passed
         Log::debug('TbankPaymentService constructor: settings received', [
             'provider' => $this->provider,
             'has_dolyame_provider' => isset($settings['dolyame_provider']),
@@ -177,7 +168,10 @@ class TbankPaymentService
 
             // Validate that we have at least one valid item
             if (empty($items)) {
-                Log::error('Dolyame Partner: No valid items found for order', ['order_items' => $orderItems]);
+                Log::error('Dolyame Partner: No valid items found for order', [
+                    'order_id' => $orderId,
+                    'items_count' => is_countable($orderItems) ? count($orderItems) : 0,
+                ]);
 
                 return [
                     'success' => false,
@@ -257,7 +251,6 @@ class TbankPaymentService
             $password = $this->settings['dolyame_password1'] ?? '';
 
             Log::debug('Dolyame Partner: Authentication parameters', [
-                'login' => $login,
                 'has_login' => ! empty($login),
                 'has_password' => ! empty($password),
             ]);
@@ -278,8 +271,7 @@ class TbankPaymentService
             if (! empty($login) && ! empty($password)) {
                 $http = $http->withBasicAuth($login, $password);
                 Log::debug('Dolyame Partner: Basic Auth configured', [
-                    'login' => $login,
-                    'password_length' => strlen($password),
+                    'authentication_configured' => true,
                 ]);
             } else {
                 Log::error('Dolyame Partner: Missing login or password for Basic Auth', [
@@ -288,25 +280,21 @@ class TbankPaymentService
                 ]);
             }
 
-            // Логирование полного запроса перед отправкой
             Log::debug('Dolyame Partner: About to send request', [
-                'url' => $apiUrl,
-                'headers' => $authHeaders,
+                'endpoint_host' => parse_url($apiUrl, PHP_URL_HOST),
                 'has_basic_auth' => ! empty($login) && ! empty($password),
-                'login' => $login,
-                'payload' => $payload,
-                'cert_path' => $certPath ?? 'not_set',
-                'key_path' => $keyPath ?? 'not_set',
+                'order_number' => $orderNumber,
+                'items_count' => count($items),
+                'correlation_id' => $correlationId,
             ]);
 
             $response = $http->post($apiUrl, $payload);
             $responseData = $response->json();
 
             Log::info('Dolyame Partner request completed', [
-                'url' => $apiUrl,
+                'endpoint_host' => parse_url($apiUrl, PHP_URL_HOST),
                 'status' => $response->status(),
-                'response_body' => $responseData,
-                'response_headers' => $response->headers(),
+                'response_fields' => is_array($responseData) ? array_keys($responseData) : [],
                 'correlation_id' => $correlationId,
             ]);
 
@@ -326,13 +314,13 @@ class TbankPaymentService
                 if ($response->status() === 422) {
                     Log::error('Dolyame Partner API Validation Error (422) for order '.$orderNumber, [
                         'response_status' => $response->status(),
-                        'response_body' => $responseData, // This will contain the specific field errors
+                        'response_fields' => is_array($responseData) ? array_keys($responseData) : [],
                         'correlation_id' => $correlationId,
                     ]);
                 } else {
                     Log::error('Dolyame Partner API Error for order '.$orderNumber, [
                         'response_status' => $response->status(),
-                        'response_body' => $responseData,
+                        'response_fields' => is_array($responseData) ? array_keys($responseData) : [],
                         'correlation_id' => $correlationId,
                     ]);
                 }
@@ -346,9 +334,10 @@ class TbankPaymentService
             }
 
         } catch (\Exception $e) {
-            Log::error('Exception during Dolyame Partner payment initiation for order '.($orderNumber ?? 'N/A').': '.$e->getMessage(), [
-                'exception' => $e,
-                'settings' => $this->settings,
+            Log::error('Exception during Dolyame Partner payment initiation', [
+                'order_number' => $orderNumber ?? null,
+                'exception_class' => $e::class,
+                'provider' => $this->provider,
             ]);
 
             return [
@@ -470,7 +459,7 @@ class TbankPaymentService
                 Log::warning('T-Bank Acquiring: test endpoint returned 403, retrying securepay endpoint.', [
                     'url' => $apiUrl,
                     'fallback_url' => $fallbackApiUrl,
-                    'response_body_raw' => $response->body(),
+                    'response_body_sha256' => hash('sha256', $response->body()),
                 ]);
 
                 $response = $http->post($fallbackApiUrl, $payload);
@@ -479,7 +468,10 @@ class TbankPaymentService
             $responseData = $response->json();
             $rawBody = $response->body();
 
-            Log::info('T-Bank initiatePayment response received', ['status' => $response->status(), 'body' => $responseData]);
+            Log::info('T-Bank initiatePayment response received', [
+                'status' => $response->status(),
+                'response_fields' => is_array($responseData) ? array_keys($responseData) : [],
+            ]);
 
             if ($response->successful() && ($responseData['Success'] ?? false) === true) {
                 return [
@@ -493,11 +485,11 @@ class TbankPaymentService
                 $errorMessage = $responseData['Message']
                     ?? $responseData['Details']
                     ?? ($response->status() === 403 ? 'T-Bank вернул 403 Forbidden. Проверьте API URL тестовой среды или доступ сервера к шлюзу.' : 'Unknown T-Bank API error');
-                Log::error('T-Bank API Error during payment initiation for order '.$order->id.': '.$errorMessage, [
+                Log::error('T-Bank API error during payment initiation', [
+                    'order_id' => $order->id,
                     'response_status' => $response->status(),
-                    'response_body' => $responseData,
-                    'response_body_raw' => $rawBody,
-                    'settings' => $this->settings,
+                    'response_fields' => is_array($responseData) ? array_keys($responseData) : [],
+                    'response_body_sha256' => hash('sha256', $rawBody),
                 ]);
 
                 return [
@@ -510,9 +502,10 @@ class TbankPaymentService
                 ];
             }
         } catch (ConnectionException $e) {
-            Log::error('T-Bank connection timeout for order '.$order->id.': '.$e->getMessage(), [
-                'exception' => $e,
-                'settings' => $this->settings,
+            Log::error('T-Bank connection timeout', [
+                'order_id' => $order->id,
+                'exception_class' => $e::class,
+                'provider' => $this->provider,
             ]);
 
             return [
@@ -525,10 +518,11 @@ class TbankPaymentService
             if ($e instanceof RequestException && $e->response) {
                 $rawBody = $e->response->body();
             }
-            Log::error('Exception during T-Bank payment initiation for order '.$order->id.': '.$e->getMessage(), [
-                'exception' => $e,
-                'settings' => $this->settings,
-                'response_body_raw' => $rawBody,
+            Log::error('Exception during T-Bank payment initiation', [
+                'order_id' => $order->id,
+                'exception_class' => $e::class,
+                'provider' => $this->provider,
+                'response_body_sha256' => $rawBody === null ? null : hash('sha256', $rawBody),
             ]);
 
             return [
@@ -710,7 +704,7 @@ class TbankPaymentService
             $expectedSignature = base64_encode(hash_hmac('sha256', $request->getContent(), $secret, true));
 
             if (! hash_equals($expectedSignature, $signatureHeader)) {
-                Log::warning('Dolyame Partner Webhook: Signature mismatch.', ['expected' => $expectedSignature, 'received' => $signatureHeader]);
+                Log::warning('Dolyame Partner Webhook: Signature mismatch.');
 
                 return false;
             }

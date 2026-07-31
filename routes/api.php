@@ -1604,6 +1604,31 @@ Route::middleware('auth:sanctum')->group(function () {
         // Site info for admin
         Route::get('/site-info', [\App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
 
+        Route::middleware('role:admin')->prefix('partner-api')->group(function () {
+            Route::get('/statistics', [\App\Http\Controllers\Api\Admin\PartnerApi\PartnerController::class, 'statistics']);
+            Route::get('/credentials', [\App\Http\Controllers\Api\Admin\PartnerApi\CredentialController::class, 'index']);
+            Route::get('/orders', [\App\Http\Controllers\Api\Admin\PartnerApi\OrderController::class, 'index']);
+            Route::get('/orders/{order}', [\App\Http\Controllers\Api\Admin\PartnerApi\OrderController::class, 'show']);
+            Route::get('/commissions', [\App\Http\Controllers\Api\Admin\PartnerApi\CommissionController::class, 'index']);
+            Route::patch('/commissions/{commission}/status', [\App\Http\Controllers\Api\Admin\PartnerApi\CommissionController::class, 'updateStatus']);
+            Route::get('/payouts', [\App\Http\Controllers\Api\Admin\PartnerApi\PayoutController::class, 'index']);
+            Route::post('/payouts', [\App\Http\Controllers\Api\Admin\PartnerApi\PayoutController::class, 'store']);
+            Route::get('/payouts/{payout}', [\App\Http\Controllers\Api\Admin\PartnerApi\PayoutController::class, 'show']);
+            Route::post('/payouts/{payout}/paid', [\App\Http\Controllers\Api\Admin\PartnerApi\PayoutController::class, 'markPaid']);
+            Route::post('/payouts/{payout}/cancel', [\App\Http\Controllers\Api\Admin\PartnerApi\PayoutController::class, 'cancel']);
+            Route::get('/webhooks', [\App\Http\Controllers\Api\Admin\PartnerApi\WebhookController::class, 'index']);
+            Route::get('/webhooks/{webhook}', [\App\Http\Controllers\Api\Admin\PartnerApi\WebhookController::class, 'show']);
+            Route::post('/webhooks/{webhook}/retry', [\App\Http\Controllers\Api\Admin\PartnerApi\WebhookController::class, 'retry']);
+            Route::get('/request-logs', [\App\Http\Controllers\Api\Admin\PartnerApi\RequestLogController::class, 'index']);
+            Route::post('/partners/{partner}/credentials', [\App\Http\Controllers\Api\Admin\PartnerApi\CredentialController::class, 'store']);
+            Route::post('/credentials/{credential}/rotate', [\App\Http\Controllers\Api\Admin\PartnerApi\CredentialController::class, 'rotate']);
+            Route::post('/credentials/{credential}/test', [\App\Http\Controllers\Api\Admin\PartnerApi\DiagnosticController::class, 'connection']);
+            Route::delete('/credentials/{credential}', [\App\Http\Controllers\Api\Admin\PartnerApi\CredentialController::class, 'destroy']);
+            Route::post('/partners/{partner}/webhook-test', [\App\Http\Controllers\Api\Admin\PartnerApi\DiagnosticController::class, 'webhook']);
+            Route::post('/partners/{partner}/webhook-secret/rotate', [\App\Http\Controllers\Api\Admin\PartnerApi\DiagnosticController::class, 'rotateWebhookSecret']);
+            Route::apiResource('partners', \App\Http\Controllers\Api\Admin\PartnerApi\PartnerController::class);
+        });
+
         // Modex management
         Route::middleware('role:admin')->prefix('modex')->group(function () {
             Route::post('/analyze', [\App\Http\Controllers\Admin\ModexController::class, 'analyze']);

@@ -57,7 +57,11 @@ class ShopPaymentMethod extends Model
     public function getApiSettings()
     {
         $settings = $this->settings ?? [];
-        \Log::info('ShopPaymentMethod getApiSettings for '.$this->name.':', $settings);
+        \Log::debug('ShopPaymentMethod API settings requested', [
+            'payment_method_id' => $this->id,
+            'payment_method_type' => $this->type,
+            'settings_count' => count($settings),
+        ]);
 
         return $settings;
     }

@@ -8,6 +8,11 @@ return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
         web: __DIR__.'/../routes/web.php',
         api: __DIR__.'/../routes/api.php',
+        then: function (): void {
+            \Illuminate\Support\Facades\Route::middleware('api')
+                ->prefix('api')
+                ->group(base_path('routes/partner.php'));
+        },
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
@@ -22,6 +27,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'api.logger' => \App\Http\Middleware\GlobalApiLogger::class,
             'download.token' => \App\Http\Middleware\CheckDownloadToken::class,
             'database.restore.maintenance' => \App\Http\Middleware\BlockPublicDuringDatabaseRestore::class,
+            'partner.auth' => \App\Http\Middleware\AuthenticatePartner::class,
+            'partner.log' => \App\Http\Middleware\LogPartnerApiRequest::class,
+            'partner.scope' => \App\Http\Middleware\RequirePartnerScope::class,
         ]);
 
         // Настраиваем web middleware с CSRF
@@ -110,6 +118,18 @@ return Application::configure(basePath: dirname(__DIR__))
         $schedule->call(function (): void {
             app(\App\Services\SupplierFeedPriceStockService::class)->scheduleDueRuns();
         })->name('supplier-feed-price-stock-dispatch')->everyMinute()->withoutOverlapping();
+
+        $schedule->call(function (): void {
+            $released = app(\App\Services\StockReservationService::class)->releaseExpired();
+            if ($released > 0) {
+                \Illuminate\Support\Facades\Log::info('Expired Partner API stock reservations released by scheduler', [
+                    'reservation_count' => $released,
+                ]);
+            }
+        })
+            ->name('partner-api-release-expired-stock-reservations')
+            ->everyFiveMinutes()
+            ->withoutOverlapping();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, $request) {
