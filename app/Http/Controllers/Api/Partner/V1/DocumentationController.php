@@ -47,7 +47,7 @@ HTML;
         ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
 
         return Response::make(str_replace('CONFIG', htmlspecialchars($configuration, ENT_QUOTES), $html))
-            ->header('Content-Security-Policy', "default-src 'none'; script-src https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data: https:; connect-src 'self'; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+            ->header('Content-Security-Policy', "default-src 'none'; script-src https://cdn.jsdelivr.net; style-src 'unsafe-inline'; img-src data: https:; connect-src 'self'; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors https://skateandsnow.ru https://www.skateandsnow.ru")
             ->header('Referrer-Policy', 'no-referrer')
             ->header('X-Content-Type-Options', 'nosniff');
     }
