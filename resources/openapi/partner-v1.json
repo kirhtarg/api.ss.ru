@@ -1,0 +1,126 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Skate & Snow Partner API",
+    "version": "1.0.0",
+    "description": "API для синхронизации каталога и создания партнёрских заказов. Все защищённые запросы подписываются HMAC-SHA256. Каноническая строка: METHOD, /api/partner/v1/path, query string без начального ?, SHA-256 сырого тела, Unix timestamp и уникальный nonce — каждое значение на отдельной строке."
+  },
+  "servers": [{ "url": "/api/partner/v1", "description": "Текущий сервер" }],
+  "tags": [
+    { "name": "System", "description": "Проверка подключения" },
+    { "name": "Catalog", "description": "Каталог и остатки" },
+    { "name": "Checkout", "description": "Доставка и оплата" },
+    { "name": "Orders", "description": "Партнёрские заказы" }
+  ],
+  "security": [{ "PartnerKey": [], "PartnerTimestamp": [], "PartnerNonce": [], "PartnerSignature": [] }],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["System"], "summary": "Проверить подключение", "operationId": "partnerHealth",
+        "responses": { "200": { "description": "API доступен", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HealthResponse" } } } }, "401": { "$ref": "#/components/responses/Unauthorized" } }
+      }
+    },
+    "/catalog/categories": {
+      "get": {
+        "tags": ["Catalog"], "summary": "Получить категории", "operationId": "listPartnerCategories", "x-required-scope": "catalog:read",
+        "responses": { "200": { "description": "Категории", "content": { "application/json": { "schema": { "type": "object", "required": ["success", "data"], "properties": { "success": { "const": true }, "data": { "type": "array", "items": { "type": "object", "additionalProperties": true } } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/catalog/products": {
+      "get": {
+        "tags": ["Catalog"], "summary": "Получить товары", "operationId": "listPartnerProducts", "x-required-scope": "catalog:read",
+        "parameters": [
+          { "name": "category_id", "in": "query", "schema": { "type": "integer" } },
+          { "name": "q", "in": "query", "schema": { "type": "string", "maxLength": 120 } },
+          { "name": "per_page", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } }
+        ],
+        "responses": { "200": { "description": "Пагинированный каталог", "content": { "application/json": { "schema": { "type": "object", "required": ["success", "data"], "properties": { "success": { "const": true }, "data": { "type": "object", "additionalProperties": true } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/catalog/products/{good}": {
+      "get": {
+        "tags": ["Catalog"], "summary": "Получить товар", "operationId": "getPartnerProduct", "x-required-scope": "catalog:read",
+        "parameters": [{ "name": "good", "in": "path", "required": true, "schema": { "type": "integer" } }],
+        "responses": { "200": { "description": "Товар", "content": { "application/json": { "schema": { "type": "object", "required": ["success", "data"], "properties": { "success": { "const": true }, "data": { "type": "object", "additionalProperties": true } } } } } }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/checkout/options": {
+      "get": {
+        "tags": ["Checkout"], "summary": "Получить способы доставки и оплаты", "operationId": "getPartnerCheckoutOptions", "x-required-scope": "checkout:read",
+        "responses": { "200": { "description": "Активные способы", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CheckoutOptionsResponse" } } } }, "403": { "$ref": "#/components/responses/Forbidden" } }
+      }
+    },
+    "/orders": {
+      "post": {
+        "tags": ["Orders"], "summary": "Создать заказ", "operationId": "createPartnerOrder", "x-required-scope": "orders:write",
+        "parameters": [{ "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CreateOrderRequest" } } } },
+        "responses": {
+          "201": { "description": "Заказ создан", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OrderResponse" } } } },
+          "200": { "description": "Идемпотентный повтор", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OrderResponse" } } } },
+          "409": { "description": "Конфликт idempotency key" }, "422": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/orders/{externalOrderId}": {
+      "get": {
+        "tags": ["Orders"], "summary": "Получить заказ", "operationId": "getPartnerOrder", "x-required-scope": "orders:read",
+        "parameters": [{ "$ref": "#/components/parameters/ExternalOrderId" }],
+        "responses": { "200": { "description": "Заказ", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OrderResponse" } } } }, "404": { "$ref": "#/components/responses/NotFound" } }
+      }
+    },
+    "/orders/{externalOrderId}/payment": {
+      "post": {
+        "tags": ["Checkout"], "summary": "Создать или повторить платёж", "operationId": "createPartnerPayment", "x-required-scope": "payments:write",
+        "parameters": [{ "$ref": "#/components/parameters/ExternalOrderId" }],
+        "requestBody": { "content": { "application/json": { "schema": { "type": "object", "properties": { "payment_method_id": { "type": ["integer", "null"] } } } } } },
+        "responses": { "201": { "description": "Платёж создан", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PaymentResponse" } } } }, "404": { "$ref": "#/components/responses/NotFound" }, "422": { "$ref": "#/components/responses/ValidationError" } }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "PartnerKey": { "type": "apiKey", "in": "header", "name": "X-Partner-Key", "description": "Key ID, не секрет." },
+      "PartnerTimestamp": { "type": "apiKey", "in": "header", "name": "X-Partner-Timestamp", "description": "Текущее Unix-время в секундах. Допуск по умолчанию ±300 секунд." },
+      "PartnerNonce": { "type": "apiKey", "in": "header", "name": "X-Partner-Nonce", "description": "Уникальная случайная строка для каждого запроса." },
+      "PartnerSignature": { "type": "apiKey", "in": "header", "name": "X-Partner-Signature", "description": "hex(HMAC-SHA256(canonical_string, secret))." }
+    },
+    "parameters": {
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "maxLength": 128 }, "description": "Уникален для одной попытки создания заказа." },
+      "ExternalOrderId": { "name": "externalOrderId", "in": "path", "required": true, "schema": { "type": "string", "maxLength": 128 } }
+    },
+    "schemas": {
+      "HealthResponse": { "type": "object", "required": ["success", "data"], "properties": { "success": { "const": true }, "data": { "type": "object", "required": ["version", "time"], "properties": { "version": { "const": "v1" }, "time": { "type": "string", "format": "date-time" } } } } },
+      "OrderItemInput": { "type": "object", "required": ["good_id", "quantity"], "properties": { "good_id": { "type": "integer" }, "variation_id": { "type": ["integer", "null"] }, "quantity": { "type": "integer", "minimum": 1, "maximum": 1000 } } },
+      "CustomerInput": { "type": "object", "required": ["name"], "properties": { "name": { "type": "string", "maxLength": 255 }, "email": { "type": ["string", "null"], "format": "email" }, "phone": { "type": ["string", "null"], "maxLength": 20 } } },
+      "DeliveryInput": { "type": ["object", "null"], "properties": { "method_id": { "type": ["integer", "null"] }, "address": { "type": ["string", "null"], "maxLength": 2000 }, "city_code": { "type": ["integer", "null"], "minimum": 1 }, "tariff_code": { "type": ["string", "null"] }, "pvz_code": { "type": ["string", "null"] } }, "description": "Стоимость вычисляется сервером. Для CDEK обязателен city_code." },
+      "CreateOrderRequest": {
+        "type": "object", "required": ["external_order_id", "items", "customer"],
+        "properties": {
+          "external_order_id": { "type": "string", "maxLength": 128 }, "items": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/components/schemas/OrderItemInput" } },
+          "customer": { "$ref": "#/components/schemas/CustomerInput" }, "delivery": { "$ref": "#/components/schemas/DeliveryInput" }, "payment_method_id": { "type": ["integer", "null"] },
+          "comment": { "type": ["string", "null"], "maxLength": 4000 }, "customer_reference": { "type": ["object", "null"], "additionalProperties": true }, "attribution": { "type": ["object", "null"], "additionalProperties": true }, "metadata": { "type": ["object", "null"], "additionalProperties": true }
+        }
+      },
+      "Order": {
+        "type": "object", "required": ["id", "external_order_id", "status", "currency", "items_amount", "delivery_amount", "total_amount"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" }, "external_order_id": { "type": "string" }, "order_number": { "type": ["string", "null"] }, "status": { "type": "string" }, "currency": { "type": "string", "example": "RUB" },
+          "items_amount": { "type": "number" }, "delivery_amount": { "type": "number" }, "total_amount": { "type": "number" },
+          "delivery": { "type": ["object", "null"], "additionalProperties": true }, "payment": { "type": ["object", "null"], "additionalProperties": true }, "commission": { "type": "object", "additionalProperties": true },
+          "created_at": { "type": ["string", "null"], "format": "date-time" }, "updated_at": { "type": ["string", "null"], "format": "date-time" }
+        }
+      },
+      "OrderResponse": { "type": "object", "required": ["success", "data"], "properties": { "success": { "const": true }, "data": { "$ref": "#/components/schemas/Order" }, "meta": { "type": "object", "properties": { "idempotent_replay": { "type": "boolean" } } } } },
+      "CheckoutOptionsResponse": { "type": "object", "required": ["success", "data"], "properties": { "success": { "const": true }, "data": { "type": "object", "required": ["delivery_methods", "payment_methods"], "properties": { "delivery_methods": { "type": "array", "items": { "type": "object", "additionalProperties": true } }, "payment_methods": { "type": "array", "items": { "type": "object", "additionalProperties": true } } } } } },
+      "PaymentResponse": { "type": "object", "required": ["success", "data"], "properties": { "success": { "const": true }, "data": { "type": "object", "required": ["status", "method"], "properties": { "status": { "type": "string" }, "method": { "type": "object", "additionalProperties": true }, "payment_url": { "type": ["string", "null"], "format": "uri" }, "transaction_id": { "type": ["string", "null"] } } } } },
+      "Error": { "type": "object", "required": ["success", "error"], "properties": { "success": { "const": false }, "error": { "type": "object", "required": ["code", "message"], "properties": { "code": { "type": "string" }, "message": { "type": "string" } } } } }
+    },
+    "responses": {
+      "Unauthorized": { "description": "Ошибка HMAC-аутентификации", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "Forbidden": { "description": "Ключ не имеет требуемого scope", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+      "NotFound": { "description": "Ресурс не найден" },
+      "ValidationError": { "description": "Ошибка валидации или бизнес-правила", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } } }
+    }
+  }
+}
