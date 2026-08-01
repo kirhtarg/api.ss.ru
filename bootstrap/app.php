@@ -130,6 +130,18 @@ return Application::configure(basePath: dirname(__DIR__))
             ->name('partner-api-release-expired-stock-reservations')
             ->everyFiveMinutes()
             ->withoutOverlapping();
+
+        $schedule->call(function (): void {
+            $deleted = app(\App\Services\Partner\PartnerCheckoutQuoteService::class)->releaseExpired();
+            if ($deleted > 0) {
+                \Illuminate\Support\Facades\Log::info('Expired Partner API checkout quotes removed', [
+                    'quote_count' => $deleted,
+                ]);
+            }
+        })
+            ->name('partner-api-delete-expired-checkout-quotes')
+            ->hourly()
+            ->withoutOverlapping();
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         $exceptions->render(function (\Throwable $e, $request) {

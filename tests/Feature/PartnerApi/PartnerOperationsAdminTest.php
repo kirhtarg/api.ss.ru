@@ -263,7 +263,11 @@ class PartnerOperationsAdminTest extends TestCase
 
         (new DeliverPartnerWebhookJob($delivery->id))->handle(app(\App\Services\Partner\PartnerWebhookUrlGuard::class));
 
-        $this->assertSame('delivered', $delivery->fresh()->status);
+        $delivered = $delivery->fresh();
+        $this->assertSame('delivered', $delivered->status);
+        $this->assertNotNull($delivered->duration_ms);
+        $this->assertStringContainsString('body_sha256', (string) $delivered->response_body);
+        $this->assertStringNotContainsString('accepted', (string) $delivered->response_body);
     }
 
     public function test_webhook_retries_after_temporary_endpoint_error(): void
@@ -518,6 +522,7 @@ class PartnerOperationsAdminTest extends TestCase
             $table->string('status');
             $table->unsignedSmallInteger('attempts')->default(0);
             $table->unsignedSmallInteger('response_status')->nullable();
+            $table->unsignedInteger('duration_ms')->nullable();
             $table->text('response_body')->nullable();
             $table->text('last_error')->nullable();
             $table->timestamp('next_attempt_at')->nullable();

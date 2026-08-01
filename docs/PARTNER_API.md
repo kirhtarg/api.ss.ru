@@ -49,6 +49,7 @@ php artisan queue:work --queue=default --tries=8 --timeout=120
 | `PARTNER_API_SIGNATURE_TTL` | `300` | Допустимый возраст HMAC-подписи, секунд |
 | `PARTNER_API_RATE_LIMIT` | `120` | Запросов партнёра в минуту |
 | `PARTNER_RESERVATION_TTL_MINUTES` | `30` | Срок резерва товара, минут |
+| `PARTNER_QUOTE_TTL_MINUTES` | `15` | Срок действия предварительного checkout quote, минут |
 | `PARTNER_WEBHOOK_TIMEOUT` | `10` | Таймаут доставки webhook, секунд |
 | `PARTNER_WEBHOOK_MAX_ATTEMPTS` | `8` | Максимальное число попыток webhook |
 | `PARTNER_WEBHOOK_ALLOW_HTTP` | `false` | Разрешить HTTP; только для изолированной разработки |
@@ -100,6 +101,78 @@ nonce
 | `orders:read` | Чтение партнёрских заказов |
 | `orders:write` | Создание заказов и резервирование |
 | `payments:write` | Создание платежа для заказа |
+| `commissions:read` | Reconciliation комиссий партнёра |
+
+## Совместимое расширение v1.1
+
+Версия v1.1 сохраняет базовый URL `/api/partner/v1`, HMAC-контракт и существующие методы. Ответ health сообщает `v1.1`. Старые URL создания/чтения заказа и платежа не изменены.
+
+### Стабильный каталог и синхронизация
+
+Категории, товары, изображения, свойства и вариации сериализуются отдельными Partner Resources. Закупочные цены, поставщик, внутренние заметки, pivots и служебные поля не входят в контракт. Машинный идентификатор свойства берётся из `slug` (fallback `property_<id>`), идентификаторы вариационных атрибутов — `attribute_<id>` и `attribute_value_<id>`.
+
+`GET /catalog/categories` и `GET /catalog/products` поддерживают `page`, `per_page`, `updated_since` и непрозрачный `cursor`. Для обратной совместимости категории без единого sync-параметра по-прежнему возвращаются массивом в `data`; при наличии параметров используется пагинированная v1.1-форма. Порядок всегда `(updated_at, id)`. Следующий cursor возвращается в `meta.next_cursor`; его нельзя изменять или собирать на стороне клиента. В инкрементальной выдаче с `updated_since` возвращаются также выключенные записи с `is_active=false`. Физически удалённые до внедрения tombstone-журнала записи выявляются периодической полной reconciliation; рекомендуемый интервал — раз в сутки.
+
+Пример:
+
+```http
+GET /api/partner/v1/catalog/products?updated_since=2026-08-01T00:00:00Z&per_page=50
+GET /api/partner/v1/catalog/products?cursor=<meta.next_cursor>&per_page=50
+```
+
+При параллельных обновлениях партнёр сохраняет последний успешно обработанный cursor и дедуплицирует элементы по `id` и `updated_at`.
+
+### Checkout quote и доставка
+
+`POST /checkout/quote` (`checkout:read`) рассчитывает строки, скидки, subtotal, доставку, total, доступность, тарифы и срок действия без создания заказа, резерва или платежа. Quote ID является диагностическим fingerprint, а не разрешением доверять старой цене. При `POST /orders` цена, остаток и доставка всегда рассчитываются повторно.
+
+```json
+{
+  "items": [{"good_id": 123, "variation_id": 456, "quantity": 1}],
+  "delivery": {"method_id": 2, "city_code": 137, "tariff_code": "136", "pvz_code": "SPB1"}
+}
+```
+
+Методы поиска доставки используют штатный CDEK-сервис магазина и возвращают нормализованные безопасные поля:
+
+- `GET /delivery/cities?q=Санкт`;
+- `POST /delivery/tariffs`;
+- `GET /delivery/pickup-points?city_code=137`;
+- `POST /delivery/pickup-points/validate`.
+
+Поиск городов и ПВЗ кешируется на 10 минут. Внешняя ошибка возвращается как ошибка Partner API; клиенту следует повторять только безопасные GET-запросы с backoff.
+
+### Lifecycle и reconciliation
+
+Допустимые состояния Partner order: `created → processing → paid → completed`; до оплаты возможен переход в `cancelled`. `POST /orders/{externalOrderId}/cancel` идемпотентен: повтор отменённого заказа возвращает его состояние. Оплаченный или завершённый заказ возвращает `409 Conflict`. Отмена освобождает Partner API reserve и отменяет невыплаченную комиссию; обычные заказы магазина не затрагиваются.
+
+После timeout создание заказа повторяется с тем же `Idempotency-Key` и идентичным телом. Изменённое тело с тем же ключом возвращает `409`. Платёж повторяется через существующий `POST /orders/{externalOrderId}/payment`; второй ShopOrder не создаётся.
+
+Для восстановления после пропущенного webhook:
+
+- `GET /orders?updated_since=...` или `?cursor=...` (`orders:read`);
+- `GET /orders/{externalOrderId}` (`orders:read`);
+- `GET /commissions?updated_since=...` или `?cursor=...` (`commissions:read`).
+
+### Webhook v1.1
+
+Каждая доставка содержит:
+
+```text
+X-Partner-Delivery: <stable delivery UUID>
+X-Partner-Event: <event name>
+X-Partner-Timestamp: <unix seconds>
+X-Partner-Signature: hex(HMAC-SHA256(timestamp + "." + rawBody, webhook_secret))
+```
+
+Получатель проверяет подпись постоянным временем, принимает timestamp только в пределах 300 секунд и хранит `X-Partner-Delivery`, чтобы не обрабатывать повтор дважды. Реально формируются события: `test`, `order.created`, legacy `order.updated`, `order.status_changed`, `order.cancelled`, `payment.status_changed`, `payment.succeeded`, `payment.failed`, `delivery.status_changed`, `commission.updated`, `commission.approved`, `commission.reversed`.
+
+Доставка выполняется queue worker, не следует redirect, повторно проверяет DNS/IP непосредственно перед запросом и использует retry/backoff. В журнал не попадают webhook secret, полная подпись или полный клиентский payload.
+Для каждой доставки фиксируются delivery ID, событие, число попыток, HTTP status и `duration_ms`. Тело ответа партнёра не сохраняется: журнал содержит только content type, размер и SHA-256 fingerprint.
+
+### Диагностика админки
+
+Вкладка `Диагностика` показывает состояние каталога, безопасный пример DTO, поддерживаемые события, очередь/retry, scopes и последние точки reconciliation. Тест quote не создаёт заказ, резерв или платёж. Тестовый webhook остаётся отдельным явным действием.
 
 ## Документация API
 
@@ -156,6 +229,12 @@ nonce
 - один `INSERT` в `admin_menu_items` только для `href=partner-api` и найденной страницы настроек;
 - существующие пункты меню не обновляются и не удаляются, массовых `UPDATE` нет.
 
+`2026_08_01_000000_add_duration_to_partner_webhook_deliveries.php`:
+
+- `ALTER TABLE partner_webhook_deliveries ADD duration_ms INT UNSIGNED NULL`;
+- не читает и не обновляет строки;
+- не затрагивает таблицы магазина, заказов, каталога, пользователей или платежей.
+
 Миграции не изменяют структуру `shop_orders`, `shop_goods`, `users` или платёжных таблиц. `down()` ограничен созданными Partner API объектами, но на production автоматический `migrate:rollback` запрещён.
 
 ## Комиссии и жизненный цикл выплат
@@ -205,6 +284,17 @@ vendor/bin/phpunit tests/Concurrency/PartnerStockReservationConcurrencyTest.php
 ```
 
 ## См. также
+
+## Уточнения контракта после review v1.1
+
+Query для HMAC канонизируется из сырой query string без parse_str: каждая пара key/value form-url-decode (плюс и %20 означают пробел), затем RFC 3986 encode; пары сортируются по encoded key и value. Дубликаты, массивы, пустые значения и кириллица сохраняются. Порядок параметров поэтому не влияет на подпись, изменение значения влияет.
+
+Checkout quote хранится только в Partner-контуре, принадлежит одному партнёру и содержит canonical hash исходных items/delivery, безопасный коммерческий snapshot и expires_at. Для полного v1.1 checkout UUID передаётся как quote_id в POST /orders. Сервер под блокировкой проверяет владельца, expiration, payload и повторно рассчитывает цену, доступный остаток после резервов и доставку. Drift и повторное использование возвращают HTTP 409 без создания заказа. Replay уже созданного заказа с исходным Idempotency-Key разрешён. Legacy v1 запрос без quote_id пока принимается для обратной совместимости.
+
+POST /orders/{externalOrderId}/payment требует отдельный Idempotency-Key длиной 8–128 из ASCII A-Z, a-z, 0-9, точки, дефиса, подчёркивания и двоеточия. Ключ уникален для платёжной операции в пределах партнёра и привязан к конкретному PartnerOrder: одинаковый ключ нельзя использовать для другого заказа, даже если способ оплаты совпадает. Один партнёр + заказ + ключ + одинаковый payload возвращает тот же платёж без повторного gateway call; другой заказ или payload возвращает 409 idempotency_conflict. Для retry после failed initialization нужен новый ключ. Ошибка gateway не маскирует созданный заказ: order response содержит payment.status=failed и retryable error. Paid, cancelled и completed orders новый платёж не получают.
+
+Миграция 2026_08_01_010000_create_partner_checkout_quotes_and_payment_idempotencies.php только создаёт partner_checkout_quotes и partner_payment_idempotencies. Она не изменяет shop_orders, shop_payment_transactions и другие таблицы магазина и не выполняет UPDATE существующих данных. Истёкшие неиспользованные quote старше суток удаляет hourly scheduler task partner-api-delete-expired-checkout-quotes с withoutOverlapping().
+
 
 - [Грузовые места](delivery-packages.md) — серверный расчёт упаковки и доставки.
 - [Ozon Seller API](OZON_SELLER_API.md) — другая внешняя интеграция магазина.

@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Models\PartnerApiCredential;
+use App\Services\Partner\PartnerSignatureCanonicalizer;
 use Closure;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -11,6 +12,8 @@ use Symfony\Component\HttpFoundation\Response;
 
 class AuthenticatePartner
 {
+    public function __construct(private readonly PartnerSignatureCanonicalizer $canonicalizer) {}
+
     public function handle(Request $request, Closure $next): Response
     {
         $keyId = (string) $request->header('X-Partner-Key');
@@ -34,7 +37,14 @@ class AuthenticatePartner
         if (! Cache::add($nonceKey, true, now()->addSeconds(config('partners.signature_ttl_seconds', 300)))) {
             return $this->deny('replayed_request');
         }
-        $canonical = implode("\n", [strtoupper($request->method()), '/'.$request->path(), (string) $request->getQueryString(), hash('sha256', (string) $request->getContent()), $timestamp, $nonce]);
+        $canonical = $this->canonicalizer->request(
+            $request->method(),
+            $request->path(),
+            (string) $request->server->get('QUERY_STRING', ''),
+            (string) $request->getContent(),
+            $timestamp,
+            $nonce,
+        );
         if (! hash_equals(hash_hmac('sha256', $canonical, $credential->secret), $signature)) {
             Cache::forget($nonceKey);
 

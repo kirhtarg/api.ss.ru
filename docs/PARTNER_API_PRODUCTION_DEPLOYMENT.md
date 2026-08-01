@@ -2,6 +2,8 @@
 
 Этот runbook рассчитан на сервер без отдельного staging. Проверки Partner API выполняются только в одноразовой копии с SQLite `:memory:`. Production `.env`, БД, `storage`, `bootstrap/cache` и работающие процессы в тестовый контур не копируются.
 
+Для v1.1 добавляется необязательная конфигурация `PARTNER_QUOTE_TTL_MINUTES=15` и две изолированные миграции: nullable `duration_ms` в Partner webhook table, а также новые таблицы `partner_checkout_quotes` и `partner_payment_idempotencies`. Существующие shop/payment tables не изменяются. Перед переключением release OpenAPI должен сообщать версию `1.1.0`, а `route:list --path=api/partner/v1` — содержать quote, delivery discovery, order reconciliation/cancel и commissions reconciliation.
+
 ## 1. До развёртывания
 
 1. Зафиксировать оператора, время работ и текущий commit:
@@ -103,7 +105,7 @@
    bash ./scripts/check-partner-api-deployment.sh --deploy --backup=/secure/backups/<fresh-dump>.sql.gz
    ```
 
-   Скрипт потребует дамп не старше 24 часов, покажет pending migrations, запросит точную фразу подтверждения, запишет UTC-время и выполнит `php artisan migrate --force` только с тремя явными `--path` Partner API. Посторонние pending migrations этим скриптом не применяются.
+   Скрипт потребует дамп не старше 24 часов, покажет pending migrations, запросит точную фразу подтверждения, запишет UTC-время и выполнит `php artisan migrate --force` только с пятью явными `--path` Partner API. Посторонние pending migrations этим скриптом не применяются.
 
 3. Проверить `php artisan migrate:status`. Не выполнять `migrate:rollback`.
 4. Атомарно переключить symlink backend/admin на новые release-каталоги.
@@ -127,7 +129,7 @@
 - [ ] `/up` отвечает успешно.
 - [ ] `/api/partner/v1/openapi.json` отвечает и содержит OpenAPI 3.1.
 - [ ] В `Настройки → Partner API` нет активных партнёров и API-ключей.
-- [ ] `php artisan schedule:list` содержит `partner-api-release-expired-stock-reservations`.
+- [ ] `php artisan schedule:list` содержит `partner-api-release-expired-stock-reservations` и `partner-api-delete-expired-checkout-quotes`.
 - [ ] Cron содержит ежеминутный `schedule:run`.
 - [ ] Queue worker активен.
 - [ ] В новых строках `storage/logs/laravel.log` нет ошибок и чувствительных данных.

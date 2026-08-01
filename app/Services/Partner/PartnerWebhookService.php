@@ -5,6 +5,7 @@ namespace App\Services\Partner;
 use App\Jobs\DeliverPartnerWebhookJob;
 use App\Models\Partner;
 use App\Models\PartnerOrder;
+use App\Models\PartnerCommissionEntry;
 use App\Models\PartnerWebhookDelivery;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -67,6 +68,48 @@ class PartnerWebhookService
             'event' => $event,
         ]);
 
+        DB::afterCommit(fn () => DeliverPartnerWebhookJob::dispatch($delivery->id));
+
+        return $delivery;
+    }
+
+    public function queueCommissionEvent(PartnerCommissionEntry $commission, string $event): ?PartnerWebhookDelivery
+    {
+        $commission->loadMissing(['partner', 'partnerOrder']);
+        if (! $commission->partner?->webhook_url) {
+            return null;
+        }
+
+        $delivery = PartnerWebhookDelivery::create([
+            'public_id' => (string) Str::uuid(),
+            'partner_id' => $commission->partner_id,
+            'partner_order_id' => $commission->partner_order_id,
+            'event' => $event,
+            'payload' => [
+                'id' => (string) Str::uuid(),
+                'event' => $event,
+                'created_at' => now()->toIso8601String(),
+                'data' => ['commission' => [
+                    'id' => $commission->id,
+                    'order_id' => $commission->partnerOrder?->public_id,
+                    'external_order_id' => $commission->partnerOrder?->external_order_id,
+                    'type' => $commission->type,
+                    'status' => $commission->status,
+                    'amount' => round((float) $commission->amount, 2),
+                    'currency' => $commission->currency,
+                    'updated_at' => $commission->updated_at?->toIso8601String(),
+                ]],
+            ],
+            'status' => 'pending',
+            'next_attempt_at' => now(),
+        ]);
+
+        Log::info('Partner commission webhook queued', [
+            'partner_id' => $commission->partner_id,
+            'partner_commission_id' => $commission->id,
+            'delivery_id' => $delivery->public_id,
+            'event' => $event,
+        ]);
         DB::afterCommit(fn () => DeliverPartnerWebhookJob::dispatch($delivery->id));
 
         return $delivery;

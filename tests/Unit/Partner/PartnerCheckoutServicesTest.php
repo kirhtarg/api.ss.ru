@@ -106,7 +106,7 @@ class PartnerCheckoutServicesTest extends TestCase
             'order_number' => 'SS-P-TEST', 'total_amount' => 1500, 'items' => [],
         ]));
 
-        $result = app(PartnerPaymentService::class)->create($order, $method->id);
+        $result = app(PartnerPaymentService::class)->createForIsolatedTest($order, $method->id);
 
         $this->assertSame('pending', $result['status']);
         $this->assertNull($result['payment_url']);
@@ -129,10 +129,10 @@ class PartnerCheckoutServicesTest extends TestCase
         ]));
 
         try {
-            app(PartnerPaymentService::class)->create($order, $method->id);
-            $this->fail('Invalid gateway request must not be treated as a created payment.');
+            $result = app(PartnerPaymentService::class)->createForIsolatedTest($order, $method->id);
+            $this->assertSame('failed', $result['status']);
         } catch (UnprocessableEntityHttpException $exception) {
-            $this->assertStringContainsString('No valid order items', $exception->getMessage());
+            $this->fail('Gateway failure must be represented as a retryable payment state.');
         }
 
         $transaction = ShopPaymentTransaction::firstOrFail();

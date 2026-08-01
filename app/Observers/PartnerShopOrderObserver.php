@@ -29,8 +29,18 @@ class PartnerShopOrderObserver implements ShouldHandleEventsAfterCommit
 
         $shopOrder->loadMissing(['status', 'paymentStatus', 'deliveryStatus']);
         $nextStatus = $this->resolveStatus($shopOrder);
+        $events = ['order.updated']; // Legacy v1 event remains for backward compatibility.
+        if ($shopOrder->wasChanged('status_id')) {
+            $events[] = $nextStatus === 'cancelled' ? 'order.cancelled' : 'order.status_changed';
+        }
+        if ($shopOrder->wasChanged(['payment_status_id', 'payed'])) {
+            $events[] = $this->paymentEvent($shopOrder);
+        }
+        if ($shopOrder->wasChanged('delivery_status_id')) {
+            $events[] = 'delivery.status_changed';
+        }
 
-        DB::transaction(function () use ($partnerOrder, $shopOrder, $nextStatus): void {
+        DB::transaction(function () use ($partnerOrder, $shopOrder, $nextStatus, $events): void {
             $previousStatus = $partnerOrder->status;
             $updates = ['status' => $nextStatus];
 
@@ -64,7 +74,15 @@ class PartnerShopOrderObserver implements ShouldHandleEventsAfterCommit
                 'delivery_status_id' => $shopOrder->delivery_status_id,
             ]);
 
-            app(PartnerWebhookService::class)->queueOrderEvent($partnerOrder, 'order.updated');
+            foreach (array_unique($events) as $event) {
+                app(PartnerWebhookService::class)->queueOrderEvent($partnerOrder, $event);
+            }
+            if (in_array($nextStatus, ['completed', 'cancelled'], true)) {
+                $commissionEvent = $nextStatus === 'completed' ? 'commission.approved' : 'commission.reversed';
+                $partnerOrder->commissions()->get()->each(
+                    fn ($commission) => app(PartnerWebhookService::class)->queueCommissionEvent($commission, $commissionEvent),
+                );
+            }
         });
     }
 
@@ -94,5 +112,17 @@ class PartnerShopOrderObserver implements ShouldHandleEventsAfterCommit
         $status = mb_strtolower(trim((string) $status));
 
         return collect($needles)->contains(fn (string $needle) => str_contains($status, $needle));
+    }
+
+    private function paymentEvent(ShopOrder $order): string
+    {
+        if ($order->payed || $this->statusContains($order->paymentStatus?->name, ['paid', 'оплачен', 'успеш'])) {
+            return 'payment.succeeded';
+        }
+        if ($this->statusContains($order->paymentStatus?->name, ['failed', 'ошиб', 'отклон', 'неуспеш'])) {
+            return 'payment.failed';
+        }
+
+        return 'payment.status_changed';
     }
 }

@@ -73,6 +73,7 @@ class DeliverPartnerWebhookJob implements ShouldQueue
             'event' => $delivery->event,
             'attempt' => $attempt,
         ]);
+        $startedAt = hrtime(true);
 
         try {
             $response = Http::acceptJson()
@@ -90,11 +91,17 @@ class DeliverPartnerWebhookJob implements ShouldQueue
                 ->withBody($body, 'application/json')
                 ->post($partner->webhook_url);
 
-            $responseBody = mb_substr($response->body(), 0, 10000);
+            $durationMs = (int) round((hrtime(true) - $startedAt) / 1_000_000);
+            $responseBody = json_encode([
+                'content_type' => $response->header('Content-Type'),
+                'body_size' => strlen($response->body()),
+                'body_sha256' => hash('sha256', $response->body()),
+            ], JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
             if (! $response->successful()) {
                 $delivery->update([
                     'status' => 'retrying',
                     'response_status' => $response->status(),
+                    'duration_ms' => $durationMs,
                     'response_body' => $responseBody,
                     'last_error' => 'Webhook endpoint returned HTTP '.$response->status(),
                     'next_attempt_at' => $this->nextAttemptAt($attempt),
@@ -105,6 +112,7 @@ class DeliverPartnerWebhookJob implements ShouldQueue
             $delivery->update([
                 'status' => 'delivered',
                 'response_status' => $response->status(),
+                'duration_ms' => $durationMs,
                 'response_body' => $responseBody,
                 'last_error' => null,
                 'next_attempt_at' => null,
@@ -117,10 +125,13 @@ class DeliverPartnerWebhookJob implements ShouldQueue
                 'event' => $delivery->event,
                 'attempt' => $attempt,
                 'response_status' => $response->status(),
+                'duration_ms' => $durationMs,
             ]);
         } catch (ConnectionException $exception) {
+            $durationMs = (int) round((hrtime(true) - $startedAt) / 1_000_000);
             $delivery->update([
                 'status' => 'retrying',
+                'duration_ms' => $durationMs,
                 'last_error' => mb_substr($exception->getMessage(), 0, 2000),
                 'next_attempt_at' => $this->nextAttemptAt($attempt),
             ]);
@@ -128,6 +139,7 @@ class DeliverPartnerWebhookJob implements ShouldQueue
                 'partner_id' => $partner->id,
                 'delivery_id' => $delivery->public_id,
                 'attempt' => $attempt,
+                'duration_ms' => $durationMs,
                 'message' => $exception->getMessage(),
             ]);
             throw $exception;

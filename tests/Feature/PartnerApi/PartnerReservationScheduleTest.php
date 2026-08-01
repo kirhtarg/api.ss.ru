@@ -23,4 +23,15 @@ class PartnerReservationScheduleTest extends TestCase
             $event->mutexName(),
         );
     }
+
+    public function test_expired_quote_cleanup_is_hourly_and_cannot_overlap(): void
+    {
+        Artisan::call('schedule:list');
+        $event = collect(app(Schedule::class)->events())
+            ->first(fn ($event) => $event->description === 'partner-api-delete-expired-checkout-quotes');
+
+        $this->assertInstanceOf(CallbackEvent::class, $event);
+        $this->assertSame('0 * * * *', $event->expression);
+        $this->assertTrue($event->withoutOverlapping);
+    }
 }

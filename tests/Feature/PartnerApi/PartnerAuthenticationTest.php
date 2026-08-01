@@ -89,6 +89,15 @@ class PartnerAuthenticationTest extends TestCase
             ->assertJsonPath('error.code', 'insufficient_scope');
     }
 
+    public function test_commission_reconciliation_requires_commissions_read_scope(): void
+    {
+        $path = '/api/partner/v1/commissions';
+
+        $this->withHeaders($this->signedHeaders('GET', $path, '', 'nonce-commission-scope'))->get($path)
+            ->assertForbidden()
+            ->assertJsonPath('error.code', 'insufficient_scope');
+    }
+
     private function signedHeaders(string $method, string $path, string $body, string $nonce): array
     {
         $timestamp = (string) now()->timestamp;

@@ -8,6 +8,7 @@ use App\Models\PartnerOrder;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\ShopOrder;
+use App\Models\ShopOrderStatus;
 use App\Services\OrderCalculationService;
 use App\Services\StockReservationService;
 use Illuminate\Support\Facades\DB;
@@ -22,6 +23,8 @@ class PartnerOrderService
         private readonly OrderCalculationService $calculation,
         private readonly StockReservationService $reservations,
         private readonly PartnerDeliveryService $delivery,
+        private readonly PartnerStockAvailabilityService $availability,
+        private readonly PartnerCheckoutQuoteService $quotes,
     ) {}
 
     public function create(Partner $partner, array $payload, string $idempotencyKey, ?string $ipAddress, ?string $userAgent): array
@@ -63,6 +66,9 @@ class PartnerOrderService
                 throw new ConflictHttpException('External order ID already exists');
             }
 
+            $quote = ! empty($payload['quote_id'])
+                ? $this->quotes->validateForOrder($partner, $payload['quote_id'], $payload['items'], $payload['delivery'] ?? [])
+                : null;
             $items = $this->buildOrderItems($payload['items']);
             $itemsAmount = round(array_sum(array_column($items, 'total')), 2);
             $delivery = $this->delivery->calculate($payload['delivery'] ?? [], $items, $itemsAmount);
@@ -116,6 +122,9 @@ class PartnerOrderService
                 'attribution' => $payload['attribution'] ?? null,
                 'metadata' => array_merge($payload['metadata'] ?? [], ['stock_reservation_ids' => $reservationIds]),
             ]);
+            if ($quote) {
+                $this->quotes->consume($quote, $partnerOrder);
+            }
 
             PartnerCommissionEntry::create([
                 'partner_id' => $partner->id,
@@ -138,6 +147,51 @@ class PartnerOrderService
             ]);
 
             return ['order' => $partnerOrder->load('shopOrder'), 'replayed' => false];
+        }, 3);
+    }
+
+    public function cancel(Partner $partner, string $externalOrderId, string $reason): PartnerOrder
+    {
+        return DB::transaction(function () use ($partner, $externalOrderId, $reason): PartnerOrder {
+            $order = PartnerOrder::query()->with('shopOrder.status')
+                ->where('partner_id', $partner->id)
+                ->where('external_order_id', $externalOrderId)
+                ->lockForUpdate()
+                ->firstOrFail();
+            $shopOrder = ShopOrder::query()->lockForUpdate()->findOrFail($order->shop_order_id);
+
+            if ($order->status === 'cancelled') {
+                return $order->fresh(['shopOrder.status', 'shopOrder.paymentStatus', 'shopOrder.deliveryStatus']);
+            }
+            if (in_array($order->status, ['paid', 'completed'], true) || $shopOrder->payed) {
+                throw new ConflictHttpException('Paid or completed partner order cannot be cancelled through Partner API');
+            }
+
+            $cancelledStatus = ShopOrderStatus::query()->where('is_cancelled', true)->where('is_active', true)->orderBy('sort_order')->first();
+            if (! $cancelledStatus) {
+                throw new ConflictHttpException('Store cancellation status is not configured');
+            }
+
+            $metadata = $shopOrder->metadata ?? [];
+            $metadata['partner_cancellation'] = [
+                'reason' => $reason,
+                'requested_at' => now()->toIso8601String(),
+            ];
+            $shopOrder->update(['status_id' => $cancelledStatus->id, 'metadata' => $metadata]);
+            $this->reservations->releaseForOrder($shopOrder);
+            $order->commissions()->whereIn('status', ['pending', 'recognized'])->update([
+                'status' => 'cancelled',
+                'reason' => 'Partner order cancelled',
+            ]);
+            $order->update(['status' => 'cancelled', 'commission_status' => 'cancelled']);
+
+            Log::info('Partner order cancellation accepted', [
+                'partner_id' => $partner->id,
+                'partner_order_id' => $order->id,
+                'shop_order_id' => $shopOrder->id,
+            ]);
+
+            return $order->fresh(['shopOrder.status', 'shopOrder.paymentStatus', 'shopOrder.deliveryStatus']);
         }, 3);
     }
 
@@ -164,7 +218,7 @@ class PartnerOrderService
             }
 
             $quantity = (int) $requestedItem['quantity'];
-            $stockQuantity = (int) ($variation?->stock_quantity ?? $good->stock_quantity);
+            $stockQuantity = $this->availability->quantity($good, $variation);
             if ($stockQuantity < $quantity) {
                 throw new UnprocessableEntityHttpException('Insufficient stock for product: '.$good->id);
             }

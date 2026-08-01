@@ -4,18 +4,28 @@ namespace App\Services\Partner;
 
 use App\Models\ShopCategory;
 use App\Models\ShopGood;
+use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 
 class PartnerCatalogService
 {
-    public function categories()
+    public function activeCategories()
     {
-        return ShopCategory::query()->where('is_active', true)->orderBy('sort_order')->get(['id', 'parent_id', 'name', 'slug', 'image']);
+        return ShopCategory::query()->where('is_active', true)->orderBy('sort_order')->orderBy('id')->get();
+    }
+
+    public function categories(array $filters = [])
+    {
+        return $this->applySyncFilters(ShopCategory::query(), $filters)
+            ->orderBy('updated_at')
+            ->orderBy('id')
+            ->paginate($this->perPage($filters));
     }
 
     public function products(array $filters)
     {
-        return ShopGood::query()
-            ->where('is_active', true)
+        return $this->applySyncFilters(ShopGood::query(), $filters)
             ->when($filters['category_id'] ?? null, fn ($query, $id) => $query->whereHas(
                 'categories',
                 fn ($categories) => $categories->where('shop_categories.id', $id),
@@ -25,16 +35,87 @@ class PartnerCatalogService
             ))
             ->with([
                 'images' => fn ($query) => $query->orderByDesc('is_main')->orderBy('sort_order'),
-                'variations' => fn ($query) => $query->where('is_active', true),
+                'variations.images',
+                'variations.stock',
+                'variations.attributeValues.attribute',
+                'variations.good',
+                'categories',
+                'brands',
+                'properties.values',
+                'stock',
             ])
+            ->orderBy('updated_at')
             ->orderBy('id')
-            ->paginate(min((int) ($filters['per_page'] ?? 24), 100));
+            ->paginate($this->perPage($filters));
     }
 
     public function product(ShopGood $good): ShopGood
     {
-        abort_unless($good->is_active, 404);
+        abort_unless((bool) $good->is_active, 404);
 
-        return $good->load(['images', 'variations', 'categories', 'brands', 'properties']);
+        return $good->load([
+            'images', 'variations.images', 'variations.stock',
+            'variations.attributeValues.attribute', 'variations.good',
+            'categories', 'brands', 'properties.values', 'stock',
+        ]);
+    }
+
+    private function applySyncFilters(Builder $query, array $filters): Builder
+    {
+        $updatedSince = $filters['updated_since'] ?? null;
+        if ($updatedSince) {
+            $query->where('updated_at', '>=', Carbon::parse($updatedSince)->format('Y-m-d H:i:s.u'));
+        } else {
+            $query->where('is_active', true);
+        }
+
+        if (! empty($filters['cursor'])) {
+            [$updatedAt, $id] = $this->decodeCursor($filters['cursor']);
+            $query->where(function (Builder $cursorQuery) use ($updatedAt, $id): void {
+                $cursorQuery->where('updated_at', '>', $updatedAt)
+                    ->orWhere(fn (Builder $sameTimestamp) => $sameTimestamp
+                        ->where('updated_at', $updatedAt)
+                        ->where('id', '>', $id));
+            });
+        }
+
+        Log::debug('Partner catalog synchronization query prepared', [
+            'resource' => $query->getModel()->getTable(),
+            'updated_since' => $updatedSince,
+            'has_cursor' => ! empty($filters['cursor']),
+            'per_page' => $this->perPage($filters),
+        ]);
+
+        return $query;
+    }
+
+    public function cursorFor(?object $model): ?string
+    {
+        if (! $model?->updated_at) {
+            return null;
+        }
+
+        return rtrim(strtr(base64_encode(json_encode([
+            $model->updated_at->format('Y-m-d H:i:s.u'),
+            (int) $model->id,
+        ], JSON_THROW_ON_ERROR)), '+/', '-_'), '=');
+    }
+
+    private function decodeCursor(string $cursor): array
+    {
+        $normalized = strtr($cursor, '-_', '+/');
+        $normalized .= str_repeat('=', (4 - strlen($normalized) % 4) % 4);
+        $decoded = base64_decode($normalized, true);
+        $payload = $decoded !== false ? json_decode($decoded, true) : null;
+        if (! is_array($payload) || count($payload) !== 2 || ! is_string($payload[0]) || ! is_numeric($payload[1])) {
+            abort(422, 'Invalid catalog cursor');
+        }
+
+        return [$payload[0], (int) $payload[1]];
+    }
+
+    private function perPage(array $filters): int
+    {
+        return min(max((int) ($filters['per_page'] ?? 24), 1), 100);
     }
 }

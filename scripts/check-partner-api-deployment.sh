@@ -11,6 +11,8 @@ PARTNER_MIGRATIONS=(
     database/migrations/2026_07_31_000000_create_partner_api_tables.php
     database/migrations/2026_07_31_010000_create_partner_payouts_table.php
     database/migrations/2026_07_31_020000_add_partner_api_admin_menu_item.php
+    database/migrations/2026_08_01_000000_add_duration_to_partner_webhook_deliveries.php
+    database/migrations/2026_08_01_010000_create_partner_checkout_quotes_and_payment_idempotencies.php
 )
 PARTNER_PATH_ARGS=()
 for migration in "${PARTNER_MIGRATIONS[@]}"; do

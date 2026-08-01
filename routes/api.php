@@ -1605,6 +1605,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/site-info', [\App\Http\Controllers\Api\Public\SiteInfoController::class, 'index']);
 
         Route::middleware('role:admin')->prefix('partner-api')->group(function () {
+            Route::get('/diagnostics', [\App\Http\Controllers\Api\Admin\PartnerApi\DiagnosticController::class, 'overview']);
+            Route::post('/diagnostics/quote', [\App\Http\Controllers\Api\Admin\PartnerApi\DiagnosticController::class, 'quote']);
             Route::get('/statistics', [\App\Http\Controllers\Api\Admin\PartnerApi\PartnerController::class, 'statistics']);
             Route::get('/credentials', [\App\Http\Controllers\Api\Admin\PartnerApi\CredentialController::class, 'index']);
             Route::get('/orders', [\App\Http\Controllers\Api\Admin\PartnerApi\OrderController::class, 'index']);

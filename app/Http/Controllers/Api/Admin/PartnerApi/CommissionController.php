@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin\PartnerApi;
 use App\Http\Controllers\Controller;
 use App\Models\PartnerCommissionEntry;
 use App\Models\PartnerPayout;
+use App\Services\Partner\PartnerWebhookService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -124,6 +125,12 @@ class CommissionController extends Controller
 
             return $entry;
         });
+        $event = match ($entry->status) {
+            'recognized' => 'commission.approved',
+            'cancelled' => 'commission.reversed',
+            default => 'commission.updated',
+        };
+        app(PartnerWebhookService::class)->queueCommissionEvent($entry, $event);
 
         return response()->json([
             'success' => true,

@@ -111,6 +111,15 @@ class ShopGoodVariation extends Model
     }
 
     /**
+     * Остатки вариации. Используется Partner API для расчёта доступного
+     * количества с учётом уже зарезервированных единиц.
+     */
+    public function stock(): HasMany
+    {
+        return $this->hasMany(ShopStock::class, 'variation_id');
+    }
+
+    /**
      * Видео вариации
      */
     public function videos(): HasMany

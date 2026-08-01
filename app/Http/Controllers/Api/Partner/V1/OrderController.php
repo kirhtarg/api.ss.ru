@@ -2,10 +2,12 @@
 
 namespace App\Http\Controllers\Api\Partner\V1;
 
+use App\Exceptions\PartnerQuoteConflictException;
 use App\Http\Controllers\Controller;
 use App\Models\PartnerOrder;
 use App\Services\Partner\PartnerOrderService;
 use App\Services\Partner\PartnerPaymentService;
+use App\Services\Partner\PartnerSyncCursor;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -14,6 +16,7 @@ class OrderController extends Controller
     public function __construct(
         private readonly PartnerOrderService $orders,
         private readonly PartnerPaymentService $payments,
+        private readonly PartnerSyncCursor $cursor,
     ) {}
 
     public function store(Request $request): JsonResponse
@@ -28,6 +31,7 @@ class OrderController extends Controller
 
         $payload = $request->validate([
             'external_order_id' => ['required', 'string', 'max:128'],
+            'quote_id' => ['nullable', 'uuid'],
             'items' => ['required', 'array', 'min:1', 'max:100'],
             'items.*.good_id' => ['required', 'integer'],
             'items.*.variation_id' => ['nullable', 'integer'],
@@ -49,25 +53,44 @@ class OrderController extends Controller
             'metadata' => ['nullable', 'array'],
         ]);
 
-        $result = $this->orders->create(
-            $request->attributes->get('partner'),
-            $payload,
-            $idempotencyKey,
-            $request->ip(),
-            $request->userAgent(),
-        );
+        try {
+            $result = $this->orders->create(
+                $request->attributes->get('partner'),
+                $payload,
+                $idempotencyKey,
+                $request->ip(),
+                $request->userAgent(),
+            );
+        } catch (PartnerQuoteConflictException $exception) {
+            return response()->json([
+                'success' => false,
+                'error' => [
+                    'code' => $exception->errorCode,
+                    'message' => 'Checkout quote is no longer valid',
+                    'current_quote' => $exception->currentQuote,
+                ],
+            ], 409);
+        }
         $payment = null;
         if (! $result['replayed'] && array_key_exists('payment_method_id', $payload)) {
-            $payment = $this->payments->create($result['order']->shopOrder, $payload['payment_method_id']);
+            $payment = $this->payments->create(
+                $request->attributes->get('partner'),
+                $result['order'],
+                $payload['payment_method_id'],
+                'order-create:'.hash('sha256', $idempotencyKey),
+            );
+        } elseif ($result['replayed']) {
+            $payment = $this->payments->latestState($result['order']);
         }
 
         return response()->json([
             'success' => true,
             'data' => array_merge($this->serialize($result['order']), ['payment' => $payment ? [
                 'status' => $payment['status'],
-                'method' => ['id' => $payment['method']->id, 'name' => $payment['method']->name, 'type' => $payment['method']->type],
+                'method' => $payment['method'],
                 'payment_url' => $payment['payment_url'],
                 'transaction_id' => $payment['transaction_id'],
+                'error' => $payment['error'] ?? null,
             ] : null]),
             'meta' => ['idempotent_replay' => $result['replayed']],
         ], $result['replayed'] ? 200 : 201);
@@ -80,6 +103,43 @@ class OrderController extends Controller
             ->where('partner_id', $request->attributes->get('partner')->id)
             ->where('external_order_id', $externalOrderId)
             ->firstOrFail();
+
+        return response()->json(['success' => true, 'data' => $this->serialize($order)]);
+    }
+
+    public function index(Request $request): JsonResponse
+    {
+        $filters = $request->validate([
+            'updated_since' => ['nullable', 'date'],
+            'cursor' => ['nullable', 'string', 'max:512'],
+            'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
+        ]);
+        $query = PartnerOrder::query()
+            ->where('partner_id', $request->attributes->get('partner')->id)
+            ->with(['shopOrder.status', 'shopOrder.paymentStatus', 'shopOrder.deliveryStatus']);
+        $page = $this->cursor->apply($query, $filters['cursor'] ?? null, $filters['updated_since'] ?? null)
+            ->paginate($filters['per_page'] ?? 50);
+
+        return response()->json([
+            'success' => true,
+            'data' => $page->getCollection()->map(fn (PartnerOrder $order) => $this->serialize($order))->values(),
+            'meta' => [
+                'next_cursor' => $page->hasMorePages() ? $this->cursor->encode($page->getCollection()->last()) : null,
+                'per_page' => $page->perPage(),
+                'has_more' => $page->hasMorePages(),
+                'sort' => ['updated_at', 'id'],
+            ],
+        ]);
+    }
+
+    public function cancel(Request $request, string $externalOrderId): JsonResponse
+    {
+        $request->validate(['reason' => ['required', 'string', 'max:1000']]);
+        $order = $this->orders->cancel(
+            $request->attributes->get('partner'),
+            $externalOrderId,
+            (string) $request->input('reason'),
+        );
 
         return response()->json(['success' => true, 'data' => $this->serialize($order)]);
     }
@@ -105,6 +165,12 @@ class OrderController extends Controller
                 'method_id' => $order->shopOrder?->payment_method_id,
                 'method' => $order->shopOrder?->payment_method,
                 'payment_url' => $order->shopOrder?->payment_url,
+                'status' => $order->shopOrder?->paymentStatus?->name,
+            ],
+            'store_status' => [
+                'order' => $order->shopOrder?->status?->name,
+                'payment' => $order->shopOrder?->paymentStatus?->name,
+                'delivery' => $order->shopOrder?->deliveryStatus?->name,
             ],
             'commission' => [
                 'rate' => (float) $order->commission_rate,

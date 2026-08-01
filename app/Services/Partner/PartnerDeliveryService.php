@@ -7,6 +7,7 @@ use App\Models\ShopDeliveryMethod;
 use App\Services\CdekService;
 use App\Services\DeliveryPackageService;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Cache;
 use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
 
 class PartnerDeliveryService
@@ -76,6 +77,59 @@ class PartnerDeliveryService
             'tariff_code' => $metadata['tariff_code'] ?? null,
         ]);
 
-        return ['method' => $method, 'amount' => round($amount, 2), 'metadata' => $metadata];
+        return [
+            'method' => $method,
+            'amount' => round($amount, 2),
+            'metadata' => $metadata,
+            'available_tariffs' => isset($tariffs) ? $this->normalizeTariffs($tariffs) : [],
+        ];
+    }
+
+    public function cities(string $query): array
+    {
+        return Cache::remember('partner:cdek:cities:'.hash('sha256', mb_strtolower($query)), now()->addMinutes(10), function () use ($query): array {
+            Log::debug('Partner delivery cities cache miss', ['query_length' => mb_strlen($query)]);
+
+            return collect($this->cdek->getCities($query) ?: [])->map(fn (array $city): array => [
+                'code' => isset($city['code']) ? (int) $city['code'] : null,
+                'name' => $city['city'] ?? $city['name'] ?? null,
+                'region' => $city['region'] ?? null,
+                'country_code' => $city['country_code'] ?? 'RU',
+            ])->filter(fn (array $city) => $city['code'] && $city['name'])->values()->all();
+        });
+    }
+
+    public function pickupPoints(int $cityCode): array
+    {
+        return Cache::remember('partner:cdek:pvz:'.$cityCode, now()->addMinutes(10), function () use ($cityCode): array {
+            Log::debug('Partner delivery pickup points cache miss', ['city_code' => $cityCode]);
+
+            return collect($this->cdek->getPickupPoints($cityCode) ?: [])->map(fn (array $point): array => [
+                'code' => $point['code'] ?? null,
+                'name' => $point['name'] ?? null,
+                'address' => $point['location']['address_full'] ?? $point['location']['address'] ?? $point['address'] ?? null,
+                'latitude' => $point['location']['latitude'] ?? null,
+                'longitude' => $point['location']['longitude'] ?? null,
+                'work_time' => $point['work_time'] ?? null,
+                'type' => $point['type'] ?? null,
+            ])->filter(fn (array $point) => $point['code'])->values()->all();
+        });
+    }
+
+    public function validatePickupPoint(int $cityCode, string $pvzCode): ?array
+    {
+        return collect($this->pickupPoints($cityCode))->first(fn (array $point): bool => hash_equals((string) $point['code'], $pvzCode));
+    }
+
+    private function normalizeTariffs(array $tariffs): array
+    {
+        return collect($tariffs)->map(fn (array $tariff): array => [
+            'code' => (string) ($tariff['tariff_code'] ?? ''),
+            'name' => $tariff['tariff_name'] ?? null,
+            'amount' => round((float) ($tariff['delivery_sum'] ?? 0), 2),
+            'currency' => 'RUB',
+            'period_min' => isset($tariff['period_min']) ? (int) $tariff['period_min'] : null,
+            'period_max' => isset($tariff['period_max']) ? (int) $tariff['period_max'] : null,
+        ])->filter(fn (array $tariff) => $tariff['code'] !== '')->values()->all();
     }
 }
