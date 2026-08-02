@@ -40,6 +40,7 @@
           { "name": "category_id", "in": "query", "schema": { "type": "integer" } },
           { "name": "brand_id", "in": "query", "schema": { "type": "integer" } },
           { "name": "q", "in": "query", "schema": { "type": "string", "maxLength": 120 } },
+          { "name": "include_unavailable", "in": "query", "description": "Для административного каталога: включить активные отображаемые товары без доступного локального остатка. Не меняет правила checkout.", "schema": { "type": "boolean", "default": false } },
           { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/PerPage" },
           { "$ref": "#/components/parameters/UpdatedSince" }, { "$ref": "#/components/parameters/Cursor" }
         ],

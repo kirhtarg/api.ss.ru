@@ -38,6 +38,7 @@ class CatalogController extends Controller
                 'category_id' => 'nullable|integer',
                 'brand_id' => 'nullable|integer',
                 'q' => 'nullable|string|max:120',
+                'include_unavailable' => 'nullable|boolean',
             ]));
             $page = $this->catalog->products($data);
             $this->logResult($request, 'catalog/products', $data, $page->count(), $startedAt);
@@ -123,7 +124,7 @@ class CatalogController extends Controller
         Log::debug('[FIX:partner-catalog-contract] Partner catalog request completed', [
             'endpoint' => $endpoint,
             'partner_id' => $request->attributes->get('partner')?->id,
-            'filters' => collect($filters)->only(['product_id', 'category_id', 'brand_id', 'q', 'page', 'per_page', 'updated_since'])->all(),
+            'filters' => collect($filters)->only(['product_id', 'category_id', 'brand_id', 'q', 'page', 'per_page', 'updated_since', 'include_unavailable'])->all(),
             'result_count' => $count,
             'duration_ms' => (int) round((hrtime(true) - $startedAt) / 1_000_000),
             'error_code' => null,

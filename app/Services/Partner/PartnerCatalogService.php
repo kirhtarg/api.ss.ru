@@ -37,8 +37,13 @@ class PartnerCatalogService
     public function products(array $filters)
     {
         $query = $this->applySyncFilters(ShopGood::query(), $filters);
-        if (empty($filters['updated_since'])) {
+        if (empty($filters['updated_since']) && empty($filters['include_unavailable'])) {
             $this->availability->applyCatalogEligibleQuery($query);
+        } elseif (empty($filters['updated_since'])) {
+            $query->where('is_show', true);
+            Log::info('[FIX:partner-admin-catalog] Including unavailable products for partner administration', [
+                'resource' => $query->getModel()->getTable(),
+            ]);
         }
 
         return $query
