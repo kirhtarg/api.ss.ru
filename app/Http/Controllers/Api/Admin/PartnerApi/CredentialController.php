@@ -89,9 +89,19 @@ class CredentialController extends Controller
 
     public function destroy(Request $request, PartnerApiCredential $credential): JsonResponse
     {
-        if (! $credential->revoked_at) {
-            $credential->update(['revoked_at' => now()]);
+        if ($credential->revoked_at) {
+            $credentialId = $credential->id;
+            $partnerId = $credential->partner_id;
+            $keyId = $credential->key_id;
+            $credential->delete();
+            Log::warning('Revoked Partner API credential permanently deleted', [
+                'user_id' => $request->user()?->id, 'partner_id' => $partnerId,
+                'credential_id' => $credentialId, 'key_id' => $keyId,
+            ]);
+            return response()->json(['success' => true, 'message' => 'Отозванный API-ключ удалён']);
         }
+
+        $credential->update(['revoked_at' => now()]);
 
         Log::warning('Partner API credential revoked', [
             'user_id' => $request->user()?->id,

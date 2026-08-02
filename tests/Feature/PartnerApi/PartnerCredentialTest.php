@@ -65,4 +65,25 @@ class PartnerCredentialTest extends TestCase
         $this->assertSame($payload['data']['secret'], $credential->secret);
         $this->assertArrayNotHasKey('secret', $credential->toArray());
     }
+
+    public function test_active_key_is_revoked_before_it_can_be_permanently_deleted(): void
+    {
+        $partner = Partner::create(['public_id' => (string) Str::uuid(), 'code' => 'delete-test', 'name' => 'Delete Test']);
+        $credential = PartnerApiCredential::create([
+            'partner_id' => $partner->id,
+            'key_id' => 'pk_delete_test',
+            'secret' => Str::random(64),
+            'scopes' => ['catalog:read'],
+        ]);
+        $request = Request::create('/admin/partner-api/credentials/'.$credential->id, 'DELETE');
+        $controller = app(CredentialController::class);
+
+        $revokeResponse = $controller->destroy($request, $credential);
+        $this->assertSame('API-ключ отозван', $revokeResponse->getData(true)['message']);
+        $this->assertNotNull($credential->fresh()?->revoked_at);
+
+        $deleteResponse = $controller->destroy($request, $credential->fresh());
+        $this->assertSame('Отозванный API-ключ удалён', $deleteResponse->getData(true)['message']);
+        $this->assertDatabaseMissing('partner_api_credentials', ['id' => $credential->id]);
+    }
 }
