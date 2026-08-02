@@ -4,15 +4,26 @@ namespace App\Services\Partner;
 
 use App\Models\ShopCategory;
 use App\Models\ShopGood;
+use App\Models\ShopBrand;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 
 class PartnerCatalogService
 {
+    public function __construct(private readonly PartnerStockAvailabilityService $availability) {}
+
     public function activeCategories()
     {
         return ShopCategory::query()->where('is_active', true)->orderBy('sort_order')->orderBy('id')->get();
+    }
+
+    public function activeBrands()
+    {
+        return ShopBrand::query()->active()->whereHas(
+            'goods',
+            fn (Builder $goods) => $this->availability->applyCatalogEligibleQuery($goods),
+        )->ordered()->get();
     }
 
     public function categories(array $filters = [])
@@ -25,10 +36,18 @@ class PartnerCatalogService
 
     public function products(array $filters)
     {
-        return $this->applySyncFilters(ShopGood::query(), $filters)
+        $query = $this->applySyncFilters(ShopGood::query(), $filters);
+        if (empty($filters['updated_since'])) {
+            $this->availability->applyCatalogEligibleQuery($query);
+        }
+
+        return $query
             ->when($filters['category_id'] ?? null, fn ($query, $id) => $query->whereHas(
                 'categories',
                 fn ($categories) => $categories->where('shop_categories.id', $id),
+            ))
+            ->when($filters['brand_id'] ?? null, fn ($query, $id) => $query->whereHas(
+                'brands', fn ($brands) => $brands->where('shop_brands.id', $id),
             ))
             ->when($filters['q'] ?? null, fn ($query, $term) => $query->where(
                 fn ($search) => $search->where('name', 'like', "%{$term}%")->orWhere('sku', 'like', "%{$term}%"),
@@ -51,7 +70,7 @@ class PartnerCatalogService
 
     public function product(ShopGood $good): ShopGood
     {
-        abort_unless((bool) $good->is_active, 404);
+        $good = $this->availability->applyCatalogEligibleQuery(ShopGood::query())->whereKey($good->id)->firstOrFail();
 
         return $good->load([
             'images', 'variations.images', 'variations.stock',

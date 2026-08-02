@@ -23,6 +23,7 @@ Route::prefix('partner/v1')
 
         Route::middleware('partner.scope:catalog:read')->group(function (): void {
             Route::get('/catalog/categories', [CatalogController::class, 'categories']);
+            Route::get('/catalog/brands', [CatalogController::class, 'brands']);
             Route::get('/catalog/products', [CatalogController::class, 'index']);
             Route::get('/catalog/products/{good}', [CatalogController::class, 'show']);
         });

@@ -79,6 +79,29 @@ env -i PATH="${PATH}" HOME="${TEMP_ROOT}" \
     APP_ENV="${TEST_APP_ENV}" DB_CONNECTION="${TEST_DB_CONNECTION}" DB_DATABASE="${TEST_DB_DATABASE}" \
     CACHE_STORE=array SESSION_DRIVER=array QUEUE_CONNECTION=sync MAIL_MAILER=array \
     APP_KEY='base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=' APP_DEBUG=false APP_URL=http://localhost LOG_CHANNEL=stderr \
-    php artisan test tests/Feature/PartnerApi tests/Unit/Partner
+    php artisan test tests/Feature/PartnerApi/PartnerCatalogV11HttpTest.php
+
+env -i PATH="${PATH}" HOME="${TEMP_ROOT}" \
+    APP_ENV="${TEST_APP_ENV}" DB_CONNECTION="${TEST_DB_CONNECTION}" DB_DATABASE="${TEST_DB_DATABASE}" \
+    CACHE_STORE=array SESSION_DRIVER=array QUEUE_CONNECTION=sync MAIL_MAILER=array \
+    APP_KEY='base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=' APP_DEBUG=false APP_URL=http://localhost LOG_CHANNEL=stderr \
+    php artisan test tests/Feature/PartnerApi
+
+env -i PATH="${PATH}" HOME="${TEMP_ROOT}" \
+    APP_ENV="${TEST_APP_ENV}" DB_CONNECTION="${TEST_DB_CONNECTION}" DB_DATABASE="${TEST_DB_DATABASE}" \
+    CACHE_STORE=array SESSION_DRIVER=array QUEUE_CONNECTION=sync MAIL_MAILER=array \
+    APP_KEY='base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=' APP_DEBUG=false APP_URL=http://localhost LOG_CHANNEL=stderr \
+    php artisan test tests/Unit/Partner
+
+env -i PATH="${PATH}" HOME="${TEMP_ROOT}" APP_ENV=testing DB_CONNECTION=sqlite DB_DATABASE=:memory: \
+    CACHE_STORE=array SESSION_DRIVER=array QUEUE_CONNECTION=sync MAIL_MAILER=array \
+    APP_KEY='base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=' LOG_CHANNEL=stderr \
+    php artisan route:list --path=api/partner
+
+# Cache mutation is deliberately confined to the disposable copy.
+env -i PATH="${PATH}" HOME="${TEMP_ROOT}" APP_ENV=testing DB_CONNECTION=sqlite DB_DATABASE=:memory: \
+    CACHE_STORE=array SESSION_DRIVER=array QUEUE_CONNECTION=sync MAIL_MAILER=array \
+    APP_KEY='base64:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=' LOG_CHANNEL=stderr \
+    php artisan optimize:clear
 
 printf 'Partner API verification completed in an isolated temporary copy.\n'

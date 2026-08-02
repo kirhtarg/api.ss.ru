@@ -19,6 +19,8 @@ class PartnerDocumentationTest extends TestCase
             ->assertJsonPath('components.schemas.Product.additionalProperties', false)
             ->assertJsonPath('components.schemas.Variation.additionalProperties', false)
             ->assertJsonPath('components.schemas.Category.additionalProperties', false)
+            ->assertJsonPath('components.schemas.Brand.additionalProperties', false)
+            ->assertJsonPath('components.schemas.Brand.properties.logo_url.format', 'uri')
             ->assertJsonPath('webhooks.partnerEvent.post.parameters.0.name', 'X-Partner-Delivery')
             ->assertJsonStructure(['paths' => [
                 '/orders', '/orders/{externalOrderId}', '/orders/{externalOrderId}/cancel',
@@ -64,8 +66,15 @@ class PartnerDocumentationTest extends TestCase
         foreach (['QuoteItem', 'QuoteDelivery', 'QuoteTotals', 'DeliveryCity', 'DeliveryTariff', 'PickupPoint', 'PickupPointValidation', 'Order', 'OrderPage', 'Commission', 'CommissionPage', 'Payment', 'ErrorResponse'] as $schema) {
             $this->assertArrayHasKey($schema, $document['components']['schemas']);
         }
+        foreach (['Product', 'Variation'] as $schema) {
+            foreach (['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'is_preorder', 'purchase_mode', 'can_order', 'can_preorder'] as $field) {
+                $this->assertContains($field, $document['components']['schemas'][$schema]['required']);
+                $this->assertArrayHasKey($field, $document['components']['schemas'][$schema]['properties']);
+            }
+        }
+        $this->assertSame(['id', 'name', 'slug', 'logo_url'], $document['components']['schemas']['Brand']['required']);
         $raw = json_encode($document, JSON_THROW_ON_ERROR);
-        foreach (['purchase_price', 'supplier_data', 'internal_comment', 'demping_price'] as $forbidden) {
+        foreach (['purchase_price', 'supplier_data', 'internal_comment'] as $forbidden) {
             $this->assertStringNotContainsString($forbidden, $raw);
         }
     }

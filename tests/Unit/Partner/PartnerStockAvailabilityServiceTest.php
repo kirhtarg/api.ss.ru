@@ -60,8 +60,23 @@ class PartnerStockAvailabilityServiceTest extends TestCase
 
         $this->assertSame(0, $service->quantity($good, $empty));
         $this->assertSame(1, $service->quantity($good, $available));
-        $this->assertTrue($service->productIsAvailable($good->load('variations.stock')));
+        $state = $service->productState($good->load('variations.stock'));
+        $this->assertSame(['available_quantity' => 1, 'is_available' => true], $state);
+        $this->assertTrue($service->productIsAvailable($good));
         $good->update(['is_active' => false]);
         $this->assertFalse($service->productIsAvailable($good->fresh()->load('variations.stock')));
+    }
+
+    public function test_product_quantity_sums_only_active_variations(): void
+    {
+        $good = ShopGood::withoutEvents(fn () => ShopGood::create(['name' => 'Bike', 'stock_quantity' => 99, 'is_active' => true]));
+        ShopGoodVariation::create(['good_id' => $good->id, 'stock_quantity' => 2, 'is_active' => true]);
+        ShopGoodVariation::create(['good_id' => $good->id, 'stock_quantity' => 3, 'is_active' => true]);
+        ShopGoodVariation::create(['good_id' => $good->id, 'stock_quantity' => 100, 'is_active' => false]);
+
+        $this->assertSame(
+            ['available_quantity' => 5, 'is_available' => true],
+            app(PartnerStockAvailabilityService::class)->productState($good->load('variations.stock')),
+        );
     }
 }
