@@ -135,6 +135,7 @@ class PartnerCatalogV11HttpTest extends TestCase
     {
         $unavailable = $this->insertGood('ADMIN-UNAVAILABLE', true, now(), ['stock_quantity' => 0]);
         $hidden = $this->insertGood('ADMIN-HIDDEN', true, now(), ['stock_quantity' => 5, 'is_show' => false]);
+        $this->insertVariation($hidden, 'ADMIN-HIDDEN-VARIATION', 3);
         $path = '/api/partner/v1/catalog/products';
         $query = http_build_query(['include_unavailable' => 1, 'per_page' => 500]);
         $ids = collect($this->withHeaders($this->signedHeaders($path, $query, 'admin-unavailable'))
@@ -142,6 +143,9 @@ class PartnerCatalogV11HttpTest extends TestCase
 
         $this->assertContains($unavailable, $ids);
         $this->assertContains($hidden, $ids);
+        $this->assertSame($hidden, $ids[0]);
+        $this->assertSame('ADMIN-HIDDEN-VARIATION', $this->withHeaders($this->signedHeaders($path, $query, 'admin-variations'))
+            ->get($path.'?'.$query)->assertOk()->json('data.data.0.variations.0.sku'));
     }
 
     public function test_product_response_contains_explicit_contract_without_internal_fields(): void

@@ -47,7 +47,7 @@ class PartnerCatalogService
             ]);
         }
 
-        return $query
+        $query = $query
             ->when($filters['category_id'] ?? null, fn ($query, $id) => $query->whereHas(
                 'categories',
                 fn ($categories) => $categories->where('shop_categories.id', $id),
@@ -68,10 +68,24 @@ class PartnerCatalogService
                 'brands',
                 'properties.values',
                 'stock',
-            ])
-            ->orderBy('updated_at')
-            ->orderBy('id')
-            ->paginate($this->perPage($filters));
+            ]);
+
+        if (! empty($filters['include_unavailable']) && empty($filters['updated_since']) && empty($filters['cursor'])) {
+            $query->withCount([
+                'variations as active_variations_count' => fn (Builder $variations) =>
+                    $variations->where('is_active', true),
+            ])->orderByDesc('active_variations_count')
+                ->orderBy('name')
+                ->orderBy('id');
+
+            Log::info('[FIX:partner-admin-variations] Administrative catalog ordered by active variations', [
+                'per_page' => $this->perPage($filters),
+            ]);
+        } else {
+            $query->orderBy('updated_at')->orderBy('id');
+        }
+
+        return $query->paginate($this->perPage($filters));
     }
 
     public function product(ShopGood $good): ShopGood
