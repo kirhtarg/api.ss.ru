@@ -107,29 +107,31 @@ class PartnerCatalogV11HttpTest extends TestCase
         $this->assertNotContains($inactiveId, collect($response->json('data.data'))->pluck('id')->all());
     }
 
-    public function test_normal_catalog_hides_non_displayed_and_unavailable_goods_but_keeps_preorder(): void
+    public function test_normal_catalog_keeps_stock_preorder_and_explicitly_shown_unavailable_goods(): void
     {
         $hidden = $this->insertGood('HIDDEN', true, now(), ['is_show' => false]);
-        $unavailable = $this->insertGood('UNAVAILABLE', true, now(), ['stock_quantity' => 0]);
+        $unavailable = $this->insertGood('UNAVAILABLE', true, now(), ['stock_quantity' => 0, 'is_show' => false]);
+        $shownUnavailable = $this->insertGood('SHOWN-UNAVAILABLE', true, now(), ['stock_quantity' => 0, 'is_show' => true]);
         $preorder = $this->insertGood('PREORDER', true, now(), ['stock_quantity' => 0, 'is_preorder' => true]);
         $path = '/api/partner/v1/catalog/products';
         $query = 'per_page=100';
         $ids = collect($this->withHeaders($this->signedHeaders($path, $query, 'catalog-eligibility'))->get($path.'?'.$query)->assertOk()->json('data.data'))->pluck('id')->all();
 
-        $this->assertNotContains($hidden, $ids);
+        $this->assertContains($hidden, $ids);
         $this->assertNotContains($unavailable, $ids);
+        $this->assertContains($shownUnavailable, $ids);
         $this->assertContains($preorder, $ids);
 
         $incrementalQuery = http_build_query(['updated_since' => now()->subMinute()->toIso8601String(), 'per_page' => 100]);
         $hiddenData = collect($this->withHeaders($this->signedHeaders($path, $incrementalQuery, 'hidden-incremental'))
             ->get($path.'?'.$incrementalQuery)->assertOk()->json('data.data'))->firstWhere('id', $hidden);
-        $this->assertFalse($hiddenData['is_active']);
-        $this->assertFalse($hiddenData['is_available']);
-        $this->assertFalse($hiddenData['can_order']);
-        $this->assertSame('unavailable', $hiddenData['purchase_mode']);
+        $this->assertTrue($hiddenData['is_active']);
+        $this->assertTrue($hiddenData['is_available']);
+        $this->assertTrue($hiddenData['can_order']);
+        $this->assertSame('regular', $hiddenData['purchase_mode']);
     }
 
-    public function test_administration_catalog_can_include_unavailable_but_not_hidden_goods(): void
+    public function test_administration_catalog_includes_unavailable_and_hidden_active_goods(): void
     {
         $unavailable = $this->insertGood('ADMIN-UNAVAILABLE', true, now(), ['stock_quantity' => 0]);
         $hidden = $this->insertGood('ADMIN-HIDDEN', true, now(), ['stock_quantity' => 5, 'is_show' => false]);
@@ -139,7 +141,7 @@ class PartnerCatalogV11HttpTest extends TestCase
             ->get($path.'?'.$query)->assertOk()->json('data.data'))->pluck('id')->all();
 
         $this->assertContains($unavailable, $ids);
-        $this->assertNotContains($hidden, $ids);
+        $this->assertContains($hidden, $ids);
     }
 
     public function test_product_response_contains_explicit_contract_without_internal_fields(): void
@@ -179,8 +181,11 @@ class PartnerCatalogV11HttpTest extends TestCase
         $eligibleBrand = DB::table('shop_brands')->insertGetId(['name' => 'Eligible', 'slug' => 'eligible', 'logo' => '/images/brands/eligible.svg', 'is_active' => true, 'sort_order' => 1, 'created_at' => now(), 'updated_at' => now()]);
         $inactiveBrand = DB::table('shop_brands')->insertGetId(['name' => 'Inactive', 'slug' => 'inactive', 'logo' => null, 'is_active' => false, 'sort_order' => 2, 'created_at' => now(), 'updated_at' => now()]);
         $emptyBrand = DB::table('shop_brands')->insertGetId(['name' => 'Empty', 'slug' => 'empty', 'logo' => null, 'is_active' => true, 'sort_order' => 3, 'created_at' => now(), 'updated_at' => now()]);
+        $adminBrand = DB::table('shop_brands')->insertGetId(['name' => 'Admin only', 'slug' => 'admin-only', 'logo' => null, 'is_active' => true, 'sort_order' => 4, 'created_at' => now(), 'updated_at' => now()]);
         $goodId = $this->insertGood('BRAND-ELIGIBLE', true, now());
+        $adminGoodId = $this->insertGood('BRAND-ADMIN', true, now(), ['stock_quantity' => 0, 'is_show' => false]);
         DB::table('shop_good_brands')->insert([['good_id' => $goodId, 'brand_id' => $eligibleBrand], ['good_id' => $goodId, 'brand_id' => $inactiveBrand]]);
+        DB::table('shop_good_brands')->insert(['good_id' => $adminGoodId, 'brand_id' => $adminBrand]);
 
         $path = '/api/partner/v1/catalog/brands';
         $response = $this->withHeaders($this->signedHeaders($path, '', 'brands-success'))->get($path)->assertOk();
@@ -190,6 +195,11 @@ class PartnerCatalogV11HttpTest extends TestCase
         ]]]);
         $this->assertNotContains($inactiveBrand, collect($response->json('data'))->pluck('id')->all());
         $this->assertNotContains($emptyBrand, collect($response->json('data'))->pluck('id')->all());
+
+        $adminQuery = 'include_unavailable=1';
+        $adminResponse = $this->withHeaders($this->signedHeaders($path, $adminQuery, 'brands-admin'))
+            ->get($path.'?'.$adminQuery)->assertOk();
+        $this->assertContains($adminBrand, collect($adminResponse->json('data'))->pluck('id')->all());
 
         $this->getJson($path)->assertUnauthorized();
         $this->credential->update(['scopes' => ['orders:read']]);
@@ -333,6 +343,7 @@ class PartnerCatalogV11HttpTest extends TestCase
     {
         $goodId = $this->insertGood('REMOTE-ONLY', true, now(), [
             'stock_quantity' => 0,
+            'is_show' => false,
             'remote_stock_quantity' => '>10',
             'fast_remote_stock_quantity' => '4',
         ]);

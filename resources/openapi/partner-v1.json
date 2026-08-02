@@ -30,6 +30,7 @@
     "/catalog/brands": {
       "get": {
         "tags": ["Catalog"], "summary": "Получить активные бренды", "operationId": "listPartnerBrands", "x-required-scope": "catalog:read",
+        "parameters": [{ "name": "include_unavailable", "in": "query", "description": "Для административного каталога: включить бренды активных товаров независимо от доступности и показа на витрине магазина.", "schema": { "type": "boolean", "default": false } }],
         "responses": { "200": { "description": "Бренды доступных товаров", "content": { "application/json": { "schema": { "type": "object", "additionalProperties": false, "required": ["success", "data"], "properties": { "success": { "const": true }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/Brand" } } } } } } }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" } }
       }
     },
@@ -40,7 +41,7 @@
           { "name": "category_id", "in": "query", "schema": { "type": "integer" } },
           { "name": "brand_id", "in": "query", "schema": { "type": "integer" } },
           { "name": "q", "in": "query", "schema": { "type": "string", "maxLength": 120 } },
-          { "name": "include_unavailable", "in": "query", "description": "Для административного каталога: включить активные отображаемые товары без доступного локального остатка. Не меняет правила checkout.", "schema": { "type": "boolean", "default": false } },
+          { "name": "include_unavailable", "in": "query", "description": "Для административного каталога: включить все активные товары независимо от доступности и показа на собственной витрине магазина. Не меняет правила checkout.", "schema": { "type": "boolean", "default": false } },
           { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/PerPage" },
           { "$ref": "#/components/parameters/UpdatedSince" }, { "$ref": "#/components/parameters/Cursor" }
         ],

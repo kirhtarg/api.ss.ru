@@ -18,11 +18,13 @@ class PartnerCatalogService
         return ShopCategory::query()->where('is_active', true)->orderBy('sort_order')->orderBy('id')->get();
     }
 
-    public function activeBrands()
+    public function activeBrands(bool $includeUnavailable = false)
     {
         return ShopBrand::query()->active()->whereHas(
             'goods',
-            fn (Builder $goods) => $this->availability->applyCatalogEligibleQuery($goods),
+            fn (Builder $goods) => $includeUnavailable
+                ? $goods->where('is_active', true)
+                : $this->availability->applyCatalogEligibleQuery($goods),
         )->ordered()->get();
     }
 
@@ -40,7 +42,6 @@ class PartnerCatalogService
         if (empty($filters['updated_since']) && empty($filters['include_unavailable'])) {
             $this->availability->applyCatalogEligibleQuery($query);
         } elseif (empty($filters['updated_since'])) {
-            $query->where('is_show', true);
             Log::info('[FIX:partner-admin-catalog] Including unavailable products for partner administration', [
                 'resource' => $query->getModel()->getTable(),
             ]);

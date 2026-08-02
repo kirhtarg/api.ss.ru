@@ -68,16 +68,14 @@ final class PartnerStockAvailabilityService
 
     public function productIsActiveForCatalog(ShopGood $good): bool
     {
-        $attributes = $good->getAttributes();
-
-        return (bool) $good->is_active
-            && (! array_key_exists('is_show', $attributes) || (bool) $good->is_show);
+        return (bool) $good->is_active;
     }
 
     public function applyCatalogEligibleQuery(Builder $query): Builder
     {
-        return $query->where('is_active', true)->where('is_show', true)->where(function (Builder $eligible): void {
+        return $query->where('is_active', true)->where(function (Builder $eligible): void {
             $eligible->where('is_preorder', true)
+                ->orWhere('is_show', true)
                 ->orWhere(function (Builder $withoutVariations): void {
                     $withoutVariations->whereDoesntHave(
                         'variations',

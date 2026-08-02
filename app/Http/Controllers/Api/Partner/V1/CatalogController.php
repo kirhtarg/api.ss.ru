@@ -54,7 +54,8 @@ class CatalogController extends Controller
     {
         $startedAt = hrtime(true);
         try {
-            $brands = $this->catalog->activeBrands();
+            $request->validate(['include_unavailable' => 'nullable|boolean']);
+            $brands = $this->catalog->activeBrands($request->boolean('include_unavailable'));
             $this->logResult($request, 'catalog/brands', [], $brands->count(), $startedAt);
 
             return response()->json([
