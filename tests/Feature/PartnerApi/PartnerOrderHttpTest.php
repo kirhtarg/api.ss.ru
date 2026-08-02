@@ -148,6 +148,30 @@ class PartnerOrderHttpTest extends TestCase
         $this->assertDatabaseCount('partner_checkout_quotes', 1);
     }
 
+    public function test_quote_applies_verified_customer_context_and_returns_promotion_breakdown(): void
+    {
+        $path = '/api/partner/v1/checkout/quote';
+        $payload = ['items' => [['good_id' => $this->goodId, 'quantity' => 1]], 'delivery' => ['method_id' => $this->deliveryMethodId],
+            'promotion' => ['customer_reference' => ['external_id' => 'sr-user-10', 'registration_status' => 'registered', 'birthday_status' => 'not_today'], 'registration_discount_percent' => 7, 'partner_bonus_spend' => 50]];
+        $body = json_encode($payload, JSON_THROW_ON_ERROR);
+
+        $this->postJson($path, $payload, $this->signedHeaders('POST', $path, $body, 'nonce-promotion'))
+            ->assertOk()->assertJsonPath('data.subtotal_before_discounts', 1000)->assertJsonPath('data.subtotal', 930)
+            ->assertJsonPath('data.discount_amount', 70)->assertJsonPath('data.total', 1230)
+            ->assertJsonPath('data.promotion.decisions.0.code', 'registered_customer_discount')
+            ->assertJsonPath('data.promotion.bonus.spend_applied', 0)
+            ->assertJsonPath('data.promotion.bonus.spend_reason', 'verified_partner_bonus_account_required');
+    }
+
+    public function test_order_rejects_promotion_without_authoritative_quote(): void
+    {
+        $payload = $this->payload('EXT-PROMOTION-WITHOUT-QUOTE');
+        $payload['promotion'] = ['promo_code' => 'TEST'];
+        $this->postSignedOrder($payload, 'idem-promotion-no-quote', 'promotion-no-quote')
+            ->assertUnprocessable()->assertJsonPath('error.code', 'promotion_quote_required');
+        $this->assertDatabaseCount('partner_orders', 0);
+    }
+
     public function test_order_can_be_created_from_owned_unexpired_quote_and_replay_reuses_it(): void
     {
         $quotePayload = ['items' => [['good_id' => $this->goodId, 'quantity' => 1]], 'delivery' => ['method_id' => $this->deliveryMethodId, 'address' => 'Moscow']];

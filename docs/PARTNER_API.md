@@ -4,6 +4,10 @@
 
 Partner API позволяет внешним партнёрам читать каталог, рассчитывать заказ штатными сервисами магазина, резервировать остатки, выбирать доставку, создавать оплату и получать изменения через webhook.
 
+Теговые условия товаров применяет сам магазин в `checkout/quote`: максимальная `extra_discount_percent` имеет приоритет над акционной ценой, `disables_registered_discount` запрещает скидку зарегистрированного клиента для строки, `disables_bonuses` исключает строку из начисления бонусов, а максимальная `increased_bonus_percent` задаёт повышенный процент начисления. Partner API возвращает применённую `tag_policy` в строках и агрегат `promotion.bonus.tag_rules`; клиент не должен пересчитывать эти правила самостоятельно.
+
+HMAC-аутентифицированный партнёр может передать `promotion.registration_discount_percent` (0–100). Значение входит в hash quote и обязано совпасть при создании заказа. Это позволяет SportRep задавать процент отдельно для каждого подключённого магазина; клиентский браузер не является источником этого значения.
+
 ## Развёртывание
 
 На единственном production-сервере запрещено запускать тесты в рабочем release и использовать production `.env` для тестового процесса. Полная процедура: [PARTNER_API_PRODUCTION_DEPLOYMENT.md](PARTNER_API_PRODUCTION_DEPLOYMENT.md).
@@ -132,14 +136,27 @@ GET /api/partner/v1/catalog/products?cursor=<meta.next_cursor>&per_page=50
 
 ### Checkout quote и доставка
 
-`POST /checkout/quote` (`checkout:read`) рассчитывает строки, скидки, subtotal, доставку, total, доступность, тарифы и срок действия без создания заказа, резерва или платежа. Quote ID является диагностическим fingerprint, а не разрешением доверять старой цене. При `POST /orders` цена, остаток и доставка всегда рассчитываются повторно.
+`POST /checkout/quote` (`checkout:read`) рассчитывает строки, скидки, subtotal, доставку, total, доступность, тарифы и срок действия без создания заказа, резерва или платежа. При `POST /orders` магазин повторно проверяет цену, остаток, доставку и promotion-контекст; если условия изменились, возвращается `409 quote_terms_changed`. После успешной проверки заказ создаётся строго из авторитетного snapshot quote.
 
 ```json
 {
   "items": [{"good_id": 123, "variation_id": 456, "quantity": 1}],
-  "delivery": {"method_id": 2, "city_code": 137, "tariff_code": "136", "pvz_code": "SPB1"}
+  "delivery": {"method_id": 2, "city_code": 137, "tariff_code": "136", "pvz_code": "SPB1"},
+  "promotion": {
+    "customer_reference": {
+      "external_id": "sportrep-user-42",
+      "registration_status": "registered",
+      "birthday_status": "not_today"
+    },
+    "promo_code": "SUMMER",
+    "partner_bonus_spend": 0
+  }
 }
 ```
+
+Магазин является единственным ценовым арбитром. Ответ содержит `subtotal_before_discounts`, итоговый `subtotal`, общий `discount_amount`, а также `promotion.decisions` с кодом, результатом и причиной каждого правила. `birthday_status=verified_today` допустим только после проверки SportRep и передаётся внутри HMAC-подписанного запроса. Значение промокода в логах не сохраняется — фиксируется только SHA-256 fingerprint.
+
+`promotion.bonus` содержит предварительное начисление и запрос списания. Пока внешний профиль не связан с подтверждённым бонусным аккаунтом Skate&Snow, `spend_applied` всегда равен `0`, а `spend_reason=verified_partner_bonus_account_required`. Это исключает списание баллов по неподтверждённому клиентскому идентификатору. Точно тот же объект `promotion`, что использовался для quote, необходимо передать в `POST /orders`; иначе возвращается `quote_payload_mismatch`.
 
 Методы поиска доставки используют штатный CDEK-сервис магазина и возвращают нормализованные безопасные поля:
 

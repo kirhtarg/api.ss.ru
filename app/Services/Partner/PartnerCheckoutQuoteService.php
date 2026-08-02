@@ -10,6 +10,7 @@ use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Services\OrderCalculationService;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
 
@@ -20,12 +21,13 @@ class PartnerCheckoutQuoteService
         private readonly PartnerDeliveryService $delivery,
         private readonly PartnerStockAvailabilityService $availability,
         private readonly PartnerSignatureCanonicalizer $canonicalizer,
+        private readonly PartnerPromotionService $promotions,
     ) {}
 
-    public function create(Partner $partner, array $requestedItems, array $delivery): array
+    public function create(Partner $partner, array $requestedItems, array $delivery, array $promotion = []): array
     {
-        $requestPayload = ['items' => $requestedItems, 'delivery' => $delivery];
-        $snapshot = $this->snapshot($requestedItems, $delivery);
+        $requestPayload = ['items' => $requestedItems, 'delivery' => $delivery, 'promotion' => $promotion];
+        $snapshot = $this->snapshot($requestedItems, $delivery, $promotion);
         $expiresAt = now()->addMinutes(max(1, (int) config('partners.quote_ttl_minutes', 15)));
         $quote = PartnerCheckoutQuote::create([
             'public_id' => (string) Str::uuid(),
@@ -47,12 +49,12 @@ class PartnerCheckoutQuoteService
         return array_merge(['id' => $quote->public_id], $snapshot, ['expires_at' => $expiresAt->toIso8601String()]);
     }
 
-    public function preview(array $requestedItems, array $delivery): array
+    public function preview(array $requestedItems, array $delivery, array $promotion = []): array
     {
-        return $this->snapshot($requestedItems, $delivery);
+        return $this->snapshot($requestedItems, $delivery, $promotion);
     }
 
-    public function validateForOrder(Partner $partner, string $quoteId, array $items, array $delivery): PartnerCheckoutQuote
+    public function validateForOrder(Partner $partner, string $quoteId, array $items, array $delivery, array $promotion = []): PartnerCheckoutQuote
     {
         $quote = PartnerCheckoutQuote::query()
             ->where('public_id', $quoteId)
@@ -66,12 +68,12 @@ class PartnerCheckoutQuoteService
         if ($quote->consumed_at) {
             throw new PartnerQuoteConflictException('quote_already_used');
         }
-        if (! hash_equals($quote->request_hash, $this->hash(['items' => $items, 'delivery' => $delivery]))) {
+        if (! hash_equals($quote->request_hash, $this->hash(['items' => $items, 'delivery' => $delivery, 'promotion' => $promotion]))) {
             throw new PartnerQuoteConflictException('quote_payload_mismatch');
         }
 
         try {
-            $current = $this->snapshot($items, $delivery);
+            $current = $this->snapshot($items, $delivery, $promotion);
         } catch (UnprocessableEntityHttpException $exception) {
             Log::warning('Partner checkout quote stock changed', [
                 'partner_id' => $partner->id,
@@ -106,20 +108,22 @@ class PartnerCheckoutQuoteService
             ->delete();
     }
 
-    private function snapshot(array $requestedItems, array $delivery): array
+    private function snapshot(array $requestedItems, array $delivery, array $promotion = []): array
     {
-        $items = $this->buildItems($requestedItems);
-        $subtotal = round(array_sum(array_column($items, 'total')), 2);
-        $discountAmount = round(array_sum(array_map(
-            fn (array $item): float => max(0, ($item['base_price'] - $item['final_price']) * $item['quantity']),
-            $items,
-        )), 2);
+        $baseItems = $this->buildItems($requestedItems);
+        $promotionResult = $this->promotions->apply($baseItems, $promotion);
+        $items = $promotionResult['items'];
+        $subtotalBeforeDiscounts = round(array_sum(array_map(fn ($item) => $item['base_price'] * $item['quantity'], $items)), 2);
+        $subtotal = $promotionResult['payable_subtotal'];
+        $discountAmount = $promotionResult['discount_amount'];
         $deliveryQuote = $this->delivery->calculate($delivery, $items, $subtotal);
 
         return [
             'items' => $items,
+            'subtotal_before_discounts' => $subtotalBeforeDiscounts,
             'subtotal' => $subtotal,
             'discount_amount' => $discountAmount,
+            'promotion' => ['decisions' => $promotionResult['decisions'], 'promo_discount_amount' => $promotionResult['promo_discount_amount'], 'bonus' => $promotionResult['bonus']],
             'delivery_amount' => $deliveryQuote['amount'],
             'total' => round($subtotal + $deliveryQuote['amount'], 2),
             'currency' => 'RUB',
@@ -153,6 +157,7 @@ class PartnerCheckoutQuoteService
                 throw new UnprocessableEntityHttpException('Insufficient stock for product: '.$good->id);
             }
             $price = $this->calculation->calculateFinalUnitPrice($good, $variation);
+            $tagPolicy = $this->tagPolicy($good);
             $unitPrice = round((float) $price['final_price'], 2);
             $items[] = [
                 'good_id' => $good->id, 'good_name' => $good->name, 'good_sku' => $good->sku,
@@ -162,9 +167,24 @@ class PartnerCheckoutQuoteService
                 'price' => $unitPrice, 'base_price' => round((float) $price['base_price'], 2),
                 'sale_price' => round((float) $price['sale_price'], 2), 'final_price' => $unitPrice,
                 'discounts' => $price['discounts'], 'total' => round($unitPrice * $quantity, 2), 'currency' => 'RUB',
+                'tag_policy' => $tagPolicy,
             ];
         }
         return $items;
+    }
+
+    private function tagPolicy(ShopGood $good): array
+    {
+        if (! Schema::hasTable('shop_tags') || ! Schema::hasTable('shop_good_tags')) {
+            return ['disables_bonuses' => false, 'disables_registered_discount' => false, 'extra_discount_percent' => 0.0, 'increased_bonus_percent' => 0.0];
+        }
+        $tags = $good->tags()->where('is_active', true)->get();
+        return [
+            'disables_bonuses' => $tags->contains(fn ($tag) => (bool) $tag->disables_bonuses),
+            'disables_registered_discount' => $tags->contains(fn ($tag) => (bool) $tag->disables_registered_discount),
+            'extra_discount_percent' => min(100, max(0, (float) $tags->max('extra_discount_percent'))),
+            'increased_bonus_percent' => min(100, max(0, (float) $tags->max('increased_bonus_percent'))),
+        ];
     }
 
     private function hash(array $payload): string

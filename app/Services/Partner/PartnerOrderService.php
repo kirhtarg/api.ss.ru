@@ -67,13 +67,13 @@ class PartnerOrderService
             }
 
             $quote = ! empty($payload['quote_id'])
-                ? $this->quotes->validateForOrder($partner, $payload['quote_id'], $payload['items'], $payload['delivery'] ?? [])
+                ? $this->quotes->validateForOrder($partner, $payload['quote_id'], $payload['items'], $payload['delivery'] ?? [], $payload['promotion'] ?? [])
                 : null;
-            $items = $this->buildOrderItems($payload['items']);
-            $itemsAmount = round(array_sum(array_column($items, 'total')), 2);
+            $items = $quote ? ($quote->snapshot['items'] ?? []) : $this->buildOrderItems($payload['items']);
+            $itemsAmount = $quote ? (float) $quote->snapshot['subtotal'] : round(array_sum(array_column($items, 'total')), 2);
             $delivery = $this->delivery->calculate($payload['delivery'] ?? [], $items, $itemsAmount);
-            $deliveryAmount = $delivery['amount'];
-            $totalAmount = round($itemsAmount + $deliveryAmount, 2);
+            $deliveryAmount = $quote ? (float) $quote->snapshot['delivery_amount'] : $delivery['amount'];
+            $totalAmount = $quote ? (float) $quote->snapshot['total'] : round($itemsAmount + $deliveryAmount, 2);
             $commissionRate = (float) $partner->commission_rate;
             $commissionAmount = round($itemsAmount * $commissionRate, 2);
 
@@ -95,7 +95,7 @@ class PartnerOrderService
                 'notes' => $payload['comment'] ?? null,
                 'ip_address' => $ipAddress,
                 'user_agent' => $userAgent,
-                'metadata' => ['source' => 'partner_api', 'partner_id' => $partner->public_id, 'delivery' => $delivery['metadata']],
+                'metadata' => ['source' => 'partner_api', 'partner_id' => $partner->public_id, 'delivery' => $delivery['metadata'], 'promotion' => $quote?->snapshot['promotion'] ?? null],
             ]);
             $reservationIds = $this->reservations->reserveForOrder(
                 $shopOrder,
@@ -112,6 +112,7 @@ class PartnerOrderService
                 'request_hash' => $requestHash,
                 'status' => 'created',
                 'items_amount' => $itemsAmount,
+                'discount_amount' => $quote ? (float) ($quote->snapshot['discount_amount'] ?? 0) : 0,
                 'delivery_amount' => $deliveryAmount,
                 'total_amount' => $totalAmount,
                 'commission_rate' => $commissionRate,

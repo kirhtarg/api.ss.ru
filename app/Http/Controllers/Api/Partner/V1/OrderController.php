@@ -49,9 +49,20 @@ class OrderController extends Controller
             'payment_method_id' => ['nullable', 'integer'],
             'comment' => ['nullable', 'string', 'max:4000'],
             'customer_reference' => ['nullable', 'array'],
+            'promotion' => ['nullable', 'array'],
+            'promotion.customer_reference' => ['nullable', 'array'],
+            'promotion.customer_reference.external_id' => ['nullable', 'string', 'max:128'],
+            'promotion.customer_reference.registration_status' => ['nullable', 'in:guest,registered'],
+            'promotion.customer_reference.birthday_status' => ['nullable', 'in:not_provided,not_today,verified_today'],
+            'promotion.registration_discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'promotion.promo_code' => ['nullable', 'string', 'max:100'],
+            'promotion.partner_bonus_spend' => ['nullable', 'integer', 'min:0'],
             'attribution' => ['nullable', 'array'],
             'metadata' => ['nullable', 'array'],
         ]);
+        if (! empty($payload['promotion']) && empty($payload['quote_id'])) {
+            return response()->json(['success' => false, 'error' => ['code' => 'promotion_quote_required', 'message' => 'A checkout quote is required when promotion context is supplied']], 422);
+        }
 
         try {
             $result = $this->orders->create(

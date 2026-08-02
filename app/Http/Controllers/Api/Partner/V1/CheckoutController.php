@@ -41,6 +41,14 @@ class CheckoutController extends Controller
             'delivery.city_code' => ['nullable', 'integer', 'min:1'],
             'delivery.tariff_code' => ['nullable', 'string', 'max:30'],
             'delivery.pvz_code' => ['nullable', 'string', 'max:100'],
+            'promotion' => ['nullable', 'array'],
+            'promotion.customer_reference' => ['nullable', 'array'],
+            'promotion.customer_reference.external_id' => ['nullable', 'string', 'max:128'],
+            'promotion.customer_reference.registration_status' => ['nullable', 'in:guest,registered'],
+            'promotion.customer_reference.birthday_status' => ['nullable', 'in:not_provided,not_today,verified_today'],
+            'promotion.registration_discount_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
+            'promotion.promo_code' => ['nullable', 'string', 'max:100'],
+            'promotion.partner_bonus_spend' => ['nullable', 'integer', 'min:0'],
         ]);
 
         return response()->json([
@@ -49,6 +57,7 @@ class CheckoutController extends Controller
                 $request->attributes->get('partner'),
                 $payload['items'],
                 $payload['delivery'] ?? [],
+                $payload['promotion'] ?? [],
             ),
         ]);
     }
