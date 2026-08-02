@@ -136,7 +136,7 @@ class PartnerCatalogV11HttpTest extends TestCase
         $unavailable = $this->insertGood('ADMIN-UNAVAILABLE', true, now(), ['stock_quantity' => 0]);
         $hidden = $this->insertGood('ADMIN-HIDDEN', true, now(), ['stock_quantity' => 5, 'is_show' => false]);
         $path = '/api/partner/v1/catalog/products';
-        $query = http_build_query(['include_unavailable' => 1, 'per_page' => 100]);
+        $query = http_build_query(['include_unavailable' => 1, 'per_page' => 500]);
         $ids = collect($this->withHeaders($this->signedHeaders($path, $query, 'admin-unavailable'))
             ->get($path.'?'.$query)->assertOk()->json('data.data'))->pluck('id')->all();
 

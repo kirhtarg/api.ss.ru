@@ -141,6 +141,6 @@ class PartnerCatalogService
 
     private function perPage(array $filters): int
     {
-        return min(max((int) ($filters['per_page'] ?? 24), 1), 100);
+        return min(max((int) ($filters['per_page'] ?? 24), 1), 500);
     }
 }

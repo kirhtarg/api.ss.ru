@@ -35,6 +35,7 @@ class CatalogController extends Controller
         $startedAt = hrtime(true);
         try {
             $data = $request->validate(array_merge($this->syncRules(), [
+                'per_page' => 'nullable|integer|min:1|max:500',
                 'category_id' => 'nullable|integer',
                 'brand_id' => 'nullable|integer',
                 'q' => 'nullable|string|max:120',
@@ -86,7 +87,7 @@ class CatalogController extends Controller
     {
         return [
             'page' => 'nullable|integer|min:1',
-            'per_page' => 'nullable|integer|min:1|max:100',
+                'per_page' => 'nullable|integer|min:1|max:100',
             'updated_since' => 'nullable|date',
             'cursor' => 'nullable|string|max:512',
         ];
