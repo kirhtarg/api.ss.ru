@@ -104,7 +104,12 @@ class BikeproductsCatalogService
 
         if ($action === 'delete') {
             $supplierNames = $this->supplierNames($snapshot->supplier_code);
-            $sourceSkus = $snapshot->items()->pluck('external_sku')->filter()->map(fn ($sku) => (string) $sku)->all();
+            $sourceSkus = $snapshot->items()
+                ->get(['external_sku', 'raw_payload'])
+                ->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code))
+                ->filter()
+                ->map(fn ($sku) => (string) $sku)
+                ->all();
             $goods = ShopGood::query()
                 ->whereIn('id', $ids)
                 ->whereIn('supplier', $supplierNames)
@@ -130,7 +135,8 @@ class BikeproductsCatalogService
         }
 
         $items = $snapshot->items()->whereIn('id', $ids)->get();
-        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
+        $sourceSkus = $items->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code));
+        $matches = $this->resolveSkuMatches($sourceSkus, $snapshot->supplier_code)
             ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
         $goodMappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
@@ -151,19 +157,21 @@ class BikeproductsCatalogService
             ->groupBy(fn (SupplierCatalogItem $item) => $item->clean_name ?: $this->sourceGroupName($item->name, $item->external_sku))
             ->map(fn (Collection $group) => $group->count())
             ->all();
+        $sourceVariationSkus = $sourceVariationItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code))->filter()->unique()->values();
         $existingVariationsBySku = $this->findVariationsBySku(
-            $sourceVariationItems->pluck('external_sku'),
+            $sourceVariationSkus,
             $snapshot->supplier_code,
         );
         $existingGoodsBySku = ShopGood::query()
             ->where('supplier', $supplierName)
-            ->whereIn('sku', $sourceVariationItems->pluck('external_sku')->filter())
+            ->whereIn(DB::raw('TRIM(`sku`)'), $sourceVariationSkus->all())
             ->get()
-            ->keyBy('sku');
+            ->keyBy(fn (ShopGood $good) => $this->normalizeSku($good->sku));
         $parentGoodsBySourceGroup = [];
         foreach ($sourceVariationItems as $sourceVariationItem) {
-            $existingVariation = $existingVariationsBySku->get($sourceVariationItem->external_sku);
-            $existingGood = $existingVariation?->good ?? $existingGoodsBySku->get($sourceVariationItem->external_sku);
+            $sourceSku = $this->sourceSkuForItem($sourceVariationItem, $snapshot->supplier_code);
+            $existingVariation = $existingVariationsBySku->get($this->normalizeSku($sourceSku));
+            $existingGood = $existingVariation?->good ?? $existingGoodsBySku->get($this->normalizeSku($sourceSku));
             if ($existingGood) {
                 $groupKey = $sourceVariationItem->clean_name
                     ?: $this->sourceGroupName($sourceVariationItem->name, $sourceVariationItem->external_sku);
@@ -187,8 +195,9 @@ class BikeproductsCatalogService
                     continue;
                 }
 
+                $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
                 $isSourceVariation = $this->isSourceVariationItem($item);
-                $match = $matches->get($this->normalizeSku($item->external_sku));
+                $match = $matches->get($this->normalizeSku($sourceSku));
                 if (! $isSourceVariation && $match) {
                     $good = $match['type'] === 'variation' ? $match['model']->good : $match['model'];
                     $values = collect($attributes)->except('brand')->all();
@@ -210,12 +219,12 @@ class BikeproductsCatalogService
                 }
 
                 if ($isSourceVariation) {
-                    if (ShopGoodVariation::query()->where('sku', $item->external_sku)->exists()) {
+                    if (ShopGoodVariation::query()->where('sku', $sourceSku)->exists()) {
                         $skipped++;
                         continue;
                     }
                     $groupKey = $item->clean_name ?: $this->sourceGroupName($item->name, $item->external_sku);
-                    $parentSku = $this->nullableString($item->external_group_key) ?? (string) $item->external_sku;
+                    $parentSku = $this->nullableString($item->external_group_key) ?? (string) $sourceSku;
                     $good = $match && $match['type'] === 'good' ? $match['model'] : ($parentGoodsBySourceGroup[$groupKey] ?? null);
                     if (! $good && $item->clean_name) {
                         $candidates = ShopGood::query()->where('supplier', $supplierName)->where('name', $item->clean_name)->doesntHave('variations')->limit(2)->get();
@@ -254,7 +263,7 @@ class BikeproductsCatalogService
                     $variation = ShopGoodVariation::create([
                         'good_id' => $good->id,
                         'supplier' => $supplierName,
-                        'sku' => $item->external_sku,
+                        'sku' => $sourceSku,
                         'name' => $name,
                         'is_active' => false,
                         ...collect($attributes)->only(['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all(),
@@ -270,11 +279,11 @@ class BikeproductsCatalogService
                     continue;
                 }
 
-                $good = $this->createMappedGood($name, (string) $item->external_sku, $supplierName, $attributes, $payload, $propertyMappings);
+                $good = $this->createMappedGood($name, (string) $sourceSku, $supplierName, $attributes, $payload, $propertyMappings);
                 $variation = ShopGoodVariation::create([
                     'good_id' => $good->id,
                     'supplier' => $supplierName,
-                    'sku' => $item->external_sku,
+                    'sku' => $sourceSku,
                     'name' => $name,
                     'is_active' => false,
                     ...collect($attributes)->only(['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all(),
@@ -458,9 +467,10 @@ class BikeproductsCatalogService
             ->get();
             if ($action === 'delete') {
                 $parentGoods = $variations->pluck('good')->filter()->keyBy('id');
-                $sourceSkus = $snapshot->items()->pluck('external_sku')
+                $sourceSkus = $snapshot->items()
+                    ->get(['external_sku', 'raw_payload'])
+                    ->map(fn (SupplierCatalogItem $item) => $this->normalizeSku($this->sourceSkuForItem($item, $snapshot->supplier_code)))
                     ->filter()
-                    ->map(fn ($sku) => $this->normalizeSku($sku))
                     ->flip();
                 foreach ($variations as $variation) {
                     $variation->delete();
@@ -770,6 +780,7 @@ class BikeproductsCatalogService
 
                 $imageUrls = $this->extractImageUrls($payload, $imageBaseUrl);
                 $normalizedVariation = $this->normalizeSourceVariation($payload, $supplierCode, $sku);
+                $sku = $this->sourceSkuForPayload($payload, $supplierCode, $sku);
                 if ($imageUrls !== []) {
                     $itemsWithImages++;
                 }
@@ -1076,7 +1087,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v2:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1085,11 +1096,11 @@ class BikeproductsCatalogService
         } else {
         $mappings = $this->getMappings($snapshot->supplier_code);
         $sourceItems = $this->sourceVariationItems($snapshot)
-            ->filter(fn (SupplierCatalogItem $item) => $this->normalizeSku($item->external_sku) !== '')
-            ->keyBy(fn (SupplierCatalogItem $item) => $this->normalizeSku($item->external_sku));
+            ->filter(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code) !== '')
+            ->keyBy(fn (SupplierCatalogItem $item) => $this->normalizeSku($this->sourceSkuForItem($item, $snapshot->supplier_code)));
         $sourceSingleItems = $this->sourceSingleItems($snapshot)
-            ->filter(fn (SupplierCatalogItem $item) => $this->normalizeSku($item->external_sku) !== '')
-            ->keyBy(fn (SupplierCatalogItem $item) => $this->normalizeSku($item->external_sku));
+            ->filter(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code) !== '')
+            ->keyBy(fn (SupplierCatalogItem $item) => $this->normalizeSku($this->sourceSkuForItem($item, $snapshot->supplier_code)));
         $supplierNames = $this->supplierNames($snapshot->supplier_code);
         $databaseVariations = ShopGoodVariation::query()
             ->where(function ($query) use ($supplierNames) {
@@ -2200,7 +2211,12 @@ class BikeproductsCatalogService
 
         // Search must not turn hidden rows into deletion candidates. The absence
         // check always uses the complete parsed file, not the filtered result.
-        $sourceSkus = $snapshot->items()->pluck('external_sku')->filter()->map(fn ($sku) => (string) $sku)->all();
+        $sourceSkus = $snapshot->items()
+            ->get(['external_sku', 'raw_payload'])
+            ->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code))
+            ->filter()
+            ->map(fn ($sku) => (string) $sku)
+            ->all();
         $supplierNames = $this->supplierNames($snapshot->supplier_code);
         $databaseOnlyGoods = ShopGood::query()
             ->whereIn('supplier', $supplierNames)
@@ -2697,7 +2713,7 @@ class BikeproductsCatalogService
         return $this->namedVariationAxes($normalized['color'], $normalized['size'], $attributes);
     }
 
-    /** @return array{clean_name: ?string, color: ?string, size: ?string, year: ?string, is_variation: bool} */
+    /** @return array{clean_name: ?string, color: ?string, size: ?string, year: ?string, sku: ?string, is_variation: bool} */
     private function normalizeSourceVariation(array $payload, string $supplierCode, ?string $fallbackSku = null): array
     {
         $name = $this->nullableString($payload[self::SOURCE_COLUMNS['name']] ?? null);
@@ -2706,6 +2722,7 @@ class BikeproductsCatalogService
             'color' => null,
             'size' => null,
             'year' => null,
+            'sku' => $this->nullableString($fallbackSku),
             'is_variation' => false,
         ];
         if ($supplierCode !== 'bikeproducts') {
@@ -2722,6 +2739,9 @@ class BikeproductsCatalogService
         }
 
         // Последний вложенный блок — SKU. Год (третья часть) намеренно не используем.
+        if (preg_match('/\(([^()]*)\)\s*$/u', $contents, $skuMatch)) {
+            $normalized['sku'] = $this->nullableString($skuMatch[1]) ?? $normalized['sku'];
+        }
         $contents = trim(preg_replace('/\s*\([^()]*\)\s*$/u', '', $contents) ?? $contents);
         // Позиции нельзя сжимать: в "(Black, , 2026 ...)" пустой второй
         // элемент означает отсутствие размера, а не то, что год стал размером.
@@ -2738,6 +2758,19 @@ class BikeproductsCatalogService
         $normalized['is_variation'] = true;
 
         return $normalized;
+    }
+
+    /** @param array<string, mixed> $payload */
+    private function sourceSkuForPayload(array $payload, string $supplierCode, ?string $fallbackSku = null): string
+    {
+        $normalized = $this->normalizeSourceVariation($payload, $supplierCode, $fallbackSku);
+
+        return trim((string) ($normalized['sku'] ?? $fallbackSku ?? ''));
+    }
+
+    private function sourceSkuForItem(SupplierCatalogItem $item, string $supplierCode): string
+    {
+        return $this->sourceSkuForPayload($item->raw_payload ?? [], $supplierCode, $item->external_sku);
     }
 
     /** @param array<string, int> $attributes @return array<int, array<string, mixed>> */
