@@ -272,6 +272,7 @@ class BikeproductsCatalogController extends Controller
             'statuses' => ['nullable', 'array', 'max:5'],
             'statuses.*' => ['string', 'in:attention,match,file_has_properties,file_empty,both_empty,either_has_properties,file_has_database_empty'],
             'variation_count' => ['nullable', 'in:all,single,multiple'],
+            'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
             'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier'],
         ]);
@@ -282,7 +283,7 @@ class BikeproductsCatalogController extends Controller
                 $snapshot,
                 'variations-v2',
                 $data,
-                fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all'),
+                fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null),
             ),
         ]);
     }
@@ -316,13 +317,14 @@ class BikeproductsCatalogController extends Controller
         $data = $request->validate([
             'search' => ['nullable', 'string', 'max:120'],
             'variation_count' => ['nullable', 'in:all,single,multiple'],
+            'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
             'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier'],
         ]);
 
         return response()->json([
             'success' => true,
-            'data' => $this->catalog->variationSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all'),
+            'data' => $this->catalog->variationSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null),
         ]);
     }
 
@@ -540,6 +542,7 @@ class BikeproductsCatalogController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
+            'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:2'],
             'filters.*' => ['string', 'in:prices,stocks'],
         ]);
@@ -557,6 +560,7 @@ class BikeproductsCatalogController extends Controller
                 [],
                 $data['filters'] ?? [],
                 true,
+                $data['good_id'] ?? null,
             ),
         )]);
     }
@@ -568,12 +572,13 @@ class BikeproductsCatalogController extends Controller
         }
         $data = $request->validate([
             'search' => ['nullable', 'string', 'max:120'],
+            'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:2'],
             'filters.*' => ['string', 'in:prices,stocks'],
         ]);
 
         return response()->json(['success' => true, 'data' => [
-            'item_ids' => $this->catalog->priceStockSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? []),
+            'item_ids' => $this->catalog->priceStockSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? [], $data['good_id'] ?? null),
         ]]);
     }
 
@@ -633,7 +638,7 @@ class BikeproductsCatalogController extends Controller
         $version = $snapshot->updated_at?->format('Uu') ?? '0';
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v12:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v14:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.

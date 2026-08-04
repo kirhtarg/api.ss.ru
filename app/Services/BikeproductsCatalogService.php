@@ -334,20 +334,25 @@ class BikeproductsCatalogService
             $targets = $scope === 'prices'
                 ? ['price', 'sale_price', 'demping_price']
                 : ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'];
-            DB::transaction(function () use ($items, $matches, $mappings, $targets, &$affected, &$skipped): void {
+            $priceStockMatches = $this->resolveSkuMatches(
+                $items->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
+                $snapshot->supplier_code,
+                true,
+            );
+            DB::transaction(function () use ($items, $priceStockMatches, $snapshot, $mappings, $targets, &$affected, &$skipped): void {
                 foreach ($items as $item) {
-                    $match = $matches->get($item->external_sku);
+                    $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
+                    $match = $priceStockMatches->get($sourceSku);
                     if (! $match) { $skipped++; continue; }
                     $values = collect($this->mappedGoodAttributes($item, $mappings))->only($targets)->all();
                     if ($values === []) { $skipped++; continue; }
-                    $model = $match['type'] === 'variation' ? $match['model'] : $match['model'];
+                    $model = $match['model'];
                     $model->update($values);
                     $affected++;
                 }
             });
             return ['affected' => $affected, 'skipped' => $skipped, 'message' => $scope === 'prices' ? 'Цены обновлены' : 'Остатки обновлены'];
         }
-
         if ($scope === 'properties') {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'product')->where('is_check_enabled', true)->whereNotNull('property_id')->get();
             $differentItemIds = array_flip($this->propertySelection($snapshot));
@@ -576,6 +581,10 @@ class BikeproductsCatalogService
             'source_name' => $file->getClientOriginalName(),
             'storage_path' => $temporaryPath,
             'checksum' => hash_file('sha256', $file->getRealPath()),
+            'summary' => [
+                'source_file_size' => $file->getSize(),
+                'source_original_name' => $file->getClientOriginalName(),
+            ],
             'status' => 'queued',
             'stage' => 'Файл поставлен в очередь',
         ]);
@@ -600,6 +609,8 @@ class BikeproductsCatalogService
             $sourceLabel = $snapshot->source_type === 'csv' ? 'CSV' : 'Excel';
             $snapshot->update(['status' => 'processing', 'progress' => 1, 'stage' => 'Чтение '.$sourceLabel]);
             $itemsCount = 0;
+            $sourceFileSize = is_file($path) ? filesize($path) : null;
+            $sourceChecksum = is_file($path) ? hash_file('sha256', $path) : null;
             $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
             $result = $this->parseExcel($path, $snapshot->supplier_code, $imageBaseUrl, function (int $processedRows, int $totalRows) use ($snapshot): void {
                 $snapshot->update([
@@ -628,7 +639,11 @@ class BikeproductsCatalogService
                 'processed_rows' => $result['summary']['rows_total'],
                 'total_rows' => $result['summary']['rows_total'],
                 'items_count' => $itemsCount,
-                'summary' => $result['summary'],
+                'summary' => array_merge($result['summary'], [
+                    'items_inserted' => $itemsCount,
+                    'source_file_size' => $sourceFileSize,
+                    'source_checksum' => $sourceChecksum,
+                ]),
                 'processed_at' => now(),
                 'storage_path' => null,
             ]);
@@ -711,6 +726,8 @@ class BikeproductsCatalogService
         $fieldStats = [];
         $groupKeys = [];
         $sourceImageUrls = [];
+        $sourceSkuCounts = [];
+        $sourceSkuSamples = [];
         $rowsWithoutName = 0;
         $rowsWithoutSku = 0;
         $itemsWithSku = 0;
@@ -781,6 +798,13 @@ class BikeproductsCatalogService
                 $imageUrls = $this->extractImageUrls($payload, $imageBaseUrl);
                 $normalizedVariation = $this->normalizeSourceVariation($payload, $supplierCode, $sku);
                 $sku = $this->sourceSkuForPayload($payload, $supplierCode, $sku);
+                $normalizedSku = $this->normalizeSku($sku);
+                if ($normalizedSku !== '') {
+                    $sourceSkuCounts[$normalizedSku] = ($sourceSkuCounts[$normalizedSku] ?? 0) + 1;
+                    if (! isset($sourceSkuSamples[$normalizedSku])) {
+                        $sourceSkuSamples[$normalizedSku] = ['sku' => $sku, 'name' => $this->nullableString($name)];
+                    }
+                }
                 if ($imageUrls !== []) {
                     $itemsWithImages++;
                 }
@@ -857,6 +881,17 @@ class BikeproductsCatalogService
                 'items_with_group' => $itemsWithGroup,
                 'items_with_images' => $itemsWithImages,
                 'source_duplicate_image_urls' => count(array_filter($sourceImageUrls, static fn (int $count) => $count > 1)),
+                'duplicate_skus' => count(array_filter($sourceSkuCounts, static fn (int $count) => $count > 1)),
+                'duplicate_sku_samples' => collect($sourceSkuCounts)
+                    ->filter(static fn (int $count) => $count > 1)
+                    ->take(20)
+                    ->map(fn (int $count, string $sku) => [
+                        'sku' => $sourceSkuSamples[$sku]['sku'] ?? $sku,
+                        'name' => $sourceSkuSamples[$sku]['name'] ?? null,
+                        'count' => $count,
+                    ])
+                    ->values()
+                    ->all(),
                 'fields' => $this->finishFieldStats($fieldStats),
             ],
         ];
@@ -1081,7 +1116,7 @@ class BikeproductsCatalogService
     }
 
     /** @return array{data: array<int, array<string, mixed>>, meta: array<string, int>} */
-    public function variationAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?string $search = null, array $filters = [], string $variationCount = 'all'): array
+    public function variationAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?string $search = null, array $filters = [], string $variationCount = 'all', ?int $goodId = null): array
     {
         $this->assertReadySnapshot($snapshot);
         $this->ensureDefaultMappings($snapshot->supplier_code);
@@ -1275,6 +1310,9 @@ class BikeproductsCatalogService
         }
 
         $rows = $allRows;
+        if ($goodId !== null && $goodId > 0) {
+            $rows = $rows->filter(fn (array $row) => (int) ($row['database_good_id'] ?? 0) === $goodId)->values();
+        }
         if ($search) {
             $needle = mb_strtolower(trim($search));
             $rows = $rows->filter(fn (array $row) => str_contains(mb_strtolower((string) $row['external_sku'].' '.$row['source_name'].' '.$row['database_name']), $needle))->values();
@@ -1356,9 +1394,9 @@ class BikeproductsCatalogService
     }
 
     /** @return array{database_variation_ids: array<int, int>, database_good_ids: array<int, int>, source_item_ids: array<int, int>, groups_total: int} */
-    public function variationSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null, array $filters = [], string $variationCount = 'all'): array
+    public function variationSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null, array $filters = [], string $variationCount = 'all', ?int $goodId = null): array
     {
-        $audit = $this->variationAudit($snapshot, 1, 100000, $search, $filters, $variationCount);
+        $audit = $this->variationAudit($snapshot, 1, 100000, $search, $filters, $variationCount, $goodId);
         $rows = collect($audit['data']);
         $selectedRows = $filters === []
             ? $rows
@@ -1813,7 +1851,7 @@ class BikeproductsCatalogService
                 : null;
             $comparison = [
                 'item_id' => $item->id,
-                'external_sku' => $item->external_sku,
+                'external_sku' => $sourceSku ?: $item->external_sku,
                 'match_type' => $match['type'],
                 'variation_id' => $variation?->id,
                 'variation_label' => $variationLabel,
@@ -2031,7 +2069,7 @@ class BikeproductsCatalogService
             $hasDatabaseProperties = collect($differences)->contains(fn (array $diff) => $diff['database_values'] !== []);
             $rows[] = [
                 'item_id' => $item->id,
-                'external_sku' => $item->external_sku,
+                'external_sku' => $sourceSku ?: $item->external_sku,
                 'source_name' => $item->name,
                 'source_name_missing' => $this->nullableString($item->name) === null,
                 'database_good_id' => $goodId,
@@ -2098,11 +2136,15 @@ class BikeproductsCatalogService
     }
 
     /** @return array{data: array<int, array<string, mixed>>, meta: array<string, int>} */
-    public function goodAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?array $onlyTargets = null, ?string $search = null, array $statuses = [], array $differenceTypes = [], bool $paginateByGood = false): array
+    public function goodAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?array $onlyTargets = null, ?string $search = null, array $statuses = [], array $differenceTypes = [], bool $paginateByGood = false, ?int $goodId = null): array
     {
         $this->assertReadySnapshot($snapshot);
         $sourceItems = $this->snapshotItemsQuery($snapshot, $search)->get();
-        $matches = $this->resolveSkuMatches($sourceItems->pluck('external_sku'), $snapshot->supplier_code);
+        $matches = $this->resolveSkuMatches(
+            $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
+            $snapshot->supplier_code,
+            $onlyTargets !== null,
+        );
         $mappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
             ->where('scope', 'good')
@@ -2120,12 +2162,13 @@ class BikeproductsCatalogService
         $rows = [];
 
         foreach ($sourceItems as $item) {
-            $match = $matches->get($item->external_sku);
+            $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
+            $match = $matches->get($sourceSku);
             $good = $match ? $goods->get($match['type'] === 'good' ? $match['model']->id : $match['model']->good_id) : null;
             // Product metadata belongs to the parent good, while prices and
             // stocks belong to the exact SKU (variation when it exists).
             $comparisonModel = $onlyTargets !== null && $match
-                ? $match['model']
+                ? ($match['type'] === 'variation' ? $match['model'] : $good)
                 : $good;
             $differences = [];
             if (! $good) {
@@ -2191,7 +2234,7 @@ class BikeproductsCatalogService
             }
             $rows[] = [
                 'item_id' => $item->id,
-                'external_sku' => $item->external_sku,
+                'external_sku' => $sourceSku ?: $item->external_sku,
                 'source_name' => $item->name,
                 'database_match_type' => $match['type'] ?? null,
                 'database_value_source' => $onlyTargets !== null && $match
@@ -2262,6 +2305,9 @@ class BikeproductsCatalogService
         }
 
         $allAuditRows = collect($rows);
+        if ($goodId !== null && $goodId > 0) {
+            $rows = array_values(array_filter($rows, fn (array $row) => (int) ($row['database_good_id'] ?? 0) === $goodId));
+        }
         if ($statuses !== []) {
             $rows = array_values(array_filter($rows, fn (array $row) => in_array($row['status'], $statuses, true)));
         } elseif ($onlyTargets === null) {
@@ -2356,7 +2402,7 @@ class BikeproductsCatalogService
     }
 
     /** @return array<int, int> */
-    public function priceStockSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null, array $filters = []): array
+    public function priceStockSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null, array $filters = [], ?int $goodId = null): array
     {
         $audit = $this->goodAudit(
             $snapshot,
@@ -2367,6 +2413,7 @@ class BikeproductsCatalogService
             [],
             $filters,
             true,
+            $goodId,
         );
 
         return collect($audit['data'])->pluck('item_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
@@ -2913,7 +2960,7 @@ class BikeproductsCatalogService
     }
 
     /** @param Collection<int, string> $skus @return Collection<string, array{type: string, model: ShopGood|ShopGoodVariation}> */
-    private function resolveSkuMatches(Collection $skus, string $supplierCode): Collection
+    private function resolveSkuMatches(Collection $skus, string $supplierCode, bool $preferVariations = false): Collection
     {
         $skus = $skus->filter()->unique()->values();
         if ($skus->isEmpty()) {
@@ -2935,6 +2982,10 @@ class BikeproductsCatalogService
         // Товар имеет приоритет: строка поставщика сначала описывает самостоятельный товар,
         // затем вариацию, если товара с таким SKU нет.
         foreach ($goods as $good) {
+            if ($preferVariations && $matches->has($good->sku)) {
+                Log::debug('[FIX:supplier-catalog-price-sku] Prefer variation SKU match over parent good', ['sku' => $good->sku, 'good_id' => $good->id]);
+                continue;
+            }
             $matches->put($good->sku, ['type' => 'good', 'model' => $good]);
         }
 
