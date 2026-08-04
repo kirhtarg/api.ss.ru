@@ -493,6 +493,18 @@ class BikeproductsCatalogService
                     ? "Вариации удалены, удалено пустых товаров: {$deletedGoods}"
                     : 'Вариации удалены'];
             }
+            if ($action === 'zero_remote_stocks') {
+                foreach ($variations as $variation) {
+                    $variation->update(['remote_stock_quantity' => null, 'fast_remote_stock_quantity' => null]);
+                }
+                return ['affected' => $variations->count(), 'message' => 'Остатки у/с вариаций обнулены'];
+            }
+            if ($action === 'zero_main_stock') {
+                foreach ($variations as $variation) {
+                    $variation->update(['stock_quantity' => 0]);
+                }
+                return ['affected' => $variations->count(), 'message' => 'Основной остаток вариаций обнулен'];
+            }
             if ($action === 'zero_stocks') {
                 foreach ($variations as $variation) {
                     $variation->update(['stock_quantity' => 0, 'remote_stock_quantity' => null, 'fast_remote_stock_quantity' => null]);
@@ -1116,13 +1128,13 @@ class BikeproductsCatalogService
     }
 
     /** @return array{data: array<int, array<string, mixed>>, meta: array<string, int>} */
-    public function variationAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?string $search = null, array $filters = [], string $variationCount = 'all', ?int $goodId = null): array
+    public function variationAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?string $search = null, array $filters = [], string $variationCount = 'all', ?int $goodId = null, string $mainStockFilter = 'all', string $remoteStockFilter = 'all'): array
     {
         $this->assertReadySnapshot($snapshot);
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v2:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v3:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1212,6 +1224,8 @@ class BikeproductsCatalogService
                 'stock_quantity' => $variation->stock_quantity,
                 'remote_stock_quantity' => $variation->remote_stock_quantity,
                 'fast_remote_stock_quantity' => $variation->fast_remote_stock_quantity,
+                'has_main_stock' => $this->hasPositiveStockValue($variation->stock_quantity),
+                'has_remote_stock' => $this->hasPositiveStockValue($variation->remote_stock_quantity) || $this->hasPositiveStockValue($variation->fast_remote_stock_quantity),
                 'comparisons' => $comparisons,
                 'differences' => array_values(array_filter($comparisons, fn (array $item) => ! in_array($item['status'], ['match', 'not_checked'], true))),
                 'status' => $status,
@@ -1290,6 +1304,8 @@ class BikeproductsCatalogService
                 'stock_quantity' => null,
                 'remote_stock_quantity' => null,
                 'fast_remote_stock_quantity' => null,
+                'has_main_stock' => false,
+                'has_remote_stock' => false,
                 'comparisons' => $comparisons,
                 'differences' => $comparisons,
                 'status' => $status,
@@ -1354,6 +1370,16 @@ class BikeproductsCatalogService
             $rows = $rows->filter(fn (array $row) => $row['database_good_id']
                 && ($variationCountByGood->get($row['database_good_id']) ?? 0) > 1)->values();
         }
+        if ($mainStockFilter === 'zero') {
+            $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ! ($row['has_main_stock'] ?? false))->values();
+        } elseif ($mainStockFilter === 'in_stock') {
+            $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ($row['has_main_stock'] ?? false))->values();
+        }
+        if ($remoteStockFilter === 'empty') {
+            $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ! ($row['has_remote_stock'] ?? false))->values();
+        } elseif ($remoteStockFilter === 'not_empty') {
+            $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ($row['has_remote_stock'] ?? false))->values();
+        }
         // Пагинируем товарами, а не отдельными SKU: все вариации одного товара
         // всегда остаются на одной странице для наглядной сверки.
         $groups = $rows->groupBy(fn (array $row) => $row['database_good_id']
@@ -1373,6 +1399,8 @@ class BikeproductsCatalogService
                 'delete_candidate_goods' => $allRows->where('status', 'delete_candidate_good')->pluck('database_good_id')->unique()->count(),
                 'delete_candidate_variations' => $allRows->where('status', 'delete_candidate_variation')->count(),
                 'delete_candidate_variation_goods' => $countGroups($allRows->where('status', 'delete_candidate_variation')),
+                'delete_candidate_main_stock_variations' => $allRows->where('status', 'delete_candidate_variation')->where('has_main_stock', true)->count(),
+                'delete_candidate_remote_stock_variations' => $allRows->where('status', 'delete_candidate_variation')->where('has_remote_stock', true)->count(),
                 'source_good_missing' => $allRows->where('status', 'source_good_missing')->pluck('item_id')->unique()->count(),
                 'source_good_missing_groups' => $countGroups($allRows->where('status', 'source_good_missing')),
                 'source_variation_missing' => $allRows->where('status', 'source_variation_missing')->pluck('item_id')->unique()->count(),
@@ -1394,9 +1422,9 @@ class BikeproductsCatalogService
     }
 
     /** @return array{database_variation_ids: array<int, int>, database_good_ids: array<int, int>, source_item_ids: array<int, int>, groups_total: int} */
-    public function variationSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null, array $filters = [], string $variationCount = 'all', ?int $goodId = null): array
+    public function variationSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null, array $filters = [], string $variationCount = 'all', ?int $goodId = null, string $mainStockFilter = 'all', string $remoteStockFilter = 'all'): array
     {
-        $audit = $this->variationAudit($snapshot, 1, 100000, $search, $filters, $variationCount, $goodId);
+        $audit = $this->variationAudit($snapshot, 1, 100000, $search, $filters, $variationCount, $goodId, $mainStockFilter, $remoteStockFilter);
         $rows = collect($audit['data']);
         $selectedRows = $filters === []
             ? $rows
@@ -3676,6 +3704,24 @@ class BikeproductsCatalogService
         $value = mb_strtolower(trim(preg_replace('/\s+/', ' ', $value)));
 
         return strtr($value, ['чёрный' => 'черный', 'black' => 'черный', 'white' => 'белый', 'red' => 'красный']);
+    }
+
+    private function hasPositiveStockValue(mixed $value): bool
+    {
+        if ($value === null) {
+            return false;
+        }
+
+        $normalized = trim((string) $value);
+        if ($normalized === '') {
+            return false;
+        }
+
+        if (! is_numeric(str_replace(',', '.', $normalized))) {
+            return true;
+        }
+
+        return (float) str_replace(',', '.', $normalized) > 0;
     }
 
     /** @param array<string, int> $stats */

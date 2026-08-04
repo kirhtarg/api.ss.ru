@@ -272,6 +272,8 @@ class BikeproductsCatalogController extends Controller
             'statuses' => ['nullable', 'array', 'max:5'],
             'statuses.*' => ['string', 'in:attention,match,file_has_properties,file_empty,both_empty,either_has_properties,file_has_database_empty'],
             'variation_count' => ['nullable', 'in:all,single,multiple'],
+            'main_stock' => ['nullable', 'in:all,zero,in_stock'],
+            'remote_stock' => ['nullable', 'in:all,empty,not_empty'],
             'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
             'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier'],
@@ -281,9 +283,9 @@ class BikeproductsCatalogController extends Controller
             'success' => true,
             'data' => $this->cachedAudit(
                 $snapshot,
-                'variations-v2',
+                'variations-v3',
                 $data,
-                fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null),
+                fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null, $data['main_stock'] ?? 'all', $data['remote_stock'] ?? 'all'),
             ),
         ]);
     }
@@ -294,7 +296,7 @@ class BikeproductsCatalogController extends Controller
             return $response;
         }
         $data = $request->validate([
-            'action' => ['required', 'in:delete,zero_stocks,repair_axes'],
+            'action' => ['required', 'in:delete,zero_remote_stocks,zero_main_stock,zero_stocks,repair_axes'],
             'variation_ids' => ['required', 'array', 'min:1', 'max:1000'],
             'variation_ids.*' => ['integer', 'distinct'],
         ]);
@@ -317,6 +319,8 @@ class BikeproductsCatalogController extends Controller
         $data = $request->validate([
             'search' => ['nullable', 'string', 'max:120'],
             'variation_count' => ['nullable', 'in:all,single,multiple'],
+            'main_stock' => ['nullable', 'in:all,zero,in_stock'],
+            'remote_stock' => ['nullable', 'in:all,empty,not_empty'],
             'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
             'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier'],
@@ -324,7 +328,7 @@ class BikeproductsCatalogController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $this->catalog->variationSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null),
+            'data' => $this->catalog->variationSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null, $data['main_stock'] ?? 'all', $data['remote_stock'] ?? 'all'),
         ]);
     }
 
@@ -638,7 +642,7 @@ class BikeproductsCatalogController extends Controller
         $version = $snapshot->updated_at?->format('Uu') ?? '0';
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v14:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v16:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.
