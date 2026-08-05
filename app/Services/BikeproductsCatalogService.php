@@ -1141,7 +1141,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v14:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v15:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1173,7 +1173,10 @@ class BikeproductsCatalogService
         };
         $sourcePresenceItems = $sourceItemsByLookupKeys($allSourceVariationItems);
         $sourceSinglePresenceItems = $sourceItemsByLookupKeys($allSourceSingleItems);
-        $sourcePayloadSkuPresenceItems = $sourceItemsByLookupKeys($allSourcePayloadSkuItems);
+        $sourcePayloadSkuPresenceItems = $allSourcePayloadSkuItems->flatMap(function (SupplierCatalogItem $item) use ($snapshot) {
+            return collect($this->skuLookupKeys($item->raw_payload[self::SOURCE_COLUMNS['sku']] ?? '', $snapshot->supplier_code))
+                ->mapWithKeys(fn (string $sku) => [$sku => $item]);
+        });
         $sourceItems = $sourceItemsByLookupKeys($allSourceVariationItems
             ->filter(fn (SupplierCatalogItem $item) => $this->sourceItemPassesMinPrice($item, $snapshot->supplier_code, $priceMappings)));
         $sourceSingleItems = $sourceItemsByLookupKeys($allSourceSingleItems
@@ -1234,6 +1237,18 @@ class BikeproductsCatalogService
         $rows = $databaseVariations->map(function (ShopGoodVariation $variation) use ($sourceItems, $sourceSingleItems, $sourcePresenceItems, $sourceSinglePresenceItems, $sourcePayloadSkuPresenceItems, $variationCountByGood, $mappings, $priceMappings, $snapshot) {
             $variationSku = $this->normalizeSku($variation->sku);
             $source = $sourceItems->get($variationSku) ?? $sourcePresenceItems->get($variationSku) ?? $sourcePayloadSkuPresenceItems->get($variationSku);
+            if ($variationSku === '8025200120') {
+                Log::debug('[supplier-catalog-audit] debug sku 8025200120', [
+                    'source_items' => $sourceItems->has($variationSku),
+                    'source_presence' => $sourcePresenceItems->has($variationSku),
+                    'source_payload_article' => $sourcePayloadSkuPresenceItems->has($variationSku),
+                    'source_id' => $source?->id,
+                    'source_external_sku' => $source?->external_sku,
+                    'source_raw_article' => $source?->raw_payload[self::SOURCE_COLUMNS['sku']] ?? null,
+                    'variation_id' => $variation->id,
+                    'variation_sku' => $variation->sku,
+                ]);
+            }
             $isSingleProductSource = false;
             if ($source === null) {
                 $source = $sourceSingleItems->get($variationSku) ?? $sourceSinglePresenceItems->get($variationSku);
