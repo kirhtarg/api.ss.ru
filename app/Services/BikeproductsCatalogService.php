@@ -1141,7 +1141,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v7:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v9:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1208,10 +1208,20 @@ class BikeproductsCatalogService
             ->keyBy(fn (ShopGood $good) => $this->normalizeSku($good->sku));
         $sourceGroupKey = fn (SupplierCatalogItem $item): string => $item->clean_name
             ?: $this->sourceGroupName($item->name, $item->external_sku);
+        $databaseGoodsByGroupName = ShopGood::query()
+            ->whereIn('supplier', $supplierNames)
+            ->get(['id', 'sku', 'name', 'slug'])
+            ->groupBy(fn (ShopGood $good) => $this->normalizeSourceGroupKey($this->sourceGroupName($good->name, $good->sku)));
         $sourceGroupDatabaseGoods = [];
-        foreach ($sourceItems as $sourceSku => $sourceItem) {
-            $matchedVariation = $databaseVariationsBySku->get($sourceSku);
-            $matchedGood = $matchedVariation?->good ?? $sourceDirectGoods->get($sourceSku);
+        foreach ($allSourceVariationItems as $sourceItem) {
+            $matchedVariation = collect($this->skuLookupKeys($this->sourceSkuForItem($sourceItem, $snapshot->supplier_code), $snapshot->supplier_code))
+                ->map(fn (string $sku) => $databaseVariationsBySku->get($sku))
+                ->first();
+            $matchedGood = $matchedVariation?->good;
+            if (! $matchedGood) {
+                $nameCandidates = $databaseGoodsByGroupName->get($this->normalizeSourceGroupKey($sourceGroupKey($sourceItem)), collect());
+                $matchedGood = $nameCandidates->count() === 1 ? $nameCandidates->first() : null;
+            }
             if ($matchedGood) {
                 $sourceGroupDatabaseGoods[$sourceGroupKey($sourceItem)] = $matchedGood;
             }
@@ -1263,8 +1273,9 @@ class BikeproductsCatalogService
         })->values();
 
         $goodsWithSource = $rows->where('source_exists', true)->pluck('database_good_id')->unique();
-        $rows = $rows->map(function (array $row) use ($goodsWithSource) {
-            if (! $row['source_exists'] && ! $goodsWithSource->contains($row['database_good_id'])) {
+        $goodsWithSourceByGroupName = collect($sourceGroupDatabaseGoods)->pluck('id')->filter()->unique()->values();
+        $rows = $rows->map(function (array $row) use ($goodsWithSource, $goodsWithSourceByGroupName) {
+            if (! $row['source_exists'] && ! $goodsWithSource->contains($row['database_good_id']) && ! $goodsWithSourceByGroupName->contains($row['database_good_id'])) {
                 $row['status'] = 'delete_candidate_good';
                 $row['comparisons'] = [['status' => 'delete_candidate_good', 'attribute' => 'Вариации товара', 'source_value' => 'Нет в файле', 'database_values' => []]];
                 $row['differences'] = $row['comparisons'];
@@ -2340,7 +2351,7 @@ class BikeproductsCatalogService
                         ? $good->brands->pluck('name')->values()->all()
                         : [trim((string) ($comparisonModel->{$target} ?? ''))];
                     $databaseValues = array_values(array_filter($databaseValues, static fn ($value) => $value !== ''));
-                    $matchesValue = collect($databaseValues)->contains(fn (string $value) => $this->normalizeComparisonValue($value) === $this->normalizeComparisonValue($comparisonSourceValue));
+                    $matchesValue = collect($databaseValues)->contains(fn (string $value) => $this->mappedGoodValuesMatch($target, $value, $comparisonSourceValue));
                     $differences[] = [
                         'status' => empty($databaseValues) ? 'missing_in_database' : ($matchesValue ? 'match' : 'different'),
                         'field' => $target,
@@ -2594,6 +2605,19 @@ class BikeproductsCatalogService
         return $this->isPhysicalGoodField($target)
             ? $this->normalizePhysicalGoodValue($value, $target)
             : $value;
+    }
+
+    private function mappedGoodValuesMatch(string $target, mixed $databaseValue, mixed $sourceValue): bool
+    {
+        if (in_array($target, ['price', 'sale_price', 'demping_price'], true)) {
+            $databaseDecimal = $this->nullableDecimal($databaseValue);
+            $sourceDecimal = $this->nullableDecimal($sourceValue);
+            if ($databaseDecimal !== null && $sourceDecimal !== null) {
+                return (int) floor($databaseDecimal) === (int) floor($sourceDecimal);
+            }
+        }
+
+        return $this->normalizeComparisonValue((string) $databaseValue) === $this->normalizeComparisonValue((string) $sourceValue);
     }
     /**
      * Store weight in kilograms and dimensions in centimetres, matching the
@@ -3229,6 +3253,10 @@ class BikeproductsCatalogService
         return null;
     }
 
+    private function normalizeSourceGroupKey(?string $name): string
+    {
+        return $this->normalizeComparisonValue($this->sourceGroupName($name, $name));
+    }
     private function sourceGroupName(?string $name, ?string $fallback): string
     {
         $name = trim((string) $name);
