@@ -361,7 +361,9 @@ class BikeproductsCatalogService
                     $match = $matches->get($item->external_sku);
                     if (! $match || ! isset($differentItemIds[$item->id])) { $skipped++; continue; }
                     $good = $match['type'] === 'variation' ? $match['model']->good : $match['model'];
-                    $this->syncMappedProperties($good, $item->raw_payload ?? [], $mappings, true);
+                    $actionableMappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => $this->propertySourceValueFromPayload($item->raw_payload ?? [], $mapping) !== null);
+                    if ($actionableMappings->isEmpty()) { $skipped++; continue; }
+                    $this->syncMappedProperties($good, $item->raw_payload ?? [], $actionableMappings, true);
                     $affected++;
                 }
             });
@@ -511,7 +513,7 @@ class BikeproductsCatalogService
                 }
                 return ['affected' => $variations->count(), 'message' => 'Остатки вариаций обнулены'];
             }
-            if ($action !== 'repair_axes') {
+            if (! in_array($action, ['repair_axes', 'add_missing_axes', 'replace_axis_values', 'remove_extra_axes'], true)) {
                 throw new \InvalidArgumentException('Неизвестное действие над вариациями.');
             }
 
@@ -542,19 +544,18 @@ class BikeproductsCatalogService
                 if ($targetAxes === []) {
                     continue;
                 }
-                $targetValueIds = collect($targetAxes)->map(function (array $axis) {
-                    return ShopVariationAttributeValue::firstOrCreate([
-                        'attribute_id' => $axis['attribute_id'],
-                        'value' => $axis['value'],
-                    ])->id;
-                })->all();
-                // Repair is an explicit replacement from the supplier source:
-                // stale axes (e.g. «Цвет: Черный» for a one-item product)
-                // must not remain beside the source axis «Год: 2026».
-                $variation->attributeValues()->sync(array_values(array_unique($targetValueIds)));
-                $affected++;
+                $changed = $this->applyVariationAxisRepair($variation, $targetAxes, $action);
+                if ($changed) {
+                    $affected++;
+                }
             }
-            return ['affected' => $affected, 'message' => 'Оси вариаций заменены значениями из файла'];
+            $message = match ($action) {
+                'add_missing_axes' => 'Недостающие оси добавлены из файла',
+                'replace_axis_values' => 'Значения осей заменены значениями из файла',
+                'remove_extra_axes' => 'Лишние оси базы удалены',
+                default => 'Оси вариаций полностью заменены значениями из файла',
+            };
+            return ['affected' => $affected, 'message' => $message];
         });
     }
 
@@ -1140,7 +1141,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v6:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v7:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1255,6 +1256,7 @@ class BikeproductsCatalogService
                 'has_remote_stock' => $this->hasPositiveStockValue($variation->remote_stock_quantity) || $this->hasPositiveStockValue($variation->fast_remote_stock_quantity),
                 'comparisons' => $comparisons,
                 'differences' => array_values(array_filter($comparisons, fn (array $item) => ! in_array($item['status'], ['match', 'not_checked'], true))),
+                'axis_issue_types' => $this->axisIssueTypes($comparisons),
                 'status' => $status,
                 'source_exists' => $source !== null,
             ];
@@ -2114,13 +2116,14 @@ class BikeproductsCatalogService
             ->where('is_check_enabled', true)
             ->with('property:id,name')
             ->get();
+        $mappingsByProperty = $mappings
+            ->filter(fn (SupplierCatalogFieldMapping $mapping) => (int) $mapping->property_id > 0)
+            ->groupBy(fn (SupplierCatalogFieldMapping $mapping) => (int) $mapping->property_id);
         $matchedGoodIds = $skuMatches
             ->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good?->id)
             ->filter()
             ->unique()
             ->values();
-        // Characteristics compare only a source line that is matched to a
-        // database good. Empty property values still produce a row below.
         $goodIds = $matchedGoodIds;
         $propertyQuery = DB::table('shop_good_properties as gp')
             ->join('shop_properties as p', 'p.id', '=', 'gp.property_id')
@@ -2147,33 +2150,52 @@ class BikeproductsCatalogService
             if (! $good) {
                 continue;
             }
+
             $goodId = $good->id;
             $differences = [];
-            foreach ($mappings as $mapping) {
-                $rawValue = $this->nullableString($item->raw_payload[$mapping->source_field] ?? null);
-                $sourceValue = $rawValue === null
-                    ? null
-                    : ($mapping->display_field
-                        ? ($this->nullableString($item->raw_payload[$mapping->display_field] ?? null) ?? $rawValue)
-                        : $rawValue);
-                $databaseValues = $properties->get($goodId.':'.$mapping->property_id, collect())
-                    ->pluck('value')->filter()->values()->all();
-                $matchesValue = $sourceValue !== null && collect($databaseValues)->contains(
-                    fn (string $value) => $this->normalizeComparisonValue($value) === $this->normalizeComparisonValue($sourceValue),
-                );
+            foreach ($mappingsByProperty as $propertyId => $propertyMappings) {
+                /** @var Collection<int, SupplierCatalogFieldMapping> $propertyMappings */
+                $sourceValues = $propertyMappings
+                    ->map(fn (SupplierCatalogFieldMapping $mapping) => $this->propertySourceValueFromPayload($item->raw_payload ?? [], $mapping))
+                    ->filter(fn (?string $value) => $value !== null)
+                    ->unique(fn (string $value) => $this->normalizeComparisonValue($value))
+                    ->values()
+                    ->all();
+                $databaseValues = $properties->get($goodId.':'.$propertyId, collect())
+                    ->pluck('value')
+                    ->map(fn ($value) => $this->nullableString($value))
+                    ->filter(fn (?string $value) => $value !== null)
+                    ->unique(fn (string $value) => $this->normalizeComparisonValue($value))
+                    ->values()
+                    ->all();
+                $sourceNormalized = collect($sourceValues)->map(fn (string $value) => $this->normalizeComparisonValue($value))->sort()->values()->all();
+                $databaseNormalized = collect($databaseValues)->map(fn (string $value) => $this->normalizeComparisonValue($value))->sort()->values()->all();
+                $hasSource = $sourceValues !== [];
+                $hasDatabase = $databaseValues !== [];
+                $status = match (true) {
+                    ! $hasSource && ! $hasDatabase => 'empty_both',
+                    $hasSource && ! $hasDatabase => 'missing_in_database',
+                    ! $hasSource && $hasDatabase => 'missing_in_file',
+                    $sourceNormalized === $databaseNormalized => 'match',
+                    default => 'different',
+                };
+                $firstMapping = $propertyMappings->first();
                 $differences[] = [
-                    'status' => $sourceValue === null
-                        ? (empty($databaseValues) ? 'empty' : 'missing_in_file')
-                        : (empty($databaseValues) ? 'missing_in_database' : ($matchesValue ? 'match' : 'different')),
-                    'property' => $mapping->property?->name,
-                    'source_field' => $mapping->source_field,
-                    'source_value' => $sourceValue,
+                    'status' => $status,
+                    'property' => $firstMapping?->property?->name,
+                    'property_id' => (int) $propertyId,
+                    'source_fields' => $propertyMappings->pluck('source_field')->values()->all(),
+                    'source_field' => $propertyMappings->pluck('source_field')->implode(', '),
+                    'source_value' => $sourceValues === [] ? null : implode(' / ', $sourceValues),
+                    'source_values' => $sourceValues,
                     'database_values' => $databaseValues,
                 ];
             }
 
-            $hasSourceProperties = collect($differences)->contains(fn (array $diff) => $diff['source_value'] !== null);
+            $hasSourceProperties = collect($differences)->contains(fn (array $diff) => $diff['source_values'] !== []);
             $hasDatabaseProperties = collect($differences)->contains(fn (array $diff) => $diff['database_values'] !== []);
+            $hasActionableProperties = collect($differences)->contains(fn (array $diff) => in_array($diff['status'], ['different', 'missing_in_database'], true));
+            $hasMissingInFileProperties = collect($differences)->contains(fn (array $diff) => $diff['status'] === 'missing_in_file');
             $rows[] = [
                 'item_id' => $item->id,
                 'external_sku' => $this->sourceSkuForItem($item, $snapshot->supplier_code) ?: $item->external_sku,
@@ -2184,31 +2206,35 @@ class BikeproductsCatalogService
                 'database_slug' => $good->slug,
                 'has_source_properties' => $hasSourceProperties,
                 'has_database_properties' => $hasDatabaseProperties,
+                'has_actionable_properties' => $hasActionableProperties,
                 'differences' => $differences,
-                'status' => collect($differences)->contains(fn (array $diff) => ! in_array($diff['status'], ['match', 'empty'], true)) ? 'attention' : 'match',
+                'status' => $hasActionableProperties ? 'attention' : ($hasMissingInFileProperties ? 'missing_in_file' : 'match'),
             ];
         }
 
         $stats = [
             'matched' => count($rows),
-            'attention' => count(array_filter($rows, fn (array $row) => $row['status'] === 'attention')),
-            'match' => count(array_filter($rows, fn (array $row) => $row['status'] === 'match')),
-            'file_has_properties' => count(array_filter($rows, fn (array $row) => $row['has_source_properties'])),
-            'file_empty' => count(array_filter($rows, fn (array $row) => ! $row['has_source_properties'])),
-            'both_empty' => count(array_filter($rows, fn (array $row) => ! $row['has_source_properties'] && ! $row['has_database_properties'])),
-            'either_has_properties' => count(array_filter($rows, fn (array $row) => $row['has_source_properties'] || $row['has_database_properties'])),
-            'file_has_database_empty' => count(array_filter($rows, fn (array $row) => $row['has_source_properties'] && ! $row['has_database_properties'])),
+            'attention' => count(array_filter($rows, fn (array $row) => $row['has_actionable_properties'])),
+            'match' => count(array_filter($rows, fn (array $row) => collect($row['differences'])->isNotEmpty() && collect($row['differences'])->every(fn (array $diff) => in_array($diff['status'], ['match', 'empty_both'], true)))),
+            'different' => count(array_filter($rows, fn (array $row) => collect($row['differences'])->contains(fn (array $diff) => $diff['status'] === 'different'))),
+            'missing_in_database' => count(array_filter($rows, fn (array $row) => collect($row['differences'])->contains(fn (array $diff) => $diff['status'] === 'missing_in_database'))),
+            'missing_in_file' => count(array_filter($rows, fn (array $row) => collect($row['differences'])->contains(fn (array $diff) => $diff['status'] === 'missing_in_file'))),
+            'empty_both' => count(array_filter($rows, fn (array $row) => collect($row['differences'])->isNotEmpty() && collect($row['differences'])->every(fn (array $diff) => $diff['status'] === 'empty_both'))),
+            'source_has_value' => count(array_filter($rows, fn (array $row) => $row['has_source_properties'])),
+            'source_empty' => count(array_filter($rows, fn (array $row) => ! $row['has_source_properties'])),
+            'database_has_value' => count(array_filter($rows, fn (array $row) => $row['has_database_properties'])),
+            'database_empty' => count(array_filter($rows, fn (array $row) => ! $row['has_database_properties'])),
         ];
         if ($statuses !== []) {
             $rows = array_values(array_filter($rows, function (array $row) use ($statuses): bool {
                 return collect($statuses)->contains(function (string $status) use ($row): bool {
                     return match ($status) {
-                        'file_has_properties' => $row['has_source_properties'],
-                        'file_empty' => ! $row['has_source_properties'],
-                        'both_empty' => ! $row['has_source_properties'] && ! $row['has_database_properties'],
-                        'either_has_properties' => $row['has_source_properties'] || $row['has_database_properties'],
-                        'file_has_database_empty' => $row['has_source_properties'] && ! $row['has_database_properties'],
-                        default => $row['status'] === $status,
+                        'attention' => $row['has_actionable_properties'],
+                        'source_has_value' => $row['has_source_properties'],
+                        'source_empty' => ! $row['has_source_properties'],
+                        'database_has_value' => $row['has_database_properties'],
+                        'database_empty' => ! $row['has_database_properties'],
+                        default => $row['status'] === $status || collect($row['differences'])->contains(fn (array $diff) => $diff['status'] === $status),
                     };
                 });
             }));
@@ -2231,7 +2257,6 @@ class BikeproductsCatalogService
             'stats' => $stats,
         ];
     }
-
     /** @return array<int, int> */
     public function propertySelection(SupplierCatalogSnapshot $snapshot, ?string $search = null): array
     {
@@ -2262,8 +2287,8 @@ class BikeproductsCatalogService
                 fn ($query) => $query->whereIn('conditions->target', ['name', 'short_description', 'description', 'brand', 'weight', 'depth', 'width', 'height']),
             )
             ->get();
-        $expectedTargets = $onlyTargets ?? ['name', 'short_description', 'description', 'brand', 'weight', 'depth', 'width', 'height'];
-        $mappedTargets = $mappings->map(fn (SupplierCatalogFieldMapping $mapping) => (string) data_get($mapping->conditions, 'target'))->filter()->unique()->all();
+        $mappedTargets = $mappings->map(fn (SupplierCatalogFieldMapping $mapping) => (string) data_get($mapping->conditions, 'target'))->filter()->unique()->values()->all();
+        $expectedTargets = $mappedTargets;
         $goodIds = $matches->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)->unique()->values();
         $goods = ShopGood::query()->whereIn('id', $goodIds)->with('brands:id,name')->get()->keyBy('id');
         $rows = [];
@@ -2323,19 +2348,6 @@ class BikeproductsCatalogService
                         'source_value' => $comparisonSourceValue,
                         'source_raw_value' => $sourceValue,
                         'database_values' => $databaseValues,
-                    ];
-                }
-
-                foreach (array_diff($expectedTargets, $mappedTargets) as $target) {
-                    $databaseValues = $target === 'brand'
-                        ? $good->brands->pluck('name')->values()->all()
-                        : [trim((string) ($comparisonModel->{$target} ?? ''))];
-                    $differences[] = [
-                        'status' => 'not_mapped',
-                        'field' => $target,
-                        'source_field' => null,
-                        'source_value' => null,
-                        'database_values' => array_values(array_filter($databaseValues, static fn ($value) => $value !== '')),
                     ];
                 }
             }
@@ -2613,15 +2625,18 @@ class BikeproductsCatalogService
     /** @return Collection<int, SupplierCatalogFieldMapping> */
     private function priceFieldMappings(string $supplierCode): Collection
     {
+        $sourceFields = $this->minParsePriceSourceFields($supplierCode);
+
         return SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $supplierCode)
             ->where('scope', 'good')
             ->where('is_check_enabled', true)
             ->whereIn('conditions->target', ['price', 'sale_price', 'demping_price'])
+            ->when($sourceFields !== [], fn ($query) => $query->whereIn('source_field', $sourceFields))
             ->get();
     }
 
-    /** @return array{threshold: ?float, mode: string} */
+    /** @return array{threshold: ?float, mode: string, source_fields: array<int, string>} */
     private function minParsePriceSettings(string $supplierCode): array
     {
         $settings = SupplierCatalogProfile::query()
@@ -2632,7 +2647,18 @@ class BikeproductsCatalogService
         return [
             'threshold' => $threshold !== null && $threshold > 0 ? $threshold : null,
             'mode' => ($settings['min_parse_price_mode'] ?? 'any') === 'all' ? 'all' : 'any',
+            'source_fields' => $this->normalizeStringList($settings['min_parse_price_source_fields'] ?? []),
         ];
+    }
+
+    /** @return array<int, string> */
+    private function minParsePriceSourceFields(string $supplierCode): array
+    {
+        $settings = SupplierCatalogProfile::query()
+            ->where('code', $supplierCode)
+            ->value('settings') ?? [];
+
+        return $this->normalizeStringList($settings['min_parse_price_source_fields'] ?? []);
     }
 
     private function mappedPriceDecimal(SupplierCatalogItem $item, SupplierCatalogFieldMapping $mapping): ?float
@@ -2733,6 +2759,18 @@ class BikeproductsCatalogService
         return $good;
     }
 
+    /** @param array<string, mixed> $payload */
+    private function propertySourceValueFromPayload(array $payload, SupplierCatalogFieldMapping $mapping): ?string
+    {
+        $rawValue = $this->nullableString($payload[$mapping->source_field] ?? null);
+        if ($rawValue === null) {
+            return null;
+        }
+
+        return $mapping->display_field
+            ? ($this->nullableString($payload[$mapping->display_field] ?? null) ?? $rawValue)
+            : $rawValue;
+    }
     /** @param array<string, mixed> $payload @param Collection<int, SupplierCatalogFieldMapping> $mappings */
     private function syncMappedProperties(ShopGood $good, array $payload, Collection $mappings, bool $replace = false): void
     {
@@ -2745,7 +2783,7 @@ class BikeproductsCatalogService
         }
         foreach ($mappings as $mapping) {
             $propertyId = (int) $mapping->property_id;
-            $value = $this->nullableString($payload[$mapping->source_field] ?? null);
+            $value = $this->propertySourceValueFromPayload($payload, $mapping);
             if ($propertyId === 0 || $value === null) {
                 continue;
             }
@@ -2809,7 +2847,78 @@ class BikeproductsCatalogService
             ->values();
     }
 
-    /** @param Collection<int, SupplierCatalogFieldMapping> $mappings @return array<int, array<string, mixed>> */
+
+    /** @param array<int, array<string, mixed>> $targetAxes */
+    private function applyVariationAxisRepair(ShopGoodVariation $variation, array $targetAxes, string $action): bool
+    {
+        $currentValueIds = $variation->attributeValues->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $currentAttributeIds = $variation->attributeValues->pluck('attribute_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $sourceAttributeIds = collect($targetAxes)->pluck('attribute_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $targetValueIds = collect($targetAxes)->map(function (array $axis) {
+            return (int) ShopVariationAttributeValue::firstOrCreate([
+                'attribute_id' => (int) $axis['attribute_id'],
+                'value' => (string) $axis['value'],
+            ])->id;
+        })->unique()->values()->all();
+        $missingTargetValueIds = collect($targetAxes)
+            ->filter(fn (array $axis) => ! in_array((int) $axis['attribute_id'], $currentAttributeIds, true))
+            ->map(function (array $axis) {
+                return (int) ShopVariationAttributeValue::firstOrCreate([
+                    'attribute_id' => (int) $axis['attribute_id'],
+                    'value' => (string) $axis['value'],
+                ])->id;
+            })
+            ->unique()
+            ->values()
+            ->all();
+
+        $nextValueIds = match ($action) {
+            'add_missing_axes' => array_values(array_unique([...$currentValueIds, ...$missingTargetValueIds])),
+            'replace_axis_values' => array_values(array_unique([
+                ...$variation->attributeValues
+                    ->reject(fn (ShopVariationAttributeValue $value) => in_array((int) $value->attribute_id, $sourceAttributeIds, true))
+                    ->pluck('id')
+                    ->map(fn ($id) => (int) $id)
+                    ->all(),
+                ...$targetValueIds,
+            ])),
+            'remove_extra_axes' => $variation->attributeValues
+                ->filter(fn (ShopVariationAttributeValue $value) => in_array((int) $value->attribute_id, $sourceAttributeIds, true))
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->values()
+                ->all(),
+            default => $targetValueIds,
+        };
+
+        sort($currentValueIds);
+        sort($nextValueIds);
+        if ($currentValueIds === $nextValueIds) {
+            return false;
+        }
+
+        $variation->attributeValues()->sync($nextValueIds);
+
+        return true;
+    }
+
+    /** @param array<int, array<string, mixed>> $comparisons @return array<int, string> */
+    private function axisIssueTypes(array $comparisons): array
+    {
+        $types = [];
+        foreach ($comparisons as $comparison) {
+            $status = $comparison['status'] ?? null;
+            if ($status === 'missing_in_database') {
+                $types[] = 'missing';
+            } elseif ($status === 'different') {
+                $types[] = 'different';
+            } elseif ($status === 'only_in_database') {
+                $types[] = 'extra';
+            }
+        }
+
+        return array_values(array_unique($types));
+    }    /** @param Collection<int, SupplierCatalogFieldMapping> $mappings @return array<int, array<string, mixed>> */
     private function variationComparisons(ShopGoodVariation $variation, ?SupplierCatalogItem $source, Collection $mappings, string $supplierCode): array
     {
         if ($source === null) {
@@ -2836,7 +2945,7 @@ class BikeproductsCatalogService
         }
         foreach ($databaseAxes as $attributeId => $values) {
             if (! in_array((int) $attributeId, $sourceAttributeIds, true)) {
-                $comparisons[] = ['status' => 'not_checked', 'attribute' => $variation->attributeValues->firstWhere('attribute_id', $attributeId)?->attribute?->name, 'source_value' => null, 'database_values' => $values];
+                $comparisons[] = ['status' => 'only_in_database', 'attribute' => $variation->attributeValues->firstWhere('attribute_id', $attributeId)?->attribute?->name, 'source_value' => null, 'database_values' => $values];
             }
         }
 
@@ -3403,6 +3512,17 @@ class BikeproductsCatalogService
         }
 
         return (float) str_replace(',', '.', $value);
+    }
+
+    /** @return array<int, string> */
+    private function normalizeStringList(mixed $value): array
+    {
+        return collect(is_array($value) ? $value : [])
+            ->map(fn ($item) => $this->nullableString($item))
+            ->filter(fn (?string $item) => $item !== null)
+            ->unique()
+            ->values()
+            ->all();
     }
 
     private function nullableInteger(mixed $value): ?int

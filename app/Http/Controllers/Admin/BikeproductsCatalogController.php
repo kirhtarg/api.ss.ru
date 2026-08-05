@@ -50,6 +50,8 @@ class BikeproductsCatalogController extends Controller
             'settings.feed_available_quantity' => ['nullable', 'integer', 'min:1', 'max:999999'],
             'settings.min_parse_price' => ['nullable', 'numeric', 'min:0'],
             'settings.min_parse_price_mode' => ['nullable', 'in:any,all'],
+            'settings.min_parse_price_source_fields' => ['nullable', 'array', 'max:20'],
+            'settings.min_parse_price_source_fields.*' => ['string', 'max:190'],
             'settings.sku_replace_rules' => ['nullable', 'array', 'max:50'],
             'settings.sku_replace_rules.*.from' => ['nullable', 'string', 'max:120'],
             'settings.sku_replace_rules.*.to' => ['nullable', 'string', 'max:120'],
@@ -277,7 +279,7 @@ class BikeproductsCatalogController extends Controller
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
             'statuses' => ['nullable', 'array', 'max:5'],
-            'statuses.*' => ['string', 'in:attention,match,file_has_properties,file_empty,both_empty,either_has_properties,file_has_database_empty'],
+            'statuses.*' => ['string', 'in:attention,match,different,missing_in_database,missing_in_file,empty_both,source_has_value,source_empty,database_has_value,database_empty'],
             'variation_count' => ['nullable', 'in:all,single,multiple'],
             'main_stock' => ['nullable', 'in:all,zero,in_stock'],
             'remote_stock' => ['nullable', 'in:all,empty,not_empty'],
@@ -290,7 +292,7 @@ class BikeproductsCatalogController extends Controller
             'success' => true,
             'data' => $this->cachedAudit(
                 $snapshot,
-                'variations-v6',
+                'variations-v7',
                 $data,
                 fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null, $data['main_stock'] ?? 'all', $data['remote_stock'] ?? 'all'),
             ),
@@ -303,7 +305,7 @@ class BikeproductsCatalogController extends Controller
             return $response;
         }
         $data = $request->validate([
-            'action' => ['required', 'in:delete,zero_remote_stocks,zero_main_stock,zero_stocks,repair_axes'],
+            'action' => ['required', 'in:delete,zero_remote_stocks,zero_main_stock,zero_stocks,repair_axes,add_missing_axes,replace_axis_values,remove_extra_axes'],
             'variation_ids' => ['required', 'array', 'min:1', 'max:1000'],
             'variation_ids.*' => ['integer', 'distinct'],
         ]);
@@ -423,7 +425,7 @@ class BikeproductsCatalogController extends Controller
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
             'statuses' => ['nullable', 'array', 'max:5'],
-            'statuses.*' => ['string', 'in:attention,match,file_has_properties,file_empty,both_empty,either_has_properties,file_has_database_empty'],
+            'statuses.*' => ['string', 'in:attention,match,different,missing_in_database,missing_in_file,empty_both,source_has_value,source_empty,database_has_value,database_empty'],
         ]);
 
         return response()->json([
@@ -649,7 +651,7 @@ class BikeproductsCatalogController extends Controller
         $version = $snapshot->updated_at?->format('Uu') ?? '0';
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v16:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v17:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.
