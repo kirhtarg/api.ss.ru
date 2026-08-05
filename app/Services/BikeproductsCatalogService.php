@@ -1141,7 +1141,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v12:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v13:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1156,6 +1156,10 @@ class BikeproductsCatalogService
         $allSourceSingleItems = $this->sourceSingleItems($snapshot)
             ->filter(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code) !== '')
             ->values();
+        $allSourcePayloadSkuItems = $snapshot->items()
+            ->get(['id', 'name', 'clean_name', 'source_color', 'source_size', 'source_year', 'is_source_variation', 'external_sku', 'source_axes', 'raw_payload'])
+            ->filter(fn (SupplierCatalogItem $item) => $this->nullableString($item->raw_payload[self::SOURCE_COLUMNS['sku']] ?? null) !== null)
+            ->values();
         $priceExcludedSourceItems = $allSourceVariationItems
             ->merge($allSourceSingleItems)
             ->reject(fn (SupplierCatalogItem $item) => $this->sourceItemPassesMinPrice($item, $snapshot->supplier_code, $priceMappings))
@@ -1169,6 +1173,7 @@ class BikeproductsCatalogService
         };
         $sourcePresenceItems = $sourceItemsByLookupKeys($allSourceVariationItems);
         $sourceSinglePresenceItems = $sourceItemsByLookupKeys($allSourceSingleItems);
+        $sourcePayloadSkuPresenceItems = $sourceItemsByLookupKeys($allSourcePayloadSkuItems);
         $sourceItems = $sourceItemsByLookupKeys($allSourceVariationItems
             ->filter(fn (SupplierCatalogItem $item) => $this->sourceItemPassesMinPrice($item, $snapshot->supplier_code, $priceMappings)));
         $sourceSingleItems = $sourceItemsByLookupKeys($allSourceSingleItems
@@ -1226,9 +1231,9 @@ class BikeproductsCatalogService
                 $sourceGroupDatabaseGoods[$sourceGroupKey($sourceItem)] = $matchedGood;
             }
         }
-        $rows = $databaseVariations->map(function (ShopGoodVariation $variation) use ($sourceItems, $sourceSingleItems, $sourcePresenceItems, $sourceSinglePresenceItems, $variationCountByGood, $mappings, $priceMappings, $snapshot) {
+        $rows = $databaseVariations->map(function (ShopGoodVariation $variation) use ($sourceItems, $sourceSingleItems, $sourcePresenceItems, $sourceSinglePresenceItems, $sourcePayloadSkuPresenceItems, $variationCountByGood, $mappings, $priceMappings, $snapshot) {
             $variationSku = $this->normalizeSku($variation->sku);
-            $source = $sourceItems->get($variationSku) ?? $sourcePresenceItems->get($variationSku);
+            $source = $sourceItems->get($variationSku) ?? $sourcePresenceItems->get($variationSku) ?? $sourcePayloadSkuPresenceItems->get($variationSku);
             $isSingleProductSource = false;
             if ($source === null) {
                 $source = $sourceSingleItems->get($variationSku) ?? $sourceSinglePresenceItems->get($variationSku);
