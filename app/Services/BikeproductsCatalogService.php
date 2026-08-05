@@ -1141,7 +1141,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v18:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v19:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1251,22 +1251,6 @@ class BikeproductsCatalogService
                 ?? $sourcePresenceItemsSafe->get($variationSafeSku)
                 ?? $sourcePayloadSkuPresenceItems->get($variationSafeSku);
 
-            if ($variationSku === '8025200120') {
-                Log::debug('[supplier-catalog-audit] debug sku 8025200120', [
-                    'snapshot_id' => $snapshot->id,
-                    'supplier_code' => $snapshot->supplier_code,
-                    'source_items' => $sourceItems->has($variationSku),
-                    'source_presence' => $sourcePresenceItems->has($variationSku),
-                    'source_payload_article' => $sourcePayloadSkuPresenceItems->has($variationSafeSku),
-                    'source_payload_article_keys' => $sourcePayloadSkuPresenceItems->keys()->take(3)->values()->all(),
-                    'source_found' => $source !== null,
-                    'source_id' => $source?->id,
-                    'source_external_sku' => $source?->external_sku,
-                    'source_raw_article' => $source?->raw_payload[self::SOURCE_COLUMNS['sku']] ?? null,
-                    'variation_id' => $variation->id,
-                    'variation_sku' => $variation->sku,
-                ]);
-            }
             $isSingleProductSource = false;
             if ($source === null) {
                 $source = $sourceSingleItems->get($variationSku)
@@ -3062,7 +3046,7 @@ class BikeproductsCatalogService
         }
 
         if (! $this->isSourceVariationItem($source)) {
-            return [[
+            $comparisons = [[
                 'status' => 'match',
                 'attribute' => 'Артикул',
                 'source_field' => self::SOURCE_COLUMNS['sku'],
@@ -3070,6 +3054,26 @@ class BikeproductsCatalogService
                 'database_values' => [$variation->sku],
                 'message' => 'Строка файла без осей вариации найдена по артикулу вариации.',
             ]];
+
+            $databaseAxesByName = $variation->attributeValues
+                ->groupBy(fn (ShopVariationAttributeValue $value) => $value->attribute?->name ?? '')
+                ->map(fn (Collection $values) => $values->pluck('value')->filter()->values()->all())
+                ->filter(fn (array $values, string $attribute) => in_array($attribute, ['Цвет', 'Размер'], true) && $values !== []);
+
+            foreach ($databaseAxesByName as $attribute => $values) {
+                $comparisons[] = [
+                    'status' => 'match',
+                    'attribute' => $attribute,
+                    'source_field' => null,
+                    'source_value' => implode(', ', $values),
+                    'source_value_note' => 'из базы',
+                    'source_value_is_database_fallback' => true,
+                    'database_values' => $values,
+                    'message' => 'В файле нет значения оси; для отображения используется значение из базы.',
+                ];
+            }
+
+            return $comparisons;
         }
         $sourceYear = $this->nullableString($source->source_year)
             ?? $this->nullableString($source->raw_payload['MODELNYY_GOD'] ?? null)
