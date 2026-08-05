@@ -1141,7 +1141,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v19:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v20:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1261,6 +1261,9 @@ class BikeproductsCatalogService
             if ($source === null && $variationCountByGood->get($variation->good_id) === 1) {
                 $source = $sourceSingleItems->get($this->normalizeSku($variation->good?->sku));
                 $isSingleProductSource = $source !== null;
+            }
+            if ($source !== null && ! $this->isSourceVariationItem($source)) {
+                $isSingleProductSource = true;
             }
             $comparisons = $isSingleProductSource
                 ? $this->singleProductVariationComparisons($variation, $source, $snapshot->supplier_code)
