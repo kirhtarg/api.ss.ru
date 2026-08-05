@@ -655,7 +655,7 @@ class BikeproductsCatalogController extends Controller
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.
-        return Cache::store('file')->remember($key, now()->addMinutes(3), $callback);
+        return Cache::store('file')->remember($key, now()->addMinutes(15), $callback);
     }
 
     private function touchSupplierSnapshots(string $supplierCode): void
