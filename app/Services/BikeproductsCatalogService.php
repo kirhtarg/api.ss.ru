@@ -1141,7 +1141,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v13:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v14:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -3024,6 +3024,16 @@ class BikeproductsCatalogService
             return $this->variationComparisons($variation, $source, collect(), $supplierCode);
         }
 
+        if (! $this->isSourceVariationItem($source)) {
+            return [[
+                'status' => 'match',
+                'attribute' => 'Артикул',
+                'source_field' => self::SOURCE_COLUMNS['sku'],
+                'source_value' => $this->sourceSkuForItem($source, $supplierCode),
+                'database_values' => [$variation->sku],
+                'message' => 'Строка файла без осей вариации найдена по артикулу вариации.',
+            ]];
+        }
         $sourceYear = $this->nullableString($source->source_year)
             ?? $this->nullableString($source->raw_payload['MODELNYY_GOD'] ?? null)
             ?? (string) now()->year;
