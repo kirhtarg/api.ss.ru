@@ -1141,7 +1141,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v17:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v18:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1171,11 +1171,20 @@ class BikeproductsCatalogService
                     ->mapWithKeys(fn (string $sku) => [$sku => $item]);
             });
         };
+        $safeSkuKey = fn (string $sku): string => 'sku:'.$this->normalizeSku($sku);
+        $sourceItemsBySafeLookupKeys = function (Collection $items) use ($snapshot, $safeSkuKey): Collection {
+            return $items->flatMap(function (SupplierCatalogItem $item) use ($snapshot, $safeSkuKey) {
+                return collect($this->skuLookupKeys($this->sourceSkuForItem($item, $snapshot->supplier_code), $snapshot->supplier_code))
+                    ->mapWithKeys(fn (string $sku) => [$safeSkuKey($sku) => $item]);
+            });
+        };
         $sourcePresenceItems = $sourceItemsByLookupKeys($allSourceVariationItems);
         $sourceSinglePresenceItems = $sourceItemsByLookupKeys($allSourceSingleItems);
-        $sourcePayloadSkuPresenceItems = $allSourcePayloadSkuItems->flatMap(function (SupplierCatalogItem $item) use ($snapshot) {
+        $sourcePresenceItemsSafe = $sourceItemsBySafeLookupKeys($allSourceVariationItems);
+        $sourceSinglePresenceItemsSafe = $sourceItemsBySafeLookupKeys($allSourceSingleItems);
+        $sourcePayloadSkuPresenceItems = $allSourcePayloadSkuItems->flatMap(function (SupplierCatalogItem $item) use ($snapshot, $safeSkuKey) {
             return collect($this->skuLookupKeys($item->raw_payload[self::SOURCE_COLUMNS['sku']] ?? '', $snapshot->supplier_code))
-                ->mapWithKeys(fn (string $sku) => [$sku => $item]);
+                ->mapWithKeys(fn (string $sku) => [$safeSkuKey($sku) => $item]);
         });
         $sourceItems = $sourceItemsByLookupKeys($allSourceVariationItems
             ->filter(fn (SupplierCatalogItem $item) => $this->sourceItemPassesMinPrice($item, $snapshot->supplier_code, $priceMappings)));
@@ -1234,11 +1243,13 @@ class BikeproductsCatalogService
                 $sourceGroupDatabaseGoods[$sourceGroupKey($sourceItem)] = $matchedGood;
             }
         }
-        $rows = $databaseVariations->map(function (ShopGoodVariation $variation) use ($sourceItems, $sourceSingleItems, $sourcePresenceItems, $sourceSinglePresenceItems, $sourcePayloadSkuPresenceItems, $variationCountByGood, $mappings, $priceMappings, $snapshot) {
+        $rows = $databaseVariations->map(function (ShopGoodVariation $variation) use ($sourceItems, $sourceSingleItems, $sourcePresenceItems, $sourceSinglePresenceItems, $sourcePresenceItemsSafe, $sourceSinglePresenceItemsSafe, $sourcePayloadSkuPresenceItems, $safeSkuKey, $variationCountByGood, $mappings, $priceMappings, $snapshot) {
             $variationSku = $this->normalizeSku($variation->sku);
+            $variationSafeSku = $safeSkuKey($variationSku);
             $source = $sourceItems->get($variationSku)
                 ?? $sourcePresenceItems->get($variationSku)
-                ?? $sourcePayloadSkuPresenceItems->get($variationSku);
+                ?? $sourcePresenceItemsSafe->get($variationSafeSku)
+                ?? $sourcePayloadSkuPresenceItems->get($variationSafeSku);
 
             if ($variationSku === '8025200120') {
                 Log::debug('[supplier-catalog-audit] debug sku 8025200120', [
@@ -1246,7 +1257,8 @@ class BikeproductsCatalogService
                     'supplier_code' => $snapshot->supplier_code,
                     'source_items' => $sourceItems->has($variationSku),
                     'source_presence' => $sourcePresenceItems->has($variationSku),
-                    'source_payload_article' => $sourcePayloadSkuPresenceItems->has($variationSku),
+                    'source_payload_article' => $sourcePayloadSkuPresenceItems->has($variationSafeSku),
+                    'source_payload_article_keys' => $sourcePayloadSkuPresenceItems->keys()->take(3)->values()->all(),
                     'source_found' => $source !== null,
                     'source_id' => $source?->id,
                     'source_external_sku' => $source?->external_sku,
@@ -1257,7 +1269,9 @@ class BikeproductsCatalogService
             }
             $isSingleProductSource = false;
             if ($source === null) {
-                $source = $sourceSingleItems->get($variationSku) ?? $sourceSinglePresenceItems->get($variationSku);
+                $source = $sourceSingleItems->get($variationSku)
+                    ?? $sourceSinglePresenceItems->get($variationSku)
+                    ?? $sourceSinglePresenceItemsSafe->get($variationSafeSku);
                 $isSingleProductSource = $source !== null;
             }
             if ($source === null && $variationCountByGood->get($variation->good_id) === 1) {
