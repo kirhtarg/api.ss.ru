@@ -1141,7 +1141,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v15:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v16:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1236,12 +1236,20 @@ class BikeproductsCatalogService
         }
         $rows = $databaseVariations->map(function (ShopGoodVariation $variation) use ($sourceItems, $sourceSingleItems, $sourcePresenceItems, $sourceSinglePresenceItems, $sourcePayloadSkuPresenceItems, $variationCountByGood, $mappings, $priceMappings, $snapshot) {
             $variationSku = $this->normalizeSku($variation->sku);
-            $source = $sourceItems->get($variationSku) ?? $sourcePresenceItems->get($variationSku) ?? $sourcePayloadSkuPresenceItems->get($variationSku);
+            $source = $sourceItems->get($variationSku)
+                ?? $sourcePresenceItems->get($variationSku)
+                ?? $sourcePayloadSkuPresenceItems->get($variationSku);
+            if ($source === null && $variationSku !== '') {
+                $source = $this->snapshotItemByPayloadSku($snapshot, $variationSku);
+            }
             if ($variationSku === '8025200120') {
                 Log::debug('[supplier-catalog-audit] debug sku 8025200120', [
+                    'snapshot_id' => $snapshot->id,
+                    'supplier_code' => $snapshot->supplier_code,
                     'source_items' => $sourceItems->has($variationSku),
                     'source_presence' => $sourcePresenceItems->has($variationSku),
                     'source_payload_article' => $sourcePayloadSkuPresenceItems->has($variationSku),
+                    'source_fallback_query' => $source !== null,
                     'source_id' => $source?->id,
                     'source_external_sku' => $source?->external_sku,
                     'source_raw_article' => $source?->raw_payload[self::SOURCE_COLUMNS['sku']] ?? null,
@@ -2966,7 +2974,23 @@ class BikeproductsCatalogService
         }
 
         return array_values(array_unique($types));
-    }    /** @param Collection<int, SupplierCatalogFieldMapping> $mappings @return array<int, array<string, mixed>> */
+    }
+
+    private function snapshotItemByPayloadSku(SupplierCatalogSnapshot $snapshot, string $sku): ?SupplierCatalogItem
+    {
+        $normalizedSku = $this->normalizeSku($sku);
+        if ($normalizedSku === '') {
+            return null;
+        }
+
+        return $snapshot->items()
+            ->get(['id', 'name', 'clean_name', 'source_color', 'source_size', 'source_year', 'is_source_variation', 'external_sku', 'source_axes', 'raw_payload'])
+            ->first(function (SupplierCatalogItem $item) use ($normalizedSku): bool {
+                return $this->normalizeSku($item->raw_payload[self::SOURCE_COLUMNS['sku']] ?? null) === $normalizedSku
+                    || $this->normalizeSku($item->external_sku) === $normalizedSku;
+            });
+    }
+    /** @param Collection<int, SupplierCatalogFieldMapping> $mappings @return array<int, array<string, mixed>> */
     private function variationComparisons(ShopGoodVariation $variation, ?SupplierCatalogItem $source, Collection $mappings, string $supplierCode): array
     {
         if ($source === null) {
