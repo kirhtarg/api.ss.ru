@@ -460,25 +460,6 @@ class ShopImportExportController extends Controller
                 'frontend_url' => $frontendUrl,
             ]);
 
-            // Копируем на фронтенд
-            $frontendPathRelative = config('frontend.path');
-            $frontendPublicUrl = null;
-
-            if ($frontendPathRelative) {
-                $frontendBasePath = base_path($frontendPathRelative);
-                $frontendPublicPath = $frontendBasePath.'/public';
-
-                if (! file_exists($frontendPublicPath)) {
-                    @mkdir($frontendPublicPath, 0755, true);
-                }
-
-                if (is_dir($frontendPublicPath)) {
-                    $frontendFilepath = $frontendPublicPath.'/'.$filename;
-                    file_put_contents($frontendFilepath, $xml);
-                    $frontendPublicUrl = config('app.frontend_url').'/'.$filename;
-                }
-            }
-
             $url = Storage::disk('public')->url($filepath);
             $size = Storage::disk('public')->size($filepath);
             $lastModified = Storage::disk('public')->lastModified($filepath);
@@ -489,7 +470,9 @@ class ShopImportExportController extends Controller
                 'data' => [
                     'filename' => $filename,
                     'download_url' => $url,
-                    'frontend_url' => $frontendPublicUrl,
+                    // Nuxt получает sitemap через server route. Статический
+                    // public/sitemap.xml затеняет его и поэтому не создается.
+                    'frontend_url' => config('app.frontend_url').'/'.$filename,
                     'generated_at' => date('Y-m-d H:i:s', $lastModified),
                     'size' => round($size / 1024, 2).' KB',
                     'pages_count' => $pagesCount,

@@ -11,8 +11,9 @@ class SitemapController extends Controller
 {
     public function getSitemap(Request $request)
     {
-        $filePath = 'public/exports/sitemap.xml';
-        if (! Storage::exists($filePath)) {
+        $disk = Storage::disk('public');
+        $filePath = 'exports/sitemap.xml';
+        if (! $disk->exists($filePath)) {
             $host = htmlspecialchars($request->getSchemeAndHttpHost(), ENT_XML1 | ENT_QUOTES, 'UTF-8');
             $content = <<<XML
 <?xml version="1.0" encoding="UTF-8"?>
@@ -36,7 +37,7 @@ XML;
                 ->header('Pragma', 'no-cache')
                 ->header('Expires', '0');
         }
-        $file = Storage::get($filePath);
+        $file = $disk->get($filePath);
 
         return response($file, 200)
             ->header('Content-Type', 'application/xml; charset=utf-8')

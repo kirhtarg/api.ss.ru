@@ -10,9 +10,10 @@ class RobotsController extends Controller
 {
     public function getRobots(Request $request)
     {
-        $filePath = 'public/exports/robots.txt';
+        $disk = Storage::disk('public');
+        $filePath = 'exports/robots.txt';
 
-        if (! Storage::exists($filePath)) {
+        if (! $disk->exists($filePath)) {
             // Если файл не найден, создаем дефолтный
             $content = [
                 'User-agent: *',
@@ -28,7 +29,7 @@ class RobotsController extends Controller
                 ->header('Expires', '0');
         }
 
-        $file = Storage::get($filePath);
+        $file = $disk->get($filePath);
 
         return response($file, 200)
             ->header('Content-Type', 'text/plain; charset=utf-8')

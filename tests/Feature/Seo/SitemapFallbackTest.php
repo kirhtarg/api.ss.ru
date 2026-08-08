@@ -12,7 +12,7 @@ class SitemapFallbackTest extends TestCase
 {
     public function test_missing_export_returns_valid_minimal_sitemap(): void
     {
-        Storage::fake();
+        Storage::fake('public');
         Log::spy();
 
         $request = Request::create('https://skateandsnow.ru/api/public/get-sitemap', 'GET');
@@ -29,7 +29,20 @@ class SitemapFallbackTest extends TestCase
             ->once()
             ->withArgs(fn (string $message, array $context): bool =>
                 $message === '[FIX:seo] Generated emergency sitemap because export file is missing'
-                && $context['path'] === 'public/exports/sitemap.xml'
+                && $context['path'] === 'exports/sitemap.xml'
             );
+    }
+
+    public function test_existing_export_is_read_from_public_disk(): void
+    {
+        Storage::fake('public');
+        $expected = '<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"></urlset>';
+        Storage::disk('public')->put('exports/sitemap.xml', $expected);
+
+        $request = Request::create('https://skateandsnow.ru/api/public/get-sitemap', 'GET');
+        $response = app(SitemapController::class)->getSitemap($request);
+
+        $this->assertSame(200, $response->getStatusCode());
+        $this->assertSame($expected, $response->getContent());
     }
 }
