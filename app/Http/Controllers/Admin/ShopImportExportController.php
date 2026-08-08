@@ -305,13 +305,15 @@ class ShopImportExportController extends Controller
     {
         try {
             $frontendUrl = config('app.frontend_url', 'https://skateandsnow.ru');
+            $frontendUrl = rtrim($frontendUrl, '/');
+            $escapeXml = static fn ($value): string => htmlspecialchars((string) $value, ENT_XML1 | ENT_QUOTES, 'UTF-8');
             $xml = '<?xml version="1.0" encoding="UTF-8"?>'.PHP_EOL;
             $xml .= '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'.PHP_EOL;
             $xml .= '    <!-- build:'.date('c').' env='.config('app.env').' -->'.PHP_EOL;
 
             // 1. Главная страница
             $xml .= '    <url>'.PHP_EOL;
-            $xml .= '        <loc>'.$frontendUrl.'</loc>'.PHP_EOL;
+            $xml .= '        <loc>'.$escapeXml($frontendUrl).'</loc>'.PHP_EOL;
             $xml .= '        <changefreq>daily</changefreq>'.PHP_EOL;
             $xml .= '        <priority>1.0</priority>'.PHP_EOL;
             $xml .= '    </url>'.PHP_EOL;
@@ -327,7 +329,7 @@ class ShopImportExportController extends Controller
                 }
 
                 $xml .= '    <url>'.PHP_EOL;
-                $xml .= '        <loc>'.$frontendUrl.'/'.$slug.'</loc>'.PHP_EOL;
+                $xml .= '        <loc>'.$escapeXml($frontendUrl.'/'.$slug).'</loc>'.PHP_EOL;
                 $xml .= '        <lastmod>'.$page->updated_at->toIso8601String().'</lastmod>'.PHP_EOL;
                 $xml .= '        <changefreq>weekly</changefreq>'.PHP_EOL;
                 $xml .= '        <priority>0.8</priority>'.PHP_EOL;
@@ -336,7 +338,10 @@ class ShopImportExportController extends Controller
             }
 
             // 3. Категории каталога
-            $categories = \App\Models\ShopCategory::where('is_active', true)->get();
+            $categories = \App\Models\ShopCategory::where('is_active', true)
+                ->whereNotNull('slug')
+                ->where('slug', '<>', '')
+                ->get();
 
             // Создаем карту категорий для построения путей
             $categoryMap = [];
@@ -357,6 +362,12 @@ class ShopImportExportController extends Controller
                     $currentId = $cat->parent_id;
                 }
 
+                // Активная дочерняя категория с отсутствующим/неактивным
+                // предком не имеет рабочего публичного иерархического URL.
+                if ($currentId) {
+                    return '';
+                }
+
                 return implode('/', $path);
             };
 
@@ -367,7 +378,7 @@ class ShopImportExportController extends Controller
                 }
 
                 $xml .= '    <url>'.PHP_EOL;
-                $xml .= '        <loc>'.$frontendUrl.'/catalog/'.$path.'</loc>'.PHP_EOL;
+                $xml .= '        <loc>'.$escapeXml($frontendUrl.'/catalog/'.$path).'</loc>'.PHP_EOL;
                 $xml .= '        <lastmod>'.$category->updated_at->toIso8601String().'</lastmod>'.PHP_EOL;
                 $xml .= '        <changefreq>weekly</changefreq>'.PHP_EOL;
                 $xml .= '        <priority>0.9</priority>'.PHP_EOL;
@@ -379,10 +390,20 @@ class ShopImportExportController extends Controller
             // Загружаем товары с категориями для формирования красивых ссылок
             // Используем chunk для экономии памяти, если товаров много
             \App\Models\ShopGood::where('is_active', true)
+                ->whereNotNull('slug')
+                ->where('slug', '<>', '')
+                ->whereHas('categories', function ($query) {
+                    $query->where('shop_categories.is_active', true)
+                        ->whereNotNull('shop_categories.slug')
+                        ->where('shop_categories.slug', '<>', '');
+                })
                 ->with(['categories' => function ($query) {
-                    $query->select('shop_categories.id', 'shop_categories.slug', 'shop_categories.parent_id');
+                    $query->where('shop_categories.is_active', true)
+                        ->whereNotNull('shop_categories.slug')
+                        ->where('shop_categories.slug', '<>', '')
+                        ->select('shop_categories.id', 'shop_categories.slug', 'shop_categories.parent_id');
                 }])
-                ->chunk(500, function ($goods) use (&$xml, $frontendUrl, &$pagesCount, $buildCategoryPath) {
+                ->chunkById(500, function ($goods) use (&$xml, $frontendUrl, &$pagesCount, $buildCategoryPath, $escapeXml) {
                     foreach ($goods as $good) {
                         $catPath = '';
 
@@ -395,7 +416,7 @@ class ShopImportExportController extends Controller
                         $urlPath = $catPath ? '/catalog/'.$catPath.'/'.$good->slug : '/catalog/'.$good->slug;
 
                         $xml .= '    <url>'.PHP_EOL;
-                        $xml .= '        <loc>'.$frontendUrl.$urlPath.'</loc>'.PHP_EOL;
+                        $xml .= '        <loc>'.$escapeXml($frontendUrl.$urlPath).'</loc>'.PHP_EOL;
                         $xml .= '        <lastmod>'.$good->updated_at->toIso8601String().'</lastmod>'.PHP_EOL;
                         $xml .= '        <changefreq>weekly</changefreq>'.PHP_EOL;
                         $xml .= '        <priority>0.7</priority>'.PHP_EOL;
@@ -404,68 +425,22 @@ class ShopImportExportController extends Controller
                     }
                 });
 
-            // 5. Статические страницы Nuxt (из файловой системы)
-            $frontendPathRelative = config('frontend.path');
-            if ($frontendPathRelative) {
-                $frontendBasePath = base_path($frontendPathRelative);
-                $pagesDir = $frontendBasePath.'/pages';
+            // 5. Только явно разрешенные публичные страницы. Сканирование pages/
+            // добавляло checkout, payment-status и внутренние служебные маршруты.
+            $staticRoutes = [
+                '/catalog', '/advantages', '/club', '/contacts', '/cooperation',
+                '/delivery', '/discount-cards', '/faq', '/longrent', '/privacy',
+                '/rentbikespb', '/reviews', '/size-chart', '/terms', '/tips',
+                '/warranty', '/wholesale',
+            ];
 
-                if (is_dir($pagesDir)) {
-                    $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($pagesDir));
-
-                    foreach ($iterator as $file) {
-                        if ($file->isFile() && $file->getExtension() === 'vue') {
-                            $relativePath = str_replace($pagesDir, '', $file->getPathname());
-                            $relativePath = str_replace('\\', '/', $relativePath);
-
-                            // Исключаем системные и админские папки
-                            if (preg_match('#^/(admin|auth|cms|profile|user-dashboard)#', $relativePath)) {
-                                continue;
-                            }
-
-                            $filename = $file->getBasename('.vue');
-
-                            // Исключаем динамические маршруты и скрытые файлы
-                            if (str_starts_with($filename, '[') || str_starts_with($filename, '_')) {
-                                continue;
-                            }
-                            if (str_starts_with($filename, 'error')) {
-                                continue;
-                            }
-
-                            // Формируем URL
-                            $urlPath = dirname($relativePath);
-                            $urlPath = str_replace('\\', '/', $urlPath); // Fix for Windows
-
-                            if ($urlPath === '.') {
-                                $urlPath = '';
-                            }
-                            if ($urlPath === '/') {
-                                $urlPath = '';
-                            }
-
-                            // Обработка index.vue
-                            if ($filename === 'index') {
-                                if ($urlPath === '') {
-                                    continue;
-                                } // Главная уже добавлена
-                            } else {
-                                $urlPath .= '/'.$filename;
-                            }
-
-                            // Нормализация пути (убираем двойные слеши)
-                            $urlPath = str_replace('//', '/', $urlPath);
-
-                            $xml .= '    <url>'.PHP_EOL;
-                            $xml .= '        <loc>'.$frontendUrl.$urlPath.'</loc>'.PHP_EOL;
-                            $xml .= '        <lastmod>'.date('c', $file->getMTime()).'</lastmod>'.PHP_EOL;
-                            $xml .= '        <changefreq>monthly</changefreq>'.PHP_EOL;
-                            $xml .= '        <priority>0.5</priority>'.PHP_EOL;
-                            $xml .= '    </url>'.PHP_EOL;
-                            $pagesCount++;
-                        }
-                    }
-                }
+            foreach ($staticRoutes as $urlPath) {
+                $xml .= '    <url>'.PHP_EOL;
+                $xml .= '        <loc>'.$escapeXml($frontendUrl.$urlPath).'</loc>'.PHP_EOL;
+                $xml .= '        <changefreq>monthly</changefreq>'.PHP_EOL;
+                $xml .= '        <priority>0.5</priority>'.PHP_EOL;
+                $xml .= '    </url>'.PHP_EOL;
+                $pagesCount++;
             }
 
             $xml .= '</urlset>';
@@ -478,6 +453,12 @@ class ShopImportExportController extends Controller
             }
 
             Storage::disk('public')->put($filepath, $xml);
+
+            \Log::info('[FIX:seo] Sitemap generated', [
+                'pages_count' => $pagesCount,
+                'environment' => config('app.env'),
+                'frontend_url' => $frontendUrl,
+            ]);
 
             // Копируем на фронтенд
             $frontendPathRelative = config('frontend.path');
@@ -516,6 +497,11 @@ class ShopImportExportController extends Controller
             ]);
 
         } catch (\Exception $e) {
+            \Log::error('[FIX:seo] Sitemap generation failed', [
+                'error' => $e->getMessage(),
+                'exception' => get_class($e),
+            ]);
+
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка генерации Sitemap: '.$e->getMessage(),

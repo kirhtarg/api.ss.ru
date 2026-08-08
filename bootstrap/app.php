@@ -120,6 +120,20 @@ return Application::configure(basePath: dirname(__DIR__))
         })->name('supplier-feed-price-stock-dispatch')->everyMinute()->withoutOverlapping();
 
         $schedule->call(function (): void {
+            $request = \Illuminate\Http\Request::create('/internal/scheduled-sitemap', 'POST');
+            $response = app(\App\Http\Controllers\Admin\ShopImportExportController::class)
+                ->generateSitemap($request);
+            $payload = $response->getData(true);
+
+            if ($response->getStatusCode() >= 400 || ! ($payload['success'] ?? false)) {
+                throw new \RuntimeException($payload['message'] ?? 'Scheduled sitemap generation failed');
+            }
+        })
+            ->name('seo-generate-sitemap')
+            ->dailyAt('03:15')
+            ->withoutOverlapping();
+
+        $schedule->call(function (): void {
             $released = app(\App\Services\StockReservationService::class)->releaseExpired();
             if ($released > 0) {
                 \Illuminate\Support\Facades\Log::info('Expired Partner API stock reservations released by scheduler', [

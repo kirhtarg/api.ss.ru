@@ -96,7 +96,7 @@ class BikeproductsCatalogService
         }
     }
 
-    /** @return array{affected: int, skipped: int, message: string} */
+    /** @return array{affected: int, skipped: int, message: string, created?: array<string, array<int, int>>, log?: array<int, array<string, mixed>>, warnings?: array<int, string>} */
     public function applyGoodAction(SupplierCatalogSnapshot $snapshot, string $action, array $ids): array
     {
         $this->assertReadySnapshot($snapshot);
@@ -158,10 +158,7 @@ class BikeproductsCatalogService
             ->map(fn (Collection $group) => $group->count())
             ->all();
         $sourceVariationSkus = $sourceVariationItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code))->filter()->unique()->values();
-        $existingVariationsBySku = $this->findVariationsBySku(
-            $sourceVariationSkus,
-            $snapshot->supplier_code,
-        );
+        $existingVariationsBySku = $this->findVariationsBySku($sourceVariationSkus, $snapshot->supplier_code);
         $existingGoodsBySku = ShopGood::query()
             ->where('supplier', $supplierName)
             ->whereIn(DB::raw('TRIM(`sku`)'), $sourceVariationSkus->all())
@@ -173,17 +170,29 @@ class BikeproductsCatalogService
             $existingVariation = $existingVariationsBySku->get($this->normalizeSku($sourceSku));
             $existingGood = $existingVariation?->good ?? $existingGoodsBySku->get($this->normalizeSku($sourceSku));
             if ($existingGood) {
-                $groupKey = $sourceVariationItem->clean_name
-                    ?: $this->sourceGroupName($sourceVariationItem->name, $sourceVariationItem->external_sku);
+                $groupKey = $sourceVariationItem->clean_name ?: $this->sourceGroupName($sourceVariationItem->name, $sourceVariationItem->external_sku);
                 $parentGoodsBySourceGroup[$groupKey] = $existingGood;
             }
         }
+
         $affected = 0;
         $skipped = 0;
-
+        $createdGoodIds = [];
+        $createdVariationIds = [];
+        $createdImageIds = [];
+        $createdSkus = [];
+        $actionLog = [];
         $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
+        $contentAudit = $this->imageContentAuditStatus($snapshot);
+        $sourceAudits = $contentAudit['status'] === 'completed'
+            ? SupplierCatalogImageAudit::query()
+                ->where('snapshot_id', $snapshot->id)
+                ->get(['source_url_hash', 'status', 'content_hash', 'perceptual_hash', 'width', 'height', 'error_message'])
+                ->keyBy('source_url_hash')
+            : collect();
         $propertySyncedGoodIds = [];
-        DB::transaction(function () use ($items, $matches, $goodMappings, $propertyMappings, $supplierName, $snapshot, $sourceGroupCounts, $imageBaseUrl, $imageSourceFields, &$parentGoodsBySourceGroup, &$propertySyncedGoodIds, &$affected, &$skipped): void {
+
+        DB::transaction(function () use ($items, $matches, $goodMappings, $propertyMappings, $supplierName, $snapshot, $sourceGroupCounts, $imageBaseUrl, $imageSourceFields, $contentAudit, $sourceAudits, &$parentGoodsBySourceGroup, &$propertySyncedGoodIds, &$createdSkus, &$createdGoodIds, &$createdVariationIds, &$createdImageIds, &$actionLog, &$affected, &$skipped): void {
             foreach ($items as $item) {
                 $payload = $item->raw_payload ?? [];
                 $attributes = $this->mappedGoodAttributes($item, $goodMappings);
@@ -192,14 +201,29 @@ class BikeproductsCatalogService
                     ?? $this->nullableString($item->name);
                 if ($name === null || $item->external_sku === null) {
                     $skipped++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'missing_required_fields');
                     continue;
                 }
 
                 $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
+                $normalizedSourceSku = $this->normalizeSku($sourceSku);
+                $groupKey = $item->clean_name ?: $this->sourceGroupName($item->name, $item->external_sku);
                 $isSourceVariation = $this->isSourceVariationItem($item);
-                $match = $matches->get($this->normalizeSku($sourceSku));
+                $match = $matches->get($normalizedSourceSku);
+
+                if (! $isSourceVariation && ($sourceGroupCounts[$groupKey] ?? 0) > 0) {
+                    $skipped++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'parent_row_has_variations', ['group' => $groupKey]);
+                    continue;
+                }
+
                 if (! $isSourceVariation && $match) {
                     $good = $match['type'] === 'variation' ? $match['model']->good : $match['model'];
+                    if (! $good) {
+                        $skipped++;
+                        $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'matched_good_missing');
+                        continue;
+                    }
                     $values = collect($attributes)->except('brand')->all();
                     if ($values !== []) {
                         $good->update($values);
@@ -211,19 +235,29 @@ class BikeproductsCatalogService
                     $this->syncMappedProperties($good, $payload, $propertyMappings, true);
                     $propertySyncedGoodIds[$good->id] = true;
                     $affected++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'existing_product_updated', ['good_id' => $good->id]);
                     continue;
                 }
+
                 if ($isSourceVariation && $match && $match['type'] === 'variation') {
                     $skipped++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'variation_already_exists', ['variation_id' => $match['model']->id]);
+                    continue;
+                }
+
+                if ($normalizedSourceSku !== '' && isset($createdSkus[$normalizedSourceSku])) {
+                    $skipped++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'sku_already_created_in_run', ['existing' => $createdSkus[$normalizedSourceSku]]);
+                    continue;
+                }
+
+                if ($normalizedSourceSku !== '' && ShopGoodVariation::query()->where('sku', $sourceSku)->lockForUpdate()->exists()) {
+                    $skipped++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'variation_sku_already_exists_in_database');
                     continue;
                 }
 
                 if ($isSourceVariation) {
-                    if (ShopGoodVariation::query()->where('sku', $sourceSku)->exists()) {
-                        $skipped++;
-                        continue;
-                    }
-                    $groupKey = $item->clean_name ?: $this->sourceGroupName($item->name, $item->external_sku);
                     $parentSku = $this->nullableString($item->external_group_key) ?? (string) $sourceSku;
                     $good = $match && $match['type'] === 'good' ? $match['model'] : ($parentGoodsBySourceGroup[$groupKey] ?? null);
                     if (! $good && $item->clean_name) {
@@ -242,6 +276,7 @@ class BikeproductsCatalogService
                         $this->syncMappedProperties($good, $payload, $propertyMappings, true);
                         $propertySyncedGoodIds[$good->id] = true;
                         $affected++;
+                        $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'single_variation_source_updated_existing_product', ['good_id' => $good->id]);
                         continue;
                     }
                     if (! $good) {
@@ -253,6 +288,7 @@ class BikeproductsCatalogService
                     }
                     if (! $good) {
                         $good = $this->createMappedGood($name, $parentSku, $supplierName, $attributes, $payload, $propertyMappings);
+                        $createdGoodIds[] = $good->id;
                         $propertySyncedGoodIds[$good->id] = true;
                     }
                     if (! isset($propertySyncedGoodIds[$good->id])) {
@@ -263,7 +299,7 @@ class BikeproductsCatalogService
                     $variation = ShopGoodVariation::create([
                         'good_id' => $good->id,
                         'supplier' => $supplierName,
-                        'sku' => $sourceSku,
+                        'sku' => (string) $sourceSku,
                         'name' => $name,
                         'is_active' => false,
                         ...collect($attributes)->only(['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all(),
@@ -274,31 +310,68 @@ class BikeproductsCatalogService
                         'value' => $axis['value'],
                     ])->id)->all();
                     $variation->attributeValues()->sync($valueIds);
-                    $this->attachSourceImages($good, $variation, $item, $imageBaseUrl, $imageSourceFields);
+                    $createdVariationIds[] = $variation->id;
+                    if ($normalizedSourceSku !== '') {
+                        $createdSkus[$normalizedSourceSku] = ['variation_id' => $variation->id, 'good_id' => $good->id];
+                    }
+                    $imageResult = $this->attachSourceImages($good, $variation, $item, $imageBaseUrl, $imageSourceFields, $contentAudit, $sourceAudits);
+                    $createdImageIds = array_values(array_unique([...$createdImageIds, ...$imageResult['created_image_ids']]));
                     $affected++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'created', 'variation_created', [
+                        'good_id' => $good->id,
+                        'variation_id' => $variation->id,
+                        'axes' => $axes,
+                        'images' => $imageResult,
+                    ]);
                     continue;
                 }
 
                 $good = $this->createMappedGood($name, (string) $sourceSku, $supplierName, $attributes, $payload, $propertyMappings);
+                $createdGoodIds[] = $good->id;
                 $variation = ShopGoodVariation::create([
                     'good_id' => $good->id,
                     'supplier' => $supplierName,
-                    'sku' => $sourceSku,
+                    'sku' => (string) $sourceSku,
                     'name' => $name,
                     'is_active' => false,
                     ...collect($attributes)->only(['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all(),
                 ]);
-                $valueIds = collect($this->creationAxesForItem($item, $snapshot->supplier_code))->map(fn (array $axis) => ShopVariationAttributeValue::firstOrCreate([
+                $axes = $this->creationAxesForItem($item, $snapshot->supplier_code);
+                $valueIds = collect($axes)->map(fn (array $axis) => ShopVariationAttributeValue::firstOrCreate([
                     'attribute_id' => $axis['attribute_id'],
                     'value' => $axis['value'],
                 ])->id)->all();
                 $variation->attributeValues()->sync($valueIds);
-                $this->attachSourceImages($good, $variation, $item, $imageBaseUrl, $imageSourceFields);
+                $createdVariationIds[] = $variation->id;
+                if ($normalizedSourceSku !== '') {
+                    $createdSkus[$normalizedSourceSku] = ['variation_id' => $variation->id, 'good_id' => $good->id];
+                }
+                $imageResult = $this->attachSourceImages($good, $variation, $item, $imageBaseUrl, $imageSourceFields, $contentAudit, $sourceAudits);
+                $createdImageIds = array_values(array_unique([...$createdImageIds, ...$imageResult['created_image_ids']]));
                 $affected++;
+                $actionLog[] = $this->catalogActionLogRow($item, 'created', 'single_product_created', [
+                    'good_id' => $good->id,
+                    'variation_id' => $variation->id,
+                    'axes' => $axes,
+                    'images' => $imageResult,
+                ]);
             }
         });
 
-        return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Товары из файла созданы как скрытые'];
+        return [
+            'affected' => $affected,
+            'skipped' => $skipped,
+            'message' => 'Товары из файла созданы как скрытые',
+            'created' => [
+                'good_ids' => array_values(array_unique($createdGoodIds)),
+                'variation_ids' => array_values(array_unique($createdVariationIds)),
+                'image_ids' => array_values(array_unique($createdImageIds)),
+            ],
+            'log' => $actionLog,
+            'warnings' => $contentAudit['status'] === 'completed'
+                ? []
+                : ['Изображения при создании не привязаны: сначала завершите аудит изображений и синхронизируйте изображения отдельным действием.'],
+        ];
     }
 
     /** @return array{affected: int, skipped: int, message: string} */
@@ -392,8 +465,8 @@ class BikeproductsCatalogService
                     // With a completed audit, never erase working images when
                     // every source URL for this variation is broken.
                     if ($imageMode === 'replace' && $allUrls->isNotEmpty() && $urls->isEmpty()) { $skipped++; continue; }
-                    if ($imageMode === 'reconcile' && $contentAudit['status'] !== 'completed') { $skipped++; continue; }
-                    if (! $match || ($urls->isEmpty() && $imageMode !== 'replace')) { $skipped++; continue; }
+                    if (in_array($imageMode, ['reconcile', 'prune', 'delete_broken'], true) && $contentAudit['status'] !== 'completed') { $skipped++; continue; }
+                    if (! $match || ($urls->isEmpty() && ! in_array($imageMode, ['replace', 'delete_broken'], true))) { $skipped++; continue; }
                     $variation = $match['type'] === 'variation' ? $match['model'] : null;
                     $good = $variation ? $variation->good : $match['model'];
                     $query = $variation
@@ -401,12 +474,22 @@ class BikeproductsCatalogService
                         : ShopGoodImage::query()->where('good_id', $good->id)->whereNull('variation_id');
                     $existingImages = $query->orderBy('sort_order')->orderBy('id')->get();
                     $existing = $existingImages->pluck('file_path')->all();
+                    if ($imageMode === 'delete_broken') {
+                        $brokenImageIds = $existingImages
+                            ->filter(fn (ShopGoodImage $image) => $image->content_checked_at !== null && $image->content_hash === null)
+                            ->pluck('id')
+                            ->values();
+                        if ($brokenImageIds->isEmpty()) { $skipped++; continue; }
+                        ShopGoodImage::query()->whereIn('id', $brokenImageIds)->delete();
+                        $affected++;
+                        continue;
+                    }
                     if ($imageMode === 'replace') {
                         $query->delete();
                         $existingImages = collect();
                         $existing = [];
                     }
-                    if ($imageMode === 'reconcile') {
+                    if (in_array($imageMode, ['reconcile', 'prune'], true)) {
                         // A broken supplier URL is not evidence that the local
                         // image is obsolete. Keep existing bindings in that case.
                         $hasUnavailableSource = $allUrls->contains(function (string $url) use ($sourceAudits): bool {
@@ -424,6 +507,14 @@ class BikeproductsCatalogService
                             }
                             $matchedImageIds[] = $availableImages[$matchIndex]->id;
                             unset($availableImages[$matchIndex]);
+                        }
+                        if ($imageMode === 'prune') {
+                            if ($hasUnavailableSource) { $skipped++; continue; }
+                            $extraIds = collect($availableImages)->pluck('id')->values();
+                            if ($extraIds->isEmpty()) { $skipped++; continue; }
+                            ShopGoodImage::query()->whereIn('id', $extraIds)->delete();
+                            $affected++;
+                            continue;
                         }
                         if (! $hasUnavailableSource && $availableImages !== []) {
                             ShopGoodImage::query()->whereIn('id', collect($availableImages)->pluck('id'))->delete();
@@ -448,9 +539,13 @@ class BikeproductsCatalogService
                     $affected++;
                 }
             });
-            return ['affected' => $affected, 'skipped' => $skipped, 'message' => $imageMode === 'replace'
-                ? 'Привязки изображений заменены'
-                : ($imageMode === 'reconcile' ? 'Лишние привязки удалены, недостающие изображения добавлены' : 'Недостающие URL изображений привязаны')];
+            return ['affected' => $affected, 'skipped' => $skipped, 'message' => match ($imageMode) {
+                'replace' => 'Привязки изображений заменены',
+                'reconcile' => 'Лишние привязки удалены, недостающие изображения добавлены',
+                'prune' => 'Лишние привязки изображений удалены',
+                'delete_broken' => 'Битые привязки изображений удалены',
+                default => 'Недостающие URL изображений привязаны',
+            }];
         }
 
         throw new \InvalidArgumentException('Неизвестная область обновления.');
@@ -1621,6 +1716,87 @@ class BikeproductsCatalogService
     }
 
     /** @return array{affected: int, message: string} */
+    public function rollbackCatalogAction(SupplierCatalogActionRun $run): array
+    {
+        if ($run->status !== 'completed') {
+            throw new \InvalidArgumentException('Для этой операции откат недоступен.');
+        }
+
+        if ($run->scope === 'variations') {
+            return $this->rollbackVariationAction($run);
+        }
+
+        if ($run->scope === 'goods' && $run->action === 'create') {
+            $result = $run->result ?? [];
+            $created = $result['created'] ?? [];
+            $imageIds = collect($created['image_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->values();
+            $variationIds = collect($created['variation_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->values();
+            $goodIds = collect($created['good_ids'] ?? [])->map(fn ($id) => (int) $id)->filter()->values();
+            if ($imageIds->isEmpty() && $variationIds->isEmpty() && $goodIds->isEmpty()) {
+                throw new \InvalidArgumentException('В результате операции нет списка созданных сущностей для отката.');
+            }
+
+            return DB::transaction(function () use ($run, $result, $imageIds, $variationIds, $goodIds): array {
+                $deletedImages = $imageIds->isEmpty() ? 0 : ShopGoodImage::query()->whereIn('id', $imageIds)->delete();
+                $deletedVariations = $variationIds->isEmpty() ? 0 : ShopGoodVariation::query()->whereIn('id', $variationIds)->delete();
+                $deletedGoods = 0;
+                foreach (ShopGood::query()->whereIn('id', $goodIds)->get() as $good) {
+                    if (! ShopGoodVariation::query()->where('good_id', $good->id)->exists()) {
+                        $good->delete();
+                        $deletedGoods++;
+                    }
+                }
+                $affected = $deletedImages + $deletedVariations + $deletedGoods;
+                $run->update([
+                    'status' => 'rolled_back',
+                    'result' => array_merge($result, [
+                        'rollback' => [
+                            'deleted_images' => $deletedImages,
+                            'deleted_variations' => $deletedVariations,
+                            'deleted_goods' => $deletedGoods,
+                        ],
+                    ]),
+                    'executed_at' => now(),
+                ]);
+
+                return ['affected' => $affected, 'message' => 'Созданные товары, вариации и изображения удалены'];
+            });
+        }
+
+        if ($run->scope === 'images' && $run->action === 'update') {
+            $backup = $run->backup ?? [];
+            $images = collect($backup['images'] ?? [])->filter(fn (array $row) => ! empty($row['id']))->values();
+            if ($images->isEmpty()) {
+                throw new \InvalidArgumentException('Резервные привязки изображений не найдены.');
+            }
+            $goodIds = $images->pluck('good_id')->filter()->unique()->values();
+            $variationIds = $images->pluck('variation_id')->filter()->unique()->values();
+
+            return DB::transaction(function () use ($run, $backup, $images, $goodIds, $variationIds): array {
+                ShopGoodImage::query()
+                    ->where(function ($query) use ($goodIds, $variationIds): void {
+                        if ($goodIds->isNotEmpty()) {
+                            $query->whereIn('good_id', $goodIds);
+                        }
+                        if ($variationIds->isNotEmpty()) {
+                            $query->orWhereIn('variation_id', $variationIds);
+                        }
+                    })
+                    ->delete();
+                DB::table('shop_good_images')->insert($images->map(fn (array $row) => $row)->all());
+                $run->update([
+                    'status' => 'rolled_back',
+                    'result' => array_merge($run->result ?? [], ['rollback' => ['restored_images' => $images->count()]]),
+                    'executed_at' => now(),
+                ]);
+
+                return ['affected' => $images->count(), 'message' => 'Привязки изображений восстановлены из резервной копии'];
+            });
+        }
+
+        throw new \InvalidArgumentException('Откат для этой операции пока не поддерживается.');
+    }
+    /** @return array{affected: int, message: string} */
     public function rollbackVariationAction(SupplierCatalogActionRun $run): array
     {
         if ($run->scope !== 'variations' || $run->status !== 'completed') {
@@ -1877,7 +2053,7 @@ class BikeproductsCatalogService
                     if ($variationIds->isNotEmpty()) $query->whereIn('variation_id', $variationIds);
                     if ($goodIds->isNotEmpty()) $query->orWhereIn('good_id', $goodIds);
                 })
-                ->get(['id', 'good_id', 'variation_id', 'file_path', 'is_main', 'source_content_hash', 'content_hash', 'perceptual_hash', 'image_width', 'image_height']);
+                ->get(['id', 'good_id', 'variation_id', 'file_path', 'is_main', 'source_content_hash', 'content_hash', 'perceptual_hash', 'image_width', 'image_height', 'content_checked_at']);
         $pathGroups = $images->groupBy('file_path')->filter(fn (Collection $group) => $group->count() > 1);
         // Lookups by owner avoid scanning every database image for every row in
         // the source file (6k source rows can otherwise become tens of millions
@@ -1912,6 +2088,11 @@ class BikeproductsCatalogService
                 ->values()
                 ->all();
             $databasePaths = collect($databaseImages)->pluck('file_path')->all();
+            $databaseBrokenPaths = collect($databaseImages)
+                ->filter(fn (ShopGoodImage $image) => $image->content_checked_at !== null && $image->content_hash === null)
+                ->pluck('file_path')
+                ->values()
+                ->all();
             $availableImages = $databaseImages;
             $imagePairs = [];
             foreach ($sourceUrls as $sourceUrl) {
@@ -2023,6 +2204,7 @@ class BikeproductsCatalogService
                 'image_pairs' => $imagePairs,
                 'match_summary' => $matchSummary,
                 'database_only_paths' => collect($availableImages)->pluck('file_path')->values()->all(),
+                'database_broken_paths' => $databaseBrokenPaths,
                 'good_name' => $good->name,
                 'good_slug' => $good->slug,
             ];
@@ -2053,6 +2235,7 @@ class BikeproductsCatalogService
             'visual_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'visual')->count(),
             'normalized_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'normalized')->count(),
             'broken_source_urls' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('source_status', 'broken')->count(),
+            'broken_database_urls' => collect($imageComparisons)->flatMap(fn (array $row) => $row['database_broken_paths'] ?? [])->count(),
             'unchecked_source_urls' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('source_status', 'not_audited')->count(),
         ];
         if ($statuses !== []) {
@@ -2062,7 +2245,7 @@ class BikeproductsCatalogService
                         return $row['status'] === $status;
                     }
                     if ($status === 'broken') {
-                        return collect($row['image_pairs'])->contains(fn (array $pair) => $pair['source_status'] === 'broken');
+                        return collect($row['image_pairs'])->contains(fn (array $pair) => $pair['source_status'] === 'broken') || ! empty($row['database_broken_paths']);
                     }
                     if ($status === 'visual') {
                         return collect($row['image_pairs'])->contains(fn (array $pair) => in_array($pair['comparison_type'], ['visual', 'normalized'], true));
@@ -2137,7 +2320,7 @@ class BikeproductsCatalogService
     {
         return collect($this->imageAudit($snapshot, 1, 100000, $search, ['different'])['image_comparisons'])
             ->flatMap(fn (array $group) => $group['rows'])
-            ->filter(fn (array $row) => ($row['has_available_source'] ?? false) && ! ($row['source_only'] ?? false))
+            ->filter(fn (array $row) => ! ($row['source_only'] ?? false) && (($row['has_available_source'] ?? false) || ! empty($row['database_broken_paths'])))
             ->pluck('item_id')
             ->map(fn ($id) => (int) $id)
             ->values()
@@ -3571,7 +3754,13 @@ class BikeproductsCatalogService
             return null;
         }
 
-        if ($value instanceof \DateTimeInterface) {
+        if (is_int($value)) {
+            $value = (string) $value;
+        } elseif (is_float($value)) {
+            $value = floor($value) == $value
+                ? number_format($value, 0, '.', '')
+                : rtrim(rtrim(number_format($value, 10, '.', ''), '0'), '.');
+        } elseif ($value instanceof \DateTimeInterface) {
             $value = $value->format('Y-m-d H:i:s');
         } elseif (is_array($value)) {
             $value = implode('', array_map(static fn ($part) => method_exists($part, 'getText') ? $part->getText() : (string) $part, $value));
@@ -4100,14 +4289,56 @@ class BikeproductsCatalogService
         return mb_strtolower($storedName) === $databaseName;
     }
 
-    /** @param array<int, string> $sourceFields */
-    private function attachSourceImages(ShopGood $good, ShopGoodVariation $variation, SupplierCatalogItem $item, ?string $baseUrl, array $sourceFields): void
+    /** @return array<string, mixed> */
+    private function catalogActionLogRow(SupplierCatalogItem $item, string $status, string $reason, array $context = []): array
     {
-        $urls = collect($this->imageSourcesForItem($item, $sourceFields, $baseUrl))
+        return [
+            'source_item_id' => $item->id,
+            'source_sku' => $this->sourceSkuForItem($item, $item->snapshot?->supplier_code ?? ''),
+            'external_sku' => (string) $item->external_sku,
+            'source_name' => $item->name,
+            'status' => $status,
+            'reason' => $reason,
+            'context' => $context,
+        ];
+    }
+
+    /** @param array<int, string> $sourceFields @param Collection<string, SupplierCatalogImageAudit> $sourceAudits @return array{created_image_ids: array<int, int>, attached_urls: array<int, string>, skipped_urls: array<int, array<string, string>>} */
+    private function attachSourceImages(ShopGood $good, ShopGoodVariation $variation, SupplierCatalogItem $item, ?string $baseUrl, array $sourceFields, array $contentAudit, Collection $sourceAudits): array
+    {
+        $result = [
+            'created_image_ids' => [],
+            'attached_urls' => [],
+            'skipped_urls' => [],
+        ];
+        $sources = collect($this->imageSourcesForItem($item, $sourceFields, $baseUrl));
+        if ($sources->isEmpty()) {
+            return $result;
+        }
+        if (($contentAudit['status'] ?? null) !== 'completed') {
+            foreach ($sources as $source) {
+                $result['skipped_urls'][] = ['url' => $source['url'], 'reason' => 'image_audit_not_completed'];
+            }
+            return $result;
+        }
+
+        $urls = $sources
+            ->filter(function (array $source) use ($sourceAudits, &$result): bool {
+                $audit = $sourceAudits->get($this->sourceUrlHash($source['url']));
+                if ($audit?->status !== 'available') {
+                    $result['skipped_urls'][] = [
+                        'url' => $source['url'],
+                        'reason' => $audit ? 'source_url_'.$audit->status : 'source_url_not_audited',
+                    ];
+                    return false;
+                }
+
+                return true;
+            })
             ->pluck('url')
             ->values();
         if ($urls->isEmpty()) {
-            return;
+            return $result;
         }
 
         $query = ShopGoodImage::query()->where('variation_id', $variation->id);
@@ -4115,9 +4346,10 @@ class BikeproductsCatalogService
         $nextSortOrder = (int) $query->max('sort_order') + 1;
         foreach ($urls as $url) {
             if (in_array($url, $existingPaths, true)) {
+                $result['skipped_urls'][] = ['url' => $url, 'reason' => 'already_attached'];
                 continue;
             }
-            ShopGoodImage::create([
+            $image = ShopGoodImage::create([
                 'good_id' => null,
                 'variation_id' => $variation->id,
                 'file_path' => $url,
@@ -4125,7 +4357,12 @@ class BikeproductsCatalogService
                 'is_main' => $existingPaths === [] && $nextSortOrder === 1,
                 'sort_order' => $nextSortOrder++,
             ]);
+            $existingPaths[] = $url;
+            $result['created_image_ids'][] = (int) $image->id;
+            $result['attached_urls'][] = $url;
         }
+
+        return $result;
     }
 
     /** @param array<string, array<string, mixed>> $stats */

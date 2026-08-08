@@ -347,7 +347,7 @@ class BikeproductsCatalogController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $this->catalog->rollbackVariationAction($actionRun),
+            'data' => $this->catalog->rollbackCatalogAction($actionRun),
         ]);
     }
 
@@ -526,7 +526,7 @@ class BikeproductsCatalogController extends Controller
             'scope' => ['required', 'in:goods,prices,stocks,properties,images'],
             'item_ids' => ['required', 'array', 'min:1', 'max:10000'],
             'item_ids.*' => ['integer', 'distinct'],
-            'image_mode' => ['nullable', 'in:append,replace,reconcile'],
+            'image_mode' => ['nullable', 'in:append,replace,reconcile,prune,delete_broken'],
         ]);
 
         $result = $this->runCatalogAction(
