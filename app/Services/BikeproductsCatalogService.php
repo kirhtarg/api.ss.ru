@@ -123,11 +123,32 @@ class BikeproductsCatalogService
                     return $good->variations->every(fn (ShopGoodVariation $variation) => ! in_array((string) $variation->sku, $sourceSkus, true));
                 });
 
+            $actionLog = [];
+            $foundGoodIds = $goods->pluck('id')->map(fn ($id) => (int) $id)->all();
+            foreach ($goods as $good) {
+                $actionLog[] = $this->catalogDatabaseActionLogRow($good, 'deleted', 'good_deleted_missing_in_file', [
+                    'scope' => 'goods',
+                    'action' => 'delete',
+                    'variation_skus' => $good->variations->pluck('sku')->values()->all(),
+                ]);
+            }
+            foreach (array_values(array_diff(array_map('intval', $ids), $foundGoodIds)) as $skippedGoodId) {
+                $actionLog[] = [
+                    'source_item_id' => null,
+                    'source_sku' => '',
+                    'external_sku' => '',
+                    'source_name' => 'Товар #'.$skippedGoodId,
+                    'status' => 'skipped',
+                    'reason' => 'good_delete_protection_failed',
+                    'context' => ['scope' => 'goods', 'action' => 'delete', 'good_id' => $skippedGoodId],
+                ];
+            }
+
             DB::transaction(function () use ($goods): void {
                 $goods->each->delete();
             });
 
-            return ['affected' => $goods->count(), 'skipped' => count($ids) - $goods->count(), 'message' => 'Товары, отсутствующие в файле, удалены'];
+            return ['affected' => $goods->count(), 'skipped' => count($ids) - $goods->count(), 'message' => 'Товары, отсутствующие в файле, удалены', 'log' => $actionLog];
         }
 
         if ($action !== 'create') {
@@ -374,7 +395,7 @@ class BikeproductsCatalogService
         ];
     }
 
-    /** @return array{affected: int, skipped: int, message: string} */
+    /** @return array{affected: int, skipped: int, message: string, log?: array<int, array<string, mixed>>} */
     public function applyMappedUpdate(SupplierCatalogSnapshot $snapshot, string $scope, array $itemIds, string $imageMode = 'append'): array
     {
         $this->assertReadySnapshot($snapshot);
@@ -383,23 +404,27 @@ class BikeproductsCatalogService
         $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
         $affected = 0;
         $skipped = 0;
+        $actionLog = [];
 
         if ($scope === 'goods') {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'good')->where('is_check_enabled', true)->get();
-            DB::transaction(function () use ($items, $matches, $mappings, &$affected, &$skipped): void {
+            DB::transaction(function () use ($items, $matches, $mappings, &$affected, &$skipped, &$actionLog): void {
                 foreach ($items as $item) {
                     $match = $matches->get($item->external_sku);
-                    if (! $match) { $skipped++; continue; }
+                    if (! $match) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_match_not_found', ['scope' => 'goods']); continue; }
                     $good = $match['type'] === 'variation' ? $match['model']->good : $match['model'];
+                    if (! $good) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'matched_good_missing', ['scope' => 'goods']); continue; }
                     $values = collect($this->mappedGoodAttributes($item, $mappings))->only(['name', 'short_description', 'description', 'weight', 'depth', 'width', 'height', 'price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all();
-                    if ($values === []) { $skipped++; continue; }
+                    if ($values === []) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_mapped_values', ['scope' => 'goods', 'good_id' => $good?->id]); continue; }
+                    $fieldChanges = $this->modelFieldChanges($good, $values);
                     $good->update($values);
                     $brand = $this->nullableString($this->mappedGoodAttributes($item, $mappings)['brand'] ?? null);
                     if ($brand !== null) $good->brands()->sync([ShopBrand::firstOrCreate(['name' => $brand], ['is_active' => true])->id]);
                     $affected++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'mapped_goods_updated', ['scope' => 'goods', 'good_id' => $good->id, 'match_type' => $match['type'], 'fields' => $fieldChanges]);
                 }
             });
-            return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Поля товаров обновлены'];
+            return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Поля товаров обновлены', 'log' => $actionLog];
         }
 
         if (in_array($scope, ['prices', 'stocks'], true)) {
@@ -412,35 +437,41 @@ class BikeproductsCatalogService
                 $snapshot->supplier_code,
                 true,
             );
-            DB::transaction(function () use ($items, $priceStockMatches, $snapshot, $mappings, $targets, &$affected, &$skipped): void {
+            DB::transaction(function () use ($items, $priceStockMatches, $snapshot, $mappings, $targets, $scope, &$affected, &$skipped, &$actionLog): void {
                 foreach ($items as $item) {
                     $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
                     $match = $priceStockMatches->get($sourceSku);
-                    if (! $match) { $skipped++; continue; }
+                    if (! $match) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_match_not_found', ['scope' => $scope, 'source_sku' => $sourceSku]); continue; }
                     $values = collect($this->mappedGoodAttributes($item, $mappings))->only($targets)->all();
-                    if ($values === []) { $skipped++; continue; }
+                    if ($values === []) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_mapped_values', ['scope' => $scope, 'source_sku' => $sourceSku, 'targets' => $targets]); continue; }
                     $model = $match['model'];
+                    $fieldChanges = $this->modelFieldChanges($model, $values);
                     $model->update($values);
                     $affected++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', $scope === 'prices' ? 'mapped_prices_updated' : 'mapped_stocks_updated', ['scope' => $scope, 'match_type' => $match['type'], 'good_id' => $match['type'] === 'variation' ? $model->good_id : $model->id, 'variation_id' => $match['type'] === 'variation' ? $model->id : null, 'fields' => $fieldChanges]);
                 }
             });
-            return ['affected' => $affected, 'skipped' => $skipped, 'message' => $scope === 'prices' ? 'Цены обновлены' : 'Остатки обновлены'];
+            return ['affected' => $affected, 'skipped' => $skipped, 'message' => $scope === 'prices' ? 'Цены обновлены' : 'Остатки обновлены', 'log' => $actionLog];
         }
         if ($scope === 'properties') {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'product')->where('is_check_enabled', true)->whereNotNull('property_id')->get();
             $differentItemIds = array_flip($this->propertySelection($snapshot));
-            DB::transaction(function () use ($items, $matches, $mappings, $differentItemIds, &$affected, &$skipped): void {
+            DB::transaction(function () use ($items, $matches, $mappings, $differentItemIds, &$affected, &$skipped, &$actionLog): void {
                 foreach ($items as $item) {
                     $match = $matches->get($item->external_sku);
-                    if (! $match || ! isset($differentItemIds[$item->id])) { $skipped++; continue; }
+                    if (! $match) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_match_not_found', ['scope' => 'properties']); continue; }
+                    if (! isset($differentItemIds[$item->id])) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_actionable_property_difference', ['scope' => 'properties']); continue; }
                     $good = $match['type'] === 'variation' ? $match['model']->good : $match['model'];
                     $actionableMappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => $this->propertySourceValueFromPayload($item->raw_payload ?? [], $mapping) !== null);
-                    if ($actionableMappings->isEmpty()) { $skipped++; continue; }
+                    if (! $good) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'matched_good_missing', ['scope' => 'properties']); continue; }
+                    if ($actionableMappings->isEmpty()) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_source_property_values', ['scope' => 'properties', 'good_id' => $good->id]); continue; }
+                    $propertyLog = $actionableMappings->map(fn (SupplierCatalogFieldMapping $mapping) => ['property_id' => $mapping->property_id, 'source_field' => $mapping->source_field, 'source_value' => $this->propertySourceValueFromPayload($item->raw_payload ?? [], $mapping)])->values()->all();
                     $this->syncMappedProperties($good, $item->raw_payload ?? [], $actionableMappings, true);
                     $affected++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'mapped_properties_synced', ['scope' => 'properties', 'good_id' => $good->id, 'match_type' => $match['type'], 'properties' => $propertyLog]);
                 }
             });
-            return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Характеристики обновлены'];
+            return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Характеристики обновлены', 'log' => $actionLog];
         }
 
         if ($scope === 'images') {
@@ -454,37 +485,43 @@ class BikeproductsCatalogService
                     ->get(['source_url_hash', 'status', 'content_hash', 'perceptual_hash', 'normalized_crop_hash', 'normalized_white_hash'])
                     ->keyBy('source_url_hash')
                 : collect();
-            DB::transaction(function () use ($items, $imageMatches, $imageBaseUrl, $imageSourceFields, $imageMode, $contentAudit, $sourceAudits, &$affected, &$skipped): void {
+            DB::transaction(function () use ($items, $imageMatches, $imageBaseUrl, $imageSourceFields, $imageMode, $contentAudit, $sourceAudits, &$affected, &$skipped, &$actionLog): void {
                 foreach ($items as $item) {
                     $match = $imageMatches->get($item->external_sku);
                     $allUrls = collect($this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl))
                         ->pluck('url')
                         ->values();
-                    if ($contentAudit['status'] !== 'completed') { $skipped++; continue; }
+                    if ($contentAudit['status'] !== 'completed') { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'image_audit_not_completed', ['scope' => 'images', 'mode' => $imageMode]); continue; }
                     $urls = $allUrls->filter(fn (string $url) => $sourceAudits->get($this->sourceUrlHash($url))?->status === 'available')->values();
                     // With a completed audit, never erase working images when
                     // every source URL for this variation is broken.
-                    if ($imageMode === 'replace' && $allUrls->isNotEmpty() && $urls->isEmpty()) { $skipped++; continue; }
-                    if (in_array($imageMode, ['reconcile', 'prune', 'delete_broken'], true) && $contentAudit['status'] !== 'completed') { $skipped++; continue; }
-                    if (! $match || ($urls->isEmpty() && ! in_array($imageMode, ['replace', 'delete_broken'], true))) { $skipped++; continue; }
+                    if ($imageMode === 'replace' && $allUrls->isNotEmpty() && $urls->isEmpty()) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'only_broken_source_images', ['scope' => 'images', 'mode' => $imageMode, 'source_urls' => $allUrls->all()]); continue; }
+                    if (in_array($imageMode, ['reconcile', 'prune', 'delete_broken'], true) && $contentAudit['status'] !== 'completed') { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'image_audit_not_completed', ['scope' => 'images', 'mode' => $imageMode]); continue; }
+                    if (! $match || ($urls->isEmpty() && ! in_array($imageMode, ['replace', 'delete_broken'], true))) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', ! $match ? 'database_match_not_found' : 'no_available_source_images', ['scope' => 'images', 'mode' => $imageMode, 'source_urls' => $allUrls->all()]); continue; }
                     $variation = $match['type'] === 'variation' ? $match['model'] : null;
                     $good = $variation ? $variation->good : $match['model'];
+                    if (! $good) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'matched_good_missing', ['scope' => 'images', 'mode' => $imageMode]); continue; }
                     $query = $variation
                         ? ShopGoodImage::query()->where('variation_id', $variation->id)
                         : ShopGoodImage::query()->where('good_id', $good->id)->whereNull('variation_id');
                     $existingImages = $query->orderBy('sort_order')->orderBy('id')->get();
                     $existing = $existingImages->pluck('file_path')->all();
+                    $deletedPaths = [];
+                    $addedUrls = [];
                     if ($imageMode === 'delete_broken') {
                         $brokenImageIds = $existingImages
                             ->filter(fn (ShopGoodImage $image) => $image->content_checked_at !== null && $image->content_hash === null)
                             ->pluck('id')
                             ->values();
-                        if ($brokenImageIds->isEmpty()) { $skipped++; continue; }
+                        if ($brokenImageIds->isEmpty()) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_broken_database_images', ['scope' => 'images', 'mode' => $imageMode, 'good_id' => $good->id, 'variation_id' => $variation?->id]); continue; }
+                        $deletedPaths = $existingImages->whereIn('id', $brokenImageIds)->pluck('file_path')->values()->all();
                         ShopGoodImage::query()->whereIn('id', $brokenImageIds)->delete();
                         $affected++;
+                        $actionLog[] = $this->catalogActionLogRow($item, 'deleted', 'broken_database_images_deleted', ['scope' => 'images', 'mode' => $imageMode, 'good_id' => $good->id, 'variation_id' => $variation?->id, 'deleted_paths' => $deletedPaths]);
                         continue;
                     }
                     if ($imageMode === 'replace') {
+                        $deletedPaths = $existingImages->pluck('file_path')->values()->all();
                         $query->delete();
                         $existingImages = collect();
                         $existing = [];
@@ -509,14 +546,17 @@ class BikeproductsCatalogService
                             unset($availableImages[$matchIndex]);
                         }
                         if ($imageMode === 'prune') {
-                            if ($hasUnavailableSource) { $skipped++; continue; }
+                            if ($hasUnavailableSource) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'has_unavailable_source_images', ['scope' => 'images', 'mode' => $imageMode, 'good_id' => $good->id, 'variation_id' => $variation?->id]); continue; }
                             $extraIds = collect($availableImages)->pluck('id')->values();
-                            if ($extraIds->isEmpty()) { $skipped++; continue; }
+                            if ($extraIds->isEmpty()) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_extra_database_images', ['scope' => 'images', 'mode' => $imageMode, 'good_id' => $good->id, 'variation_id' => $variation?->id]); continue; }
+                            $deletedPaths = collect($availableImages)->pluck('file_path')->values()->all();
                             ShopGoodImage::query()->whereIn('id', $extraIds)->delete();
                             $affected++;
+                            $actionLog[] = $this->catalogActionLogRow($item, 'deleted', 'extra_database_images_deleted', ['scope' => 'images', 'mode' => $imageMode, 'good_id' => $good->id, 'variation_id' => $variation?->id, 'deleted_paths' => $deletedPaths]);
                             continue;
                         }
                         if (! $hasUnavailableSource && $availableImages !== []) {
+                            $deletedPaths = collect($availableImages)->pluck('file_path')->values()->all();
                             ShopGoodImage::query()->whereIn('id', collect($availableImages)->pluck('id'))->delete();
                         }
                         $existing = $existingImages
@@ -535,8 +575,15 @@ class BikeproductsCatalogService
                             'is_main' => $existing === [] && $nextSort === 1,
                             'sort_order' => $nextSort++,
                         ]);
+                        $existing[] = $url;
+                        $addedUrls[] = $url;
                     }
                     $affected++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', match ($imageMode) {
+                        'replace' => 'image_bindings_replaced',
+                        'reconcile' => 'image_bindings_reconciled',
+                        default => 'image_bindings_appended',
+                    }, ['scope' => 'images', 'mode' => $imageMode, 'good_id' => $good->id, 'variation_id' => $variation?->id, 'added_urls' => $addedUrls, 'deleted_paths' => $deletedPaths]);
                 }
             });
             return ['affected' => $affected, 'skipped' => $skipped, 'message' => match ($imageMode) {
@@ -545,13 +592,13 @@ class BikeproductsCatalogService
                 'prune' => 'Лишние привязки изображений удалены',
                 'delete_broken' => 'Битые привязки изображений удалены',
                 default => 'Недостающие URL изображений привязаны',
-            }];
+            }, 'log' => $actionLog];
         }
 
         throw new \InvalidArgumentException('Неизвестная область обновления.');
     }
 
-    /** @return array{affected: int, message: string} */
+    /** @return array{affected: int, message: string, log: array<int, array<string, mixed>>} */
     public function applyVariationAction(SupplierCatalogSnapshot $snapshot, string $action, array $variationIds): array
     {
         $this->assertReadySnapshot($snapshot);
@@ -567,6 +614,7 @@ class BikeproductsCatalogService
                 ->with(['good:id,sku,supplier', 'attributeValues.attribute'])
             ->lockForUpdate()
             ->get();
+            $actionLog = [];
             if ($action === 'delete') {
                 $parentGoods = $variations->pluck('good')->filter()->keyBy('id');
                 $sourceSkus = $snapshot->items()
@@ -575,6 +623,7 @@ class BikeproductsCatalogService
                     ->filter()
                     ->flip();
                 foreach ($variations as $variation) {
+                    $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'deleted', 'variation_deleted', ['scope' => 'variations', 'action' => $action, 'fields' => $variation->getAttributes(), 'axes' => $this->variationAxesForLog($variation)]);
                     $variation->delete();
                 }
                 $deletedGoods = 0;
@@ -588,25 +637,31 @@ class BikeproductsCatalogService
                 }
                 return ['affected' => $variations->count(), 'message' => $deletedGoods
                     ? "Вариации удалены, удалено пустых товаров: {$deletedGoods}"
-                    : 'Вариации удалены'];
+                    : 'Вариации удалены', 'log' => $actionLog];
             }
             if ($action === 'zero_remote_stocks') {
                 foreach ($variations as $variation) {
-                    $variation->update(['remote_stock_quantity' => null, 'fast_remote_stock_quantity' => null]);
+                    $values = ['remote_stock_quantity' => null, 'fast_remote_stock_quantity' => null];
+                    $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'updated', 'variation_remote_stocks_zeroed', ['scope' => 'variations', 'action' => $action, 'fields' => $this->modelFieldChanges($variation, $values)]);
+                    $variation->update($values);
                 }
-                return ['affected' => $variations->count(), 'message' => 'Остатки у/с вариаций обнулены'];
+                return ['affected' => $variations->count(), 'message' => 'Остатки у/с вариаций обнулены', 'log' => $actionLog];
             }
             if ($action === 'zero_main_stock') {
                 foreach ($variations as $variation) {
-                    $variation->update(['stock_quantity' => 0]);
+                    $values = ['stock_quantity' => 0];
+                    $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'updated', 'variation_main_stock_zeroed', ['scope' => 'variations', 'action' => $action, 'fields' => $this->modelFieldChanges($variation, $values)]);
+                    $variation->update($values);
                 }
-                return ['affected' => $variations->count(), 'message' => 'Основной остаток вариаций обнулен'];
+                return ['affected' => $variations->count(), 'message' => 'Основной остаток вариаций обнулен', 'log' => $actionLog];
             }
             if ($action === 'zero_stocks') {
                 foreach ($variations as $variation) {
-                    $variation->update(['stock_quantity' => 0, 'remote_stock_quantity' => null, 'fast_remote_stock_quantity' => null]);
+                    $values = ['stock_quantity' => 0, 'remote_stock_quantity' => null, 'fast_remote_stock_quantity' => null];
+                    $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'updated', 'variation_stocks_zeroed', ['scope' => 'variations', 'action' => $action, 'fields' => $this->modelFieldChanges($variation, $values)]);
+                    $variation->update($values);
                 }
-                return ['affected' => $variations->count(), 'message' => 'Остатки вариаций обнулены'];
+                return ['affected' => $variations->count(), 'message' => 'Остатки вариаций обнулены', 'log' => $actionLog];
             }
             if (! in_array($action, ['repair_axes', 'add_missing_axes', 'replace_axis_values', 'remove_extra_axes'], true)) {
                 throw new \InvalidArgumentException('Неизвестное действие над вариациями.');
@@ -631,26 +686,32 @@ class BikeproductsCatalogService
                     $isSingleProductSource = $source !== null;
                 }
                 if (! $source) {
+                    $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'skipped', 'source_variation_not_found', ['scope' => 'variations', 'action' => $action]);
                     continue;
                 }
                 $targetAxes = $isSingleProductSource
                     ? $this->creationAxesForItem($source, $snapshot->supplier_code)
                     : $this->sourceAxesForItem($source, $mappings, $snapshot->supplier_code);
                 if ($targetAxes === []) {
+                    $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'skipped', 'source_axes_empty', ['scope' => 'variations', 'action' => $action]);
                     continue;
                 }
+                $beforeAxes = $this->variationAxesForLog($variation);
                 $changed = $this->applyVariationAxisRepair($variation, $targetAxes, $action);
+                $variation->load('attributeValues.attribute');
                 if ($changed) {
                     $affected++;
-                }
-            }
+                    $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'updated', 'variation_axes_updated', ['scope' => 'variations', 'action' => $action, 'before_axes' => $beforeAxes, 'after_axes' => $this->variationAxesForLog($variation), 'source_axes' => $targetAxes]);
+                } else {
+                    $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'skipped', 'variation_axes_already_match', ['scope' => 'variations', 'action' => $action, 'axes' => $beforeAxes, 'source_axes' => $targetAxes]);
+                }            }
             $message = match ($action) {
                 'add_missing_axes' => 'Недостающие оси добавлены из файла',
                 'replace_axis_values' => 'Значения осей заменены значениями из файла',
                 'remove_extra_axes' => 'Лишние оси базы удалены',
                 default => 'Оси вариаций полностью заменены значениями из файла',
             };
-            return ['affected' => $affected, 'message' => $message];
+            return ['affected' => $affected, 'message' => $message, 'log' => $actionLog];
         });
     }
 
@@ -4303,6 +4364,52 @@ class BikeproductsCatalogService
         ];
     }
 
+    /** @return array<string, mixed> */
+    private function catalogDatabaseActionLogRow(ShopGood|ShopGoodVariation $model, string $status, string $reason, array $context = []): array
+    {
+        $good = $model instanceof ShopGoodVariation ? $model->good : $model;
+        $variation = $model instanceof ShopGoodVariation ? $model : null;
+
+        return [
+            'source_item_id' => null,
+            'source_sku' => (string) ($variation?->sku ?? $good?->sku ?? ''),
+            'external_sku' => (string) ($variation?->sku ?? $good?->sku ?? ''),
+            'source_name' => (string) ($variation?->name ?: $good?->name ?: 'Запись базы'),
+            'status' => $status,
+            'reason' => $reason,
+            'context' => array_merge([
+                'good_id' => $good?->id,
+                'variation_id' => $variation?->id,
+                'sku' => $variation?->sku ?? $good?->sku,
+            ], $context),
+        ];
+    }
+
+    /** @param array<string, mixed> $values @return array<string, array{before: mixed, after: mixed}> */
+    private function modelFieldChanges($model, array $values): array
+    {
+        $changes = [];
+        foreach ($values as $field => $after) {
+            $changes[$field] = [
+                'before' => $model->{$field} ?? null,
+                'after' => $after,
+            ];
+        }
+
+        return $changes;
+    }
+
+    /** @return array<int, array{attribute: ?string, value: string}> */
+    private function variationAxesForLog(ShopGoodVariation $variation): array
+    {
+        return $variation->attributeValues
+            ->map(fn (ShopVariationAttributeValue $value) => [
+                'attribute' => $value->attribute?->name,
+                'value' => (string) $value->value,
+            ])
+            ->values()
+            ->all();
+    }
     /** @param array<int, string> $sourceFields @param Collection<string, SupplierCatalogImageAudit> $sourceAudits @return array{created_image_ids: array<int, int>, attached_urls: array<int, string>, skipped_urls: array<int, array<string, string>>} */
     private function attachSourceImages(ShopGood $good, ShopGoodVariation $variation, SupplierCatalogItem $item, ?string $baseUrl, array $sourceFields, array $contentAudit, Collection $sourceAudits): array
     {
