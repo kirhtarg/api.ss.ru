@@ -1316,7 +1316,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v21:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v22:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1477,6 +1477,9 @@ class BikeproductsCatalogService
                 'database_duplicate_sku_variations' => $duplicateSkuVariations->count() > 1
                     ? $this->databaseVariationDuplicatePayload($duplicateSkuVariations)
                     : [],
+                'price' => $variation->price,
+                'sale_price' => $variation->sale_price,
+                'demping_price' => $variation->demping_price,
                 'stock_quantity' => $variation->stock_quantity,
                 'remote_stock_quantity' => $variation->remote_stock_quantity,
                 'fast_remote_stock_quantity' => $variation->fast_remote_stock_quantity,
@@ -1651,6 +1654,7 @@ class BikeproductsCatalogService
             'source_price_excluded',
             'database_duplicate_sku',
         ]));
+        $duplicateSkuOnly = count($filters) === 1 && $filters[0] === 'database_duplicate_sku';
         if ($filters !== []) {
             $matchedRows = $rows->whereIn('status', $filters);
             $expandGoodIds = $matchedRows
@@ -1670,28 +1674,30 @@ class BikeproductsCatalogService
         // Фильтр относится к товарам базы. Строки, которые есть только в
         // файле, не имеют родительского товара базы и остаются видимыми лишь
         // в режиме «Все».
-        if ($variationCount === 'single') {
+        if (! $duplicateSkuOnly && $variationCount === 'single') {
             $rows = $rows->filter(fn (array $row) => $row['database_good_id']
                 && ($variationCountByGood->get($row['database_good_id']) ?? 0) === 1)->values();
-        } elseif ($variationCount === 'multiple') {
+        } elseif (! $duplicateSkuOnly && $variationCount === 'multiple') {
             $rows = $rows->filter(fn (array $row) => $row['database_good_id']
                 && ($variationCountByGood->get($row['database_good_id']) ?? 0) > 1)->values();
         }
-        if ($mainStockFilter === 'zero') {
+        if (! $duplicateSkuOnly && $mainStockFilter === 'zero') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ! ($row['has_main_stock'] ?? false))->values();
-        } elseif ($mainStockFilter === 'in_stock') {
+        } elseif (! $duplicateSkuOnly && $mainStockFilter === 'in_stock') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ($row['has_main_stock'] ?? false))->values();
         }
-        if ($remoteStockFilter === 'empty') {
+        if (! $duplicateSkuOnly && $remoteStockFilter === 'empty') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ! ($row['has_remote_stock'] ?? false))->values();
-        } elseif ($remoteStockFilter === 'not_empty') {
+        } elseif (! $duplicateSkuOnly && $remoteStockFilter === 'not_empty') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ($row['has_remote_stock'] ?? false))->values();
         }
         // Пагинируем товарами, а не отдельными SKU: все вариации одного товара
         // всегда остаются на одной странице для наглядной сверки.
-        $groups = $rows->groupBy(fn (array $row) => $row['database_good_id']
-            ? 'good-'.$row['database_good_id']
-            : 'source-'.($row['source_group_name'] ?: $row['external_sku']));
+        $groups = $rows->groupBy(fn (array $row) => $duplicateSkuOnly
+            ? 'duplicate-sku-'.$this->normalizeSku((string) ($row['external_sku'] ?? ''))
+            : ($row['database_good_id']
+                ? 'good-'.$row['database_good_id']
+                : 'source-'.($row['source_group_name'] ?: $row['external_sku'])));
         $total = $groups->count();
         $pageRows = $groups->forPage($page, $perPage)->flatten(1)->values();
 
