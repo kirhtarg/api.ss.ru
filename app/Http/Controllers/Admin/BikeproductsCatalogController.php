@@ -319,6 +319,47 @@ class BikeproductsCatalogController extends Controller
         )]);
     }
 
+    public function updateDuplicateSkuVariation(Request $request, SupplierCatalogSnapshot $snapshot, int $variationId): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+        foreach (['price', 'sale_price', 'demping_price', 'stock_quantity'] as $field) {
+            if ($request->has($field) && $request->input($field) === '') {
+                $request->merge([$field => null]);
+            }
+        }
+
+        $data = $request->validate([
+            'sku' => ['nullable', 'string', 'max:255'],
+            'price' => ['nullable', 'numeric', 'min:0'],
+            'sale_price' => ['nullable', 'numeric', 'min:0'],
+            'demping_price' => ['nullable', 'numeric', 'min:0'],
+            'stock_quantity' => ['nullable', 'integer', 'min:0'],
+            'remote_stock_quantity' => ['nullable', 'string', 'max:255'],
+            'fast_remote_stock_quantity' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->catalog->updateDuplicateSkuVariation($snapshot, $variationId, $data),
+            'message' => 'Вариация обновлена.',
+        ]);
+    }
+
+    public function deleteDuplicateSkuVariation(SupplierCatalogSnapshot $snapshot, int $variationId): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => $this->catalog->deleteDuplicateSkuVariation($snapshot, $variationId),
+            'message' => 'Вариация удалена.',
+        ]);
+    }
+
     public function variationSelection(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
     {
         if ($response = $this->notReadyResponse($snapshot)) {
@@ -651,7 +692,7 @@ class BikeproductsCatalogController extends Controller
         $version = $snapshot->updated_at?->format('Uu') ?? '0';
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v26:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v27:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.

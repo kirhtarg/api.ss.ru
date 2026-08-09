@@ -1316,7 +1316,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v20:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v21:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1450,7 +1450,7 @@ class BikeproductsCatalogService
                     'status' => 'database_duplicate_sku',
                     'attribute' => 'Артикул',
                     'source_value' => $source ? $this->sourceSkuForItem($source, $snapshot->supplier_code) : null,
-                    'database_values' => $duplicateSkuVariations->map(fn (ShopGoodVariation $item) => '#'.$item->id.' · '.$item->sku)->values()->all(),
+                    'database_values' => $duplicateSkuVariations->map(fn (ShopGoodVariation $item) => '#'.$item->id.' · '.$item->sku.' · '.$item->good?->name)->values()->all(),
                     'message' => 'В базе найдено несколько вариаций с одинаковым артикулом. Автоматические действия по SKU неоднозначны.',
                 ]);
             }
@@ -1658,7 +1658,6 @@ class BikeproductsCatalogService
                     'delete_candidate_variation',
                     'source_variation_missing',
                     'source_variation_sku_mismatch',
-                    'database_duplicate_sku',
                     'attention',
                 ])
                 ->pluck('database_good_id')
@@ -1764,6 +1763,71 @@ class BikeproductsCatalogService
                 ->values()
                 ->all(),
             'groups_total' => (int) data_get($audit, 'meta.total', 0),
+        ];
+    }
+
+    /** @param array<string, mixed> $values */
+    public function updateDuplicateSkuVariation(SupplierCatalogSnapshot $snapshot, int $variationId, array $values): array
+    {
+        $this->assertReadySnapshot($snapshot);
+        $variation = $this->supplierVariationQuery($snapshot->supplier_code)
+            ->with(['good:id,name,slug', 'attributeValues.attribute'])
+            ->findOrFail($variationId);
+
+        $updateData = collect($values)
+            ->only([
+                'sku',
+                'price',
+                'sale_price',
+                'demping_price',
+                'stock_quantity',
+                'remote_stock_quantity',
+                'fast_remote_stock_quantity',
+            ])
+            ->map(function ($value, string $field) {
+                if (in_array($field, ['remote_stock_quantity', 'fast_remote_stock_quantity'], true)) {
+                    return $value === null ? null : trim((string) $value);
+                }
+                if ($field === 'sku') {
+                    return trim((string) $value);
+                }
+                if ($value === '' || $value === null) {
+                    return null;
+                }
+
+                return $value;
+            })
+            ->all();
+
+        $variation->update($updateData);
+        $variation->refresh()->load(['good:id,name,slug', 'attributeValues.attribute']);
+        $this->touchSnapshotForAudit($snapshot);
+
+        return [
+            'variation' => $this->databaseVariationDuplicatePayload(collect([$variation]))[0],
+            'duplicate_count' => $this->supplierVariationQuery($snapshot->supplier_code)
+                ->where('sku', $variation->sku)
+                ->count(),
+        ];
+    }
+
+    public function deleteDuplicateSkuVariation(SupplierCatalogSnapshot $snapshot, int $variationId): array
+    {
+        $this->assertReadySnapshot($snapshot);
+        $variation = $this->supplierVariationQuery($snapshot->supplier_code)
+            ->with(['good:id,name,slug', 'attributeValues.attribute'])
+            ->findOrFail($variationId);
+        $payload = $this->databaseVariationDuplicatePayload(collect([$variation]))[0];
+
+        DB::transaction(function () use ($variation): void {
+            DB::table('shop_variation_attributes_values')->where('variation_id', $variation->id)->delete();
+            DB::table('shop_good_images')->where('variation_id', $variation->id)->delete();
+            $variation->delete();
+        });
+        $this->touchSnapshotForAudit($snapshot);
+
+        return [
+            'deleted_variation' => $payload,
         ];
     }
 
@@ -4505,6 +4569,25 @@ class BikeproductsCatalogService
             ->filter(fn (Collection $group) => $group->count() > 1);
     }
 
+    private function supplierVariationQuery(string $supplierCode)
+    {
+        $supplierNames = $this->supplierNames($supplierCode);
+
+        return ShopGoodVariation::query()
+            ->where(function ($query) use ($supplierNames) {
+                $query->whereIn('supplier', $supplierNames)
+                    ->orWhere(function ($query) use ($supplierNames) {
+                        $query->where(fn ($supplier) => $supplier->whereNull('supplier')->orWhere('supplier', ''))
+                            ->whereHas('good', fn ($good) => $good->whereIn('supplier', $supplierNames));
+                    });
+            });
+    }
+
+    private function touchSnapshotForAudit(SupplierCatalogSnapshot $snapshot): void
+    {
+        $snapshot->forceFill(['updated_at' => now()])->save();
+    }
+
     /** @param Collection<string, Collection<int, ShopGoodVariation>> $duplicateGroups */
     private function duplicateVariationGroupForSourceSku(?string $sourceSku, string $supplierCode, Collection $duplicateGroups): ?Collection
     {
@@ -4533,6 +4616,9 @@ class BikeproductsCatalogService
                 'good_name' => $variation->good?->name,
                 'axes' => $this->variationAxesFlatPayload($variation),
                 'stock_quantity' => $variation->stock_quantity,
+                'price' => $variation->price,
+                'sale_price' => $variation->sale_price,
+                'demping_price' => $variation->demping_price,
                 'remote_stock_quantity' => $variation->remote_stock_quantity,
                 'fast_remote_stock_quantity' => $variation->fast_remote_stock_quantity,
             ])
