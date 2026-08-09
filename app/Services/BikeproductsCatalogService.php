@@ -437,9 +437,28 @@ class BikeproductsCatalogService
                 $snapshot->supplier_code,
                 true,
             );
-            DB::transaction(function () use ($items, $priceStockMatches, $snapshot, $mappings, $targets, $scope, &$affected, &$skipped, &$actionLog): void {
+            $priceStockDuplicateSkuGroups = $this->findVariationGroupsBySku(
+                $items
+                    ->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code))
+                    ->filter()
+                    ->flatMap(fn ($sku) => $this->skuLookupKeys($sku, $snapshot->supplier_code))
+                    ->unique()
+                    ->values(),
+                $snapshot->supplier_code,
+            )->filter(fn (Collection $group) => $group->count() > 1);
+            DB::transaction(function () use ($items, $priceStockMatches, $priceStockDuplicateSkuGroups, $snapshot, $mappings, $targets, $scope, &$affected, &$skipped, &$actionLog): void {
                 foreach ($items as $item) {
                     $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
+                    $duplicateSkuVariations = $this->duplicateVariationGroupForSourceSku($sourceSku, $snapshot->supplier_code, $priceStockDuplicateSkuGroups);
+                    if ($duplicateSkuVariations !== null) {
+                        $skipped++;
+                        $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_duplicate_sku', [
+                            'scope' => $scope,
+                            'source_sku' => $sourceSku,
+                            'database_variations' => $this->databaseVariationDuplicatePayload($duplicateSkuVariations),
+                        ]);
+                        continue;
+                    }
                     $match = $priceStockMatches->get($sourceSku);
                     if (! $match) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_match_not_found', ['scope' => $scope, 'source_sku' => $sourceSku]); continue; }
                     $values = collect($this->mappedGoodAttributes($item, $mappings))->only($targets)->all();
@@ -1360,6 +1379,7 @@ class BikeproductsCatalogService
             ->with(['good:id,name,slug,sku', 'attributeValues.attribute'])
             ->get();
         $variationCountByGood = $databaseVariations->countBy('good_id');
+        $databaseDuplicateSkuGroups = $this->databaseVariationDuplicateSkuGroups($databaseVariations);
         $databaseVariationsBySku = $databaseVariations
             ->keyBy(fn (ShopGoodVariation $variation) => $this->normalizeSku($variation->sku));
         $databaseSkus = $databaseVariationsBySku->keys()->flip();
@@ -1399,9 +1419,10 @@ class BikeproductsCatalogService
                 $sourceGroupDatabaseGoods[$sourceGroupKey($sourceItem)] = $matchedGood;
             }
         }
-        $rows = $databaseVariations->map(function (ShopGoodVariation $variation) use ($sourceItems, $sourceSingleItems, $sourcePresenceItems, $sourceSinglePresenceItems, $sourcePresenceItemsSafe, $sourceSinglePresenceItemsSafe, $sourcePayloadSkuPresenceItems, $safeSkuKey, $variationCountByGood, $mappings, $priceMappings, $snapshot) {
+        $rows = $databaseVariations->map(function (ShopGoodVariation $variation) use ($sourceItems, $sourceSingleItems, $sourcePresenceItems, $sourceSinglePresenceItems, $sourcePresenceItemsSafe, $sourceSinglePresenceItemsSafe, $sourcePayloadSkuPresenceItems, $safeSkuKey, $variationCountByGood, $databaseDuplicateSkuGroups, $mappings, $priceMappings, $snapshot) {
             $variationSku = $this->normalizeSku($variation->sku);
             $variationSafeSku = $safeSkuKey($variationSku);
+            $duplicateSkuVariations = $databaseDuplicateSkuGroups->get($variationSku, collect());
             $source = $sourceItems->get($variationSku)
                 ?? $sourcePresenceItems->get($variationSku)
                 ?? $sourcePresenceItemsSafe->get($variationSafeSku)
@@ -1424,8 +1445,19 @@ class BikeproductsCatalogService
             $comparisons = $isSingleProductSource
                 ? $this->singleProductVariationComparisons($variation, $source, $snapshot->supplier_code)
                 : $this->variationComparisons($variation, $source, $mappings, $snapshot->supplier_code);
+            if ($duplicateSkuVariations->count() > 1) {
+                array_unshift($comparisons, [
+                    'status' => 'database_duplicate_sku',
+                    'attribute' => 'Артикул',
+                    'source_value' => $source ? $this->sourceSkuForItem($source, $snapshot->supplier_code) : null,
+                    'database_values' => $duplicateSkuVariations->map(fn (ShopGoodVariation $item) => '#'.$item->id.' · '.$item->sku)->values()->all(),
+                    'message' => 'В базе найдено несколько вариаций с одинаковым артикулом. Автоматические действия по SKU неоднозначны.',
+                ]);
+            }
             $hasDifferences = collect($comparisons)->contains(fn (array $item) => ! in_array($item['status'], ['match', 'not_checked'], true));
-            $status = ! $source ? 'delete_candidate_variation' : ($hasDifferences ? ($variationCountByGood->get($variation->good_id) === 1 ? 'attention_single_variation' : 'attention') : 'match');
+            $status = $duplicateSkuVariations->count() > 1
+                ? 'database_duplicate_sku'
+                : (! $source ? 'delete_candidate_variation' : ($hasDifferences ? ($variationCountByGood->get($variation->good_id) === 1 ? 'attention_single_variation' : 'attention') : 'match'));
 
             return [
                 'item_id' => $source?->id ?? 'db-'.$variation->id,
@@ -1441,11 +1473,10 @@ class BikeproductsCatalogService
                 'database_good_id' => $variation->good_id,
                 'database_name' => $variation->good?->name,
                 'database_slug' => $variation->good?->slug,
-                'database_axes' => $variation->attributeValues
-                    ->groupBy(fn ($value) => $value->attribute?->name ?? '')
-                    ->map(fn (Collection $values) => $values->pluck('value')->filter()->values()->all())
-                    ->filter(fn (array $values, string $attribute) => $attribute !== '' && $values !== [])
-                    ->all(),
+                'database_axes' => $this->variationAxesGroupedPayload($variation),
+                'database_duplicate_sku_variations' => $duplicateSkuVariations->count() > 1
+                    ? $this->databaseVariationDuplicatePayload($duplicateSkuVariations)
+                    : [],
                 'stock_quantity' => $variation->stock_quantity,
                 'remote_stock_quantity' => $variation->remote_stock_quantity,
                 'fast_remote_stock_quantity' => $variation->fast_remote_stock_quantity,
@@ -1618,6 +1649,7 @@ class BikeproductsCatalogService
             'source_variation_sku_mismatch',
             'source_sku_other_supplier',
             'source_price_excluded',
+            'database_duplicate_sku',
         ]));
         if ($filters !== []) {
             $matchedRows = $rows->whereIn('status', $filters);
@@ -1626,6 +1658,7 @@ class BikeproductsCatalogService
                     'delete_candidate_variation',
                     'source_variation_missing',
                     'source_variation_sku_mismatch',
+                    'database_duplicate_sku',
                     'attention',
                 ])
                 ->pluck('database_good_id')
@@ -1687,6 +1720,8 @@ class BikeproductsCatalogService
                 'source_sku_other_supplier' => $countGroups($allRows->where('status', 'source_sku_other_supplier')),
                 'source_price_excluded' => $allRows->where('status', 'source_price_excluded')->pluck('item_id')->unique()->count(),
                 'source_price_excluded_groups' => $countGroups($allRows->where('status', 'source_price_excluded')),
+                'database_duplicate_sku' => $allRows->where('status', 'database_duplicate_sku')->pluck('database_variation_id')->unique()->count(),
+                'database_duplicate_sku_groups' => $databaseDuplicateSkuGroups->count(),
                 'attention_goods' => $countGroups($allRows->where('status', 'attention')),
                 'attention_single_variation_goods' => $countGroups($allRows->where('status', 'attention_single_variation')),
                 'match_goods' => $countGroups($allRows->where('status', 'match')),
@@ -1711,6 +1746,7 @@ class BikeproductsCatalogService
 
         return [
             'database_variation_ids' => $selectedRows
+                ->reject(fn (array $row) => ($row['status'] ?? null) === 'database_duplicate_sku')
                 ->pluck('database_variation_id')
                 ->merge($selectedRows->where('status', 'source_variation_sku_mismatch')->pluck('duplicate_database_variation_id'))
                 ->filter()
@@ -2563,6 +2599,17 @@ class BikeproductsCatalogService
             $snapshot->supplier_code,
             $onlyTargets !== null,
         );
+        $databaseDuplicateSkuGroups = $onlyTargets !== null
+            ? $this->findVariationGroupsBySku(
+                $sourceItems
+                    ->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code))
+                    ->filter()
+                    ->flatMap(fn ($sku) => $this->skuLookupKeys($sku, $snapshot->supplier_code))
+                    ->unique()
+                    ->values(),
+                $snapshot->supplier_code,
+            )->filter(fn (Collection $group) => $group->count() > 1)
+            : collect();
         $mappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
             ->where('scope', 'good')
@@ -2582,6 +2629,7 @@ class BikeproductsCatalogService
         foreach ($sourceItems as $item) {
             $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
             $match = $matches->get($sourceSku);
+            $duplicateSkuVariations = $this->duplicateVariationGroupForSourceSku($sourceSku, $snapshot->supplier_code, $databaseDuplicateSkuGroups);
             $good = $match ? $goods->get($match['type'] === 'good' ? $match['model']->id : $match['model']->good_id) : null;
             // Product metadata belongs to the parent good, while prices and
             // stocks belong to the exact SKU (variation when it exists).
@@ -2649,6 +2697,12 @@ class BikeproductsCatalogService
                 'database_name' => $good?->name,
                 'database_slug' => $good?->slug,
                 'database_variation_id' => $match && $match['type'] === 'variation' ? $match['model']->id : null,
+                'database_variation_axes' => $match && $match['type'] === 'variation'
+                    ? $this->variationAxesFlatPayload($match['model'])
+                    : [],
+                'database_duplicate_sku_variations' => $duplicateSkuVariations
+                    ? $this->databaseVariationDuplicatePayload($duplicateSkuVariations)
+                    : [],
                 'source_is_variation' => $this->isSourceVariationItem($item),
                 'differences' => $differences,
                 'status' => $this->nullableString($item->name) === null
@@ -2821,7 +2875,14 @@ class BikeproductsCatalogService
             $goodId,
         );
 
-        return collect($audit['data'])->pluck('item_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+        return collect($audit['data'])
+            ->filter(fn (array $row) => empty($row['database_duplicate_sku_variations']))
+            ->pluck('item_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
     }
 
     /** @return array<int, int> */
@@ -3699,8 +3760,8 @@ class BikeproductsCatalogService
 
         return $matches;
     }
-    /** @param Collection<int, string> $skus @return Collection<string, ShopGoodVariation> */
-    private function findVariationsBySku(Collection $skus, string $supplierCode): Collection
+    /** @param Collection<int, string> $skus @return Collection<string, Collection<int, ShopGoodVariation>> */
+    private function findVariationGroupsBySku(Collection $skus, string $supplierCode): Collection
     {
         if ($skus->isEmpty()) {
             return collect();
@@ -3725,7 +3786,15 @@ class BikeproductsCatalogService
         return $query
             ->with(['good:id,name,slug', 'attributeValues.attribute'])
             ->get()
-            ->keyBy('sku');
+            ->groupBy(fn (ShopGoodVariation $variation) => $this->normalizeSku($variation->sku));
+    }
+
+    /** @param Collection<int, string> $skus @return Collection<string, ShopGoodVariation> */
+    private function findVariationsBySku(Collection $skus, string $supplierCode): Collection
+    {
+        return $this->findVariationGroupsBySku($skus, $supplierCode)
+            ->map(fn (Collection $group) => $group->first())
+            ->filter();
     }
 
     private function assertReadySnapshot(SupplierCatalogSnapshot $snapshot): void
@@ -4402,10 +4471,70 @@ class BikeproductsCatalogService
     /** @return array<int, array{attribute: ?string, value: string}> */
     private function variationAxesForLog(ShopGoodVariation $variation): array
     {
+        return $this->variationAxesFlatPayload($variation);
+    }
+
+    /** @return array<int, array{attribute: ?string, value: string}> */
+    private function variationAxesFlatPayload(ShopGoodVariation $variation): array
+    {
         return $variation->attributeValues
             ->map(fn (ShopVariationAttributeValue $value) => [
                 'attribute' => $value->attribute?->name,
                 'value' => (string) $value->value,
+            ])
+            ->values()
+            ->all();
+    }
+
+    /** @return array<string, array<int, string>> */
+    private function variationAxesGroupedPayload(ShopGoodVariation $variation): array
+    {
+        return $variation->attributeValues
+            ->groupBy(fn (ShopVariationAttributeValue $value) => $value->attribute?->name ?? '')
+            ->map(fn (Collection $values) => $values->pluck('value')->filter()->values()->all())
+            ->filter(fn (array $values, string $attribute) => $attribute !== '' && $values !== [])
+            ->all();
+    }
+
+    /** @param Collection<int, ShopGoodVariation> $variations @return Collection<string, Collection<int, ShopGoodVariation>> */
+    private function databaseVariationDuplicateSkuGroups(Collection $variations): Collection
+    {
+        return $variations
+            ->filter(fn (ShopGoodVariation $variation) => $this->normalizeSku($variation->sku) !== '')
+            ->groupBy(fn (ShopGoodVariation $variation) => $this->normalizeSku($variation->sku))
+            ->filter(fn (Collection $group) => $group->count() > 1);
+    }
+
+    /** @param Collection<string, Collection<int, ShopGoodVariation>> $duplicateGroups */
+    private function duplicateVariationGroupForSourceSku(?string $sourceSku, string $supplierCode, Collection $duplicateGroups): ?Collection
+    {
+        if ($sourceSku === null || trim($sourceSku) === '' || $duplicateGroups->isEmpty()) {
+            return null;
+        }
+
+        foreach ($this->skuLookupKeys($sourceSku, $supplierCode) as $lookupSku) {
+            $group = $duplicateGroups->get($this->normalizeSku($lookupSku));
+            if ($group instanceof Collection && $group->count() > 1) {
+                return $group;
+            }
+        }
+
+        return null;
+    }
+
+    /** @param Collection<int, ShopGoodVariation> $variations @return array<int, array<string, mixed>> */
+    private function databaseVariationDuplicatePayload(Collection $variations): array
+    {
+        return $variations
+            ->map(fn (ShopGoodVariation $variation) => [
+                'id' => $variation->id,
+                'sku' => $variation->sku,
+                'good_id' => $variation->good_id,
+                'good_name' => $variation->good?->name,
+                'axes' => $this->variationAxesFlatPayload($variation),
+                'stock_quantity' => $variation->stock_quantity,
+                'remote_stock_quantity' => $variation->remote_stock_quantity,
+                'fast_remote_stock_quantity' => $variation->fast_remote_stock_quantity,
             ])
             ->values()
             ->all();
