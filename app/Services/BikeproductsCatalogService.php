@@ -1316,7 +1316,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v22:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v23:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1700,11 +1700,31 @@ class BikeproductsCatalogService
                 : 'source-'.($row['source_group_name'] ?: $row['external_sku'])));
         $total = $groups->count();
         $pageRows = $groups->forPage($page, $perPage)->flatten(1)->values();
+        $duplicateSkuGroupsPayload = $duplicateSkuOnly
+            ? $groups
+                ->forPage($page, $perPage)
+                ->map(function (Collection $groupRows): array {
+                    $variations = $groupRows
+                        ->flatMap(fn (array $row) => $row['database_duplicate_sku_variations'] ?? [])
+                        ->unique('id')
+                        ->sortBy('id')
+                        ->values();
+
+                    return [
+                        'sku' => (string) ($variations->first()['sku'] ?? $groupRows->first()['external_sku'] ?? ''),
+                        'variations' => $variations->all(),
+                    ];
+                })
+                ->filter(fn (array $group) => count($group['variations']) > 1)
+                ->values()
+                ->all()
+            : [];
 
         $countGroups = fn (Collection $items): int => $items->groupBy(fn (array $row) => $row['database_good_id'] ? 'good-'.$row['database_good_id'] : 'source-'.($row['source_group_name'] ?: $row['external_sku']))->count();
 
         return [
             'data' => $pageRows,
+            'duplicate_sku_groups' => $duplicateSkuGroupsPayload,
             'stats' => [
                 'database_goods_with_variations' => $baseStats['database_goods_with_variations'],
                 'database_variations' => $baseStats['database_variations'],
