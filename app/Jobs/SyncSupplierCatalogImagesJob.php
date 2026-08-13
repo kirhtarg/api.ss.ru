@@ -27,4 +27,13 @@ class SyncSupplierCatalogImagesJob implements ShouldQueue
     {
         $catalog->downloadAttachedImages($this->snapshotId, $this->itemIds);
     }
+
+    public function failed(\Throwable $exception): void
+    {
+        \Log::error('Supplier image sync job failed', [
+            'snapshot_id' => $this->snapshotId,
+            'item_ids' => $this->itemIds,
+            'error' => $exception->getMessage(),
+        ]);
+    }
 }

@@ -42,7 +42,10 @@ class BikeproductsCatalogService
     public function downloadAttachedImages(int $snapshotId, array $itemIds): void
     {
         $snapshot = SupplierCatalogSnapshot::find($snapshotId);
-        if (! $snapshot || $snapshot->status !== 'ready') return;
+        if (! $snapshot || $snapshot->status !== 'ready') {
+            Log::warning('Supplier image sync skipped: snapshot is unavailable', ['snapshot_id' => $snapshotId]);
+            return;
+        }
         $this->ensureDefaultMappings($snapshot->supplier_code);
         $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
         $imageSourceFields = $this->imageSourceFields($snapshot->supplier_code);
@@ -56,16 +59,35 @@ class BikeproductsCatalogService
             ->keyBy('source_url_hash');
         $contentAudit = $this->imageContentAuditStatus($snapshot);
         $downloadedAny = false;
+        $created = 0;
+        $updated = 0;
+        $skipped = 0;
+        $failed = 0;
         foreach ($items as $item) {
             $match = $matches->get($this->normalizeSku($item->external_sku));
-            if (! $match) continue;
+            if (! $match) {
+                $skipped++;
+                Log::warning('Supplier image sync skipped: database SKU match missing', ['snapshot_id' => $snapshotId, 'item_id' => $item->id, 'sku' => $item->external_sku]);
+                continue;
+            }
             $variation = $match['type'] === 'variation' ? $match['model'] : null;
             $good = $variation ? $variation->good : $match['model'];
-            if (! $good) continue;
+            if (! $good) {
+                $skipped++;
+                Log::warning('Supplier image sync skipped: parent good missing', ['snapshot_id' => $snapshotId, 'item_id' => $item->id, 'sku' => $item->external_sku]);
+                continue;
+            }
             foreach ($this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl) as $source) {
                 $url = $source['url'];
-                if ($contentAudit['status'] === 'completed' && ! $sourceAudits->has($this->sourceUrlHash($url))) continue;
-                if (! str_starts_with($url, 'http')) continue;
+                if ($contentAudit['status'] === 'completed' && ! $sourceAudits->has($this->sourceUrlHash($url))) {
+                    $skipped++;
+                    Log::warning('Supplier image sync skipped: source audit is not available', ['snapshot_id' => $snapshotId, 'item_id' => $item->id, 'sku' => $item->external_sku, 'url' => $url]);
+                    continue;
+                }
+                if (! str_starts_with($url, 'http')) {
+                    $skipped++;
+                    continue;
+                }
                 $ownerImages = $variation
                     ? ShopGoodImage::query()->where('variation_id', $variation->id)
                     : ShopGoodImage::query()->where('good_id', $good->id)->whereNull('variation_id');
@@ -85,7 +107,9 @@ class BikeproductsCatalogService
                     // The supplier audit uses the original SHA for matching,
                     // while the stored file must follow the same visual rules
                     // as imports: system size, square canvas and white fields.
-                    file_put_contents($absolutePath, $processed['binary']);
+                    if (file_put_contents($absolutePath, $processed['binary']) === false || ! is_file($absolutePath)) {
+                        throw new \RuntimeException('Не удалось сохранить обработанное изображение в '.$absolutePath);
+                    }
                     $metadata = [
                         'file_path' => '/'.$relativePath,
                         'source_content_hash' => $contentHash,
@@ -105,6 +129,7 @@ class BikeproductsCatalogService
                     $image = $existingMatch ?: $pendingExternalImages->shift();
                     if ($image) {
                         $image->update($metadata);
+                        $updated++;
                     } else {
                         $image = ShopGoodImage::create([
                             'good_id' => $variation ? null : $good->id,
@@ -113,6 +138,7 @@ class BikeproductsCatalogService
                             'is_main' => ! (clone $ownerImages)->exists(),
                             'sort_order' => (int) ((clone $ownerImages)->max('sort_order') ?? 0) + 1,
                         ]);
+                        $created++;
                     }
                     if ($pendingExternalImages->isNotEmpty()) {
                         ShopGoodImage::query()->whereIn('id', $pendingExternalImages->pluck('id'))->delete();
@@ -125,6 +151,7 @@ class BikeproductsCatalogService
                         ->update(collect($metadata)->except('file_path')->all());
                     $downloadedAny = true;
                 } catch (\Throwable $exception) {
+                    $failed++;
                     // Never leave an external supplier URL in the shop data
                     // after an unsuccessful worker attempt.
                     if ($pendingExternalImages->isNotEmpty()) {
@@ -139,6 +166,14 @@ class BikeproductsCatalogService
             // response. Touching invalidates the paginated audit cache.
             $snapshot->touch();
         }
+        Log::info('Supplier image sync completed', [
+            'snapshot_id' => $snapshotId,
+            'item_ids_count' => count($itemIds),
+            'created' => $created,
+            'updated' => $updated,
+            'skipped' => $skipped,
+            'failed' => $failed,
+        ]);
     }
 
     /** @return array{binary: string, extension: string, width: int|null, height: int|null} */
