@@ -260,12 +260,11 @@ class ShopYandexMarketSellerController extends Controller
             'id' => (int) ($value['id'] ?? 0),
             'value' => html_entity_decode((string) ($value['value'] ?? $value['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'),
         ])->filter(fn ($value) => $value['id'] > 0 && $value['value'] !== '')->values();
-        $byComparable = $values->groupBy(fn ($value) => $this->dictionaryComparable($value['value']));
         $suggestions = [];
         foreach (array_values(array_unique($data['values'])) as $localValue) {
             $needle = $this->dictionaryComparable($localValue);
             if ($needle === '') continue;
-            $exact = $byComparable->get($needle)?->first();
+            $exact = $values->first(fn ($value) => $this->dictionaryComparable($value['value']) === $needle);
             if ($exact) {
                 $suggestions[] = ['local' => $localValue, 'candidates' => [array_merge($exact, ['score' => 100])]];
                 continue;
@@ -630,7 +629,7 @@ class ShopYandexMarketSellerController extends Controller
         ];
     }
     private function parameterData(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'name' => html_entity_decode((string) ($item['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'), 'description' => $item['description'] ?? '', 'type' => $item['type'] ?? 'TEXT', 'required' => (bool) ($item['required'] ?? $item['isRequired'] ?? false), 'distinctive' => (bool) ($item['distinctive'] ?? $item['isDistinctive'] ?? false), 'multivalue' => (bool) ($item['multivalue'] ?? $item['isMultivalue'] ?? false), 'allow_custom_values' => (bool) ($item['allowCustomValues'] ?? $item['allow_custom_values'] ?? true), 'dictionary_count' => count($item['values'] ?? []), 'values' => [], 'units' => data_get($item, 'unit.units', []), 'default_unit_id' => data_get($item, 'unit.defaultUnitId')]; }
-    private function dictionaryComparable(string $value): string { $value = mb_strtolower(trim($value)); $value = str_replace('ё', 'е', $value); return trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', $value)); }
+    private function dictionaryComparable(string $value): string { $value = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8'); $value = mb_strtolower(trim($value)); $value = str_replace('ё', 'е', $value); return trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', $value)); }
     private function dictionarySimilarity(string $left, string $right): int
     {
         if ($left === '' || $right === '') return 0;
