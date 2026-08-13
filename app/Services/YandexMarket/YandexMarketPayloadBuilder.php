@@ -20,7 +20,7 @@ class YandexMarketPayloadBuilder
         $media = $this->media($good, $variation, $account);
         $dimensions = $this->dimensions($good, $mapping);
         $hasVariations = $good->variations->where('is_active', true)->count() > 1;
-        $parameters = $this->parameters($mapping, $good, $variation, $hasVariations);
+        $parameters = $this->parameters($mapping, $good, $variation, $hasVariations, $media);
         $hasDimensions = collect($dimensions)->every(fn ($value) => $value > 0);
 
         $offer = [
@@ -106,7 +106,7 @@ class YandexMarketPayloadBuilder
         return (string) ($binding?->offer_id ?: ($variation ? "g_{$good->id}_v_{$variation->id}" : "g_{$good->id}"));
     }
 
-    private function parameters(?ShopYandexMarketCategoryMapping $mapping, ShopGood $good, ?ShopGoodVariation $variation, bool $hasVariations): array
+    private function parameters(?ShopYandexMarketCategoryMapping $mapping, ShopGood $good, ?ShopGoodVariation $variation, bool $hasVariations, array $media): array
     {
         $payload = []; $display = []; $missing = []; $customsCommodityCode = null; $variationGroupName = null; $hasVariationGroupParameter = false;
         foreach ($mapping?->attribute_mappings ?? [] as $item) {
@@ -114,7 +114,9 @@ class YandexMarketPayloadBuilder
             if ($isVariationGroup) $hasVariationGroupParameter = true;
             if ($isVariationGroup && ! $hasVariations) continue;
 
-            $value = $isVariationGroup ? $this->variationGroupName($good) : $this->resolver->sourceValue($item, $good, $variation);
+            $value = $isVariationGroup
+                ? $this->variationGroupName($good)
+                : (($item['source'] ?? '') === 'main_image' ? ($media['pictures'][0] ?? '') : $this->resolver->sourceValue($item, $good, $variation));
             if ($isVariationGroup) $variationGroupName = $value;
             $value = $this->normalizeNumericValue($value, $item);
             $dictionary = $this->dictionaryValue($item, (string) $value);

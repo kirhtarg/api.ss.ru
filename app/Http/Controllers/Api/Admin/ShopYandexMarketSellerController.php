@@ -9,6 +9,7 @@ use App\Models\ShopCategory;
 use App\Models\ShopTag;
 use App\Models\ShopVariationAttribute;
 use App\Models\ShopYandexMarketAccount;
+use App\Models\ShopYandexMarketAttributeTemplate;
 use App\Models\ShopYandexMarketCategoryMapping;
 use App\Models\ShopYandexMarketProductBinding;
 use App\Models\ShopYandexMarketSyncItem;
@@ -159,7 +160,17 @@ class ShopYandexMarketSellerController extends Controller
         $data = $request->validate(['category_id' => 'required|integer|min:1', 'refresh' => 'nullable|boolean']);
         $result = (new YandexMarketClient($this->account()))->categoryParameters((int) $data['category_id'], (bool) ($data['refresh'] ?? false));
         $parameters = collect($result['parameters'] ?? $result['categoryParameters'] ?? [])->map(fn ($item) => $this->parameterData((array) $item))->sortBy(fn ($item) => sprintf('%d%d%s', $item['required'] ? 0 : 1, $item['distinctive'] ? 0 : 1, $item['name']), SORT_NATURAL | SORT_FLAG_CASE)->values();
-        return response()->json(['success' => true, 'data' => ['parameters' => $parameters, 'allow_variations' => (bool) ($result['allowVariations'] ?? true)]]);
+        $templates = ShopYandexMarketAttributeTemplate::query()
+            ->where('account_id', $this->account()->id)
+            ->get(['market_parameter_id', 'mapping'])
+            ->mapWithKeys(fn (ShopYandexMarketAttributeTemplate $template) => [(string) $template->market_parameter_id => $template->mapping])
+            ->all();
+
+        return response()->json(['success' => true, 'data' => [
+            'parameters' => $parameters,
+            'templates' => $templates,
+            'allow_variations' => (bool) ($result['allowVariations'] ?? true),
+        ]]);
     }
 
     public function mappings()
@@ -183,11 +194,14 @@ class ShopYandexMarketSellerController extends Controller
             'selection_tag_id' => 'nullable|integer|exists:shop_tags,id', 'campaign_id' => 'nullable|integer|min:1',
             'attribute_mappings' => 'nullable|array', 'dimension_settings' => 'nullable|array',
             'price_adjustment' => 'nullable|array', 'is_active' => 'nullable|boolean',
+            'save_attribute_templates' => 'nullable|boolean',
         ]);
         $account = $this->account();
         $mapping = isset($data['id']) ? ShopYandexMarketCategoryMapping::query()->where('account_id', $account->id)->findOrFail($data['id']) : new ShopYandexMarketCategoryMapping(['account_id' => $account->id]);
-        unset($data['id']);
+        $saveTemplates = $data['save_attribute_templates'] ?? true;
+        unset($data['id'], $data['save_attribute_templates']);
         $mapping->fill($data)->save();
+        if ($saveTemplates) $this->saveAttributeTemplates($account, $mapping->attribute_mappings ?? []);
         return response()->json(['success' => true, 'message' => 'Профиль категории сохранен.', 'data' => $mapping]);
     }
 
@@ -422,6 +436,25 @@ class ShopYandexMarketSellerController extends Controller
         }
         return $query;
     }
+    private function saveAttributeTemplates(ShopYandexMarketAccount $account, array $mappings): void
+    {
+        foreach ($mappings as $mapping) {
+            $parameterId = (int) ($mapping['id'] ?? 0);
+            if ($parameterId < 1 || empty($mapping['active'])) continue;
+
+            // Category metadata itself must never be copied into the reusable rule.
+            $template = collect($mapping)->except([
+                'id', 'name', 'type', 'required', 'distinctive', 'multivalue', 'values',
+                'units', 'default_unit_id', 'allow_custom_values', 'mapping_origin', 'local_values',
+            ])->all();
+
+            ShopYandexMarketAttributeTemplate::query()->updateOrCreate(
+                ['account_id' => $account->id, 'market_parameter_id' => $parameterId],
+                ['market_parameter_name' => (string) ($mapping['name'] ?? "ID {$parameterId}"), 'mapping' => $template],
+            );
+        }
+    }
+
     private function hasUsableMappings(ShopYandexMarketAccount $account): bool
     {
         return ShopYandexMarketCategoryMapping::query()->where('account_id', $account->id)->where('is_active', true)
