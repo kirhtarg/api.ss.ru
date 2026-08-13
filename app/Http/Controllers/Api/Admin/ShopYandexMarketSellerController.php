@@ -319,29 +319,46 @@ class ShopYandexMarketSellerController extends Controller
             'market_parameter_name' => 'required|string|max:255',
             'source' => 'required|string|in:brand,property,variation_attribute,main_image,good,static',
             'source_key' => 'nullable',
+            'profile_id' => 'nullable|integer|min:1',
             'dictionary_map' => 'required|array',
             'dictionary_labels' => 'nullable|array',
         ]);
 
         $account = $this->account();
         $signature = $this->sourceSignature($data['source'], $data['source_key'] ?? null);
-        $template = ShopYandexMarketAttributeTemplate::query()->firstOrNew([
-            'account_id' => $account->id,
-            'market_parameter_id' => (int) $data['market_parameter_id'],
-            'source_signature' => $signature,
-        ]);
-        $current = $template->mapping ?? [];
-        $template->fill([
-            'market_parameter_name' => $data['market_parameter_name'],
-            'mapping' => array_merge($current, [
-                'source' => $data['source'],
-                'source_key' => $data['source_key'] ?? '',
-                'dictionary_map' => array_merge($current['dictionary_map'] ?? [], $data['dictionary_map']),
-                'dictionary_labels' => array_merge($current['dictionary_labels'] ?? [], $data['dictionary_labels'] ?? []),
-            ]),
-        ])->save();
+        [$template, $profileSaved] = DB::transaction(function () use ($account, $data, $signature) {
+            $template = ShopYandexMarketAttributeTemplate::query()->firstOrNew([
+                'account_id' => $account->id,
+                'market_parameter_id' => (int) $data['market_parameter_id'],
+                'source_signature' => $signature,
+            ]);
+            $current = $template->mapping ?? [];
+            $template->fill([
+                'market_parameter_name' => $data['market_parameter_name'],
+                'mapping' => array_merge($current, [
+                    'source' => $data['source'],
+                    'source_key' => $data['source_key'] ?? '',
+                    'dictionary_map' => array_merge($current['dictionary_map'] ?? [], $data['dictionary_map']),
+                    'dictionary_labels' => array_merge($current['dictionary_labels'] ?? [], $data['dictionary_labels'] ?? []),
+                ]),
+            ])->save();
 
-        return response()->json(['success' => true, 'message' => 'Сопоставления значений сохранены для следующих профилей.', 'data' => $template->mapping]);
+            $profileSaved = false;
+            if (! empty($data['profile_id'])) {
+                $profile = ShopYandexMarketCategoryMapping::query()->where('account_id', $account->id)->findOrFail((int) $data['profile_id']);
+                $mappings = collect($profile->attribute_mappings ?? [])->map(function ($mapping) use ($data) {
+                    if ((int) ($mapping['id'] ?? 0) !== (int) $data['market_parameter_id']) return $mapping;
+                    $mapping['dictionary_map'] = array_merge($mapping['dictionary_map'] ?? [], $data['dictionary_map']);
+                    $mapping['dictionary_labels'] = array_merge($mapping['dictionary_labels'] ?? [], $data['dictionary_labels'] ?? []);
+                    return $mapping;
+                })->values()->all();
+                $profile->update(['attribute_mappings' => $mappings]);
+                $profileSaved = true;
+            }
+            return [$template, $profileSaved];
+        });
+
+        return response()->json(['success' => true, 'message' => $profileSaved ? 'Сопоставления сохранены в текущем профиле и общем шаблоне.' : 'Сопоставления сохранены в общем шаблоне. Сохраните новый профиль, чтобы применить их в нём.', 'data' => $template->mapping, 'profile_saved' => $profileSaved]);
     }
 
     public function deleteMapping(ShopYandexMarketCategoryMapping $mapping)
