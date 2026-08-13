@@ -2605,6 +2605,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/local-source-values', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localSourceValues']);
                 Route::get('/categories', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'categories']);
                 Route::post('/parameters', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'parameters']);
+                Route::post('/dictionary-values', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'dictionaryValues']);
+                Route::post('/dictionary-suggestions', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'dictionarySuggestions']);
                 Route::post('/attribute-templates/dictionary', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'saveDictionaryTemplate']);
                 Route::get('/mappings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'mappings']);
                 Route::post('/mappings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'saveMapping']);

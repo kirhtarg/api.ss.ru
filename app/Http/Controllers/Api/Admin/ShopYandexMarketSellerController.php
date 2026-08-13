@@ -19,6 +19,7 @@ use App\Services\YandexMarket\YandexMarketPayloadBuilder;
 use App\Services\YandexMarket\YandexMarketProductResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Cache;
 use Throwable;
 
 class ShopYandexMarketSellerController extends Controller
@@ -127,26 +128,38 @@ class ShopYandexMarketSellerController extends Controller
             'source' => 'required|string|in:brand,property,variation_attribute',
             'source_key' => 'nullable|integer|min:1', 'selection_tag_id' => 'nullable|integer|exists:shop_tags,id',
             'category_ids' => 'required|array|min:1', 'category_ids.*' => 'integer',
+            'search' => 'nullable|string|max:255', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:100',
+            'mapped_values' => 'nullable|array', 'mapped_values.*' => 'string|max:1000',
         ]);
         $account = $this->account();
-        $query = \App\Models\ShopGood::query()->with(['brands:id,name', 'properties.values', 'variations.attributeValues.attribute'])
-            ->where('is_active', true)
-            ->whereHas('categories', fn ($q) => $q->whereIn('shop_categories.id', $data['category_ids']));
         $tagId = (int) ($data['selection_tag_id'] ?? $account->selection_tag_id);
-        if ($tagId) $query->whereHas('tags', fn ($q) => $q->where('shop_tags.id', $tagId));
-        $counts = [];
         $mapping = ['source' => $data['source'], 'source_key' => $data['source_key'] ?? null];
-        $query->chunkById(200, function ($goods) use (&$counts, $resolver, $mapping) {
-            foreach ($goods as $good) {
-                $variations = $mapping['source'] === 'variation_attribute' ? $good->variations->where('is_active', true) : collect([null]);
-                foreach ($variations as $variation) {
-                    $value = trim((string) $resolver->sourceValue($mapping, $good, $variation));
-                    if ($value !== '') $counts[$value] = ($counts[$value] ?? 0) + 1;
+        $cacheKey = 'yandex-market:local-source-values:'.hash('sha256', json_encode([$account->id, $mapping, $data['category_ids'], $tagId]));
+        $counts = Cache::remember($cacheKey, now()->addMinutes(15), function () use ($data, $tagId, $resolver, $mapping) {
+            $query = \App\Models\ShopGood::query()->with(['brands:id,name', 'properties.values', 'variations.attributeValues.attribute'])
+                ->where('is_active', true)
+                ->whereHas('categories', fn ($q) => $q->whereIn('shop_categories.id', $data['category_ids']));
+            if ($tagId) $query->whereHas('tags', fn ($q) => $q->where('shop_tags.id', $tagId));
+            $counts = [];
+            $query->chunkById(200, function ($goods) use (&$counts, $resolver, $mapping) {
+                foreach ($goods as $good) {
+                    $variations = $mapping['source'] === 'variation_attribute' ? $good->variations->where('is_active', true) : collect([null]);
+                    foreach ($variations as $variation) {
+                        $value = trim((string) $resolver->sourceValue($mapping, $good, $variation));
+                        if ($value !== '') $counts[$value] = ($counts[$value] ?? 0) + 1;
+                    }
                 }
-            }
+            });
+            uksort($counts, 'strnatcasecmp');
+            return $counts;
         });
-        uksort($counts, 'strnatcasecmp');
-        return response()->json(['success' => true, 'data' => collect($counts)->map(fn ($count, $value) => ['value' => $value, 'count' => $count])->values()]);
+        $rows = collect($counts)->map(fn ($count, $value) => ['value' => $value, 'count' => $count]);
+        $search = mb_strtolower(trim((string) ($data['search'] ?? '')));
+        if ($search !== '') $rows = $rows->filter(fn ($item) => str_contains(mb_strtolower($item['value']), $search))->values();
+        $mappedValues = array_fill_keys($data['mapped_values'] ?? [], true);
+        $mappedCount = collect(array_keys($counts))->filter(fn ($value) => isset($mappedValues[$value]))->count();
+        $perPage = (int) ($data['per_page'] ?? 50); $page = (int) ($data['page'] ?? 1); $total = $rows->count();
+        return response()->json(['success' => true, 'data' => $rows->forPage($page, $perPage)->values(), 'meta' => ['current_page' => $page, 'per_page' => $perPage, 'total' => $total, 'last_page' => max(1, (int) ceil($total / $perPage)), 'mapped_count' => $mappedCount]]);
     }
 
     public function categories(Request $request)
@@ -174,6 +187,53 @@ class ShopYandexMarketSellerController extends Controller
             'templates' => $templates,
             'allow_variations' => (bool) ($result['allowVariations'] ?? true),
         ]]);
+    }
+
+    public function dictionaryValues(Request $request)
+    {
+        $data = $request->validate(['category_id' => 'required|integer|min:1', 'parameter_id' => 'required|integer|min:1', 'search' => 'nullable|string|max:255', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:100']);
+        $result = (new YandexMarketClient($this->account()))->categoryParameters((int) $data['category_id']);
+        $parameter = collect($result['parameters'] ?? $result['categoryParameters'] ?? [])->first(fn ($item) => (int) ($item['id'] ?? 0) === (int) $data['parameter_id']);
+        if (! $parameter) return response()->json(['success' => false, 'message' => 'Характеристика не найдена в словаре выбранной категории.'], 404);
+        $values = collect($parameter['values'] ?? [])->map(fn ($value) => ['id' => (int) ($value['id'] ?? 0), 'value' => html_entity_decode((string) ($value['value'] ?? $value['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8')]);
+        $search = mb_strtolower(trim((string) ($data['search'] ?? '')));
+        if ($search !== '') $values = $values->filter(fn ($value) => str_contains(mb_strtolower($value['value']), $search))->values();
+        $perPage = (int) ($data['per_page'] ?? 50); $page = (int) ($data['page'] ?? 1); $total = $values->count();
+        return response()->json(['success' => true, 'data' => $values->forPage($page, $perPage)->values(), 'meta' => ['current_page' => $page, 'per_page' => $perPage, 'total' => $total, 'last_page' => max(1, (int) ceil($total / $perPage))]]);
+    }
+
+    public function dictionarySuggestions(Request $request)
+    {
+        $data = $request->validate([
+            'category_id' => 'required|integer|min:1', 'parameter_id' => 'required|integer|min:1',
+            'values' => 'required|array|min:1|max:50', 'values.*' => 'string|max:1000',
+        ]);
+        $result = (new YandexMarketClient($this->account()))->categoryParameters((int) $data['category_id']);
+        $parameter = collect($result['parameters'] ?? $result['categoryParameters'] ?? [])->first(fn ($item) => (int) ($item['id'] ?? 0) === (int) $data['parameter_id']);
+        if (! $parameter) return response()->json(['success' => false, 'message' => 'Характеристика не найдена в словаре выбранной категории.'], 404);
+
+        $values = collect($parameter['values'] ?? [])->map(fn ($value) => [
+            'id' => (int) ($value['id'] ?? 0),
+            'value' => html_entity_decode((string) ($value['value'] ?? $value['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'),
+        ])->filter(fn ($value) => $value['id'] > 0 && $value['value'] !== '')->values();
+        $byComparable = $values->groupBy(fn ($value) => $this->dictionaryComparable($value['value']));
+        $suggestions = [];
+        foreach (array_values(array_unique($data['values'])) as $localValue) {
+            $needle = $this->dictionaryComparable($localValue);
+            if ($needle === '') continue;
+            $exact = $byComparable->get($needle)?->first();
+            if ($exact) {
+                $suggestions[] = ['local' => $localValue, 'remote' => $exact, 'score' => 100];
+                continue;
+            }
+            $best = null;
+            foreach ($values as $remote) {
+                $score = $this->dictionarySimilarity($needle, $this->dictionaryComparable($remote['value']));
+                if ($score >= 70 && (! $best || $score > $best['score'])) $best = ['local' => $localValue, 'remote' => $remote, 'score' => $score];
+            }
+            if ($best) $suggestions[] = $best;
+        }
+        return response()->json(['success' => true, 'data' => $suggestions]);
     }
 
     public function mappings()
@@ -524,7 +584,19 @@ class ShopYandexMarketSellerController extends Controller
             'campaign_available' => ($campaign['api_availability'] ?? '') === 'AVAILABLE',
         ];
     }
-    private function parameterData(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'name' => html_entity_decode((string) ($item['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'), 'description' => $item['description'] ?? '', 'type' => $item['type'] ?? 'TEXT', 'required' => (bool) ($item['required'] ?? $item['isRequired'] ?? false), 'distinctive' => (bool) ($item['distinctive'] ?? $item['isDistinctive'] ?? false), 'multivalue' => (bool) ($item['multivalue'] ?? $item['isMultivalue'] ?? false), 'allow_custom_values' => (bool) ($item['allowCustomValues'] ?? $item['allow_custom_values'] ?? true), 'values' => collect($item['values'] ?? [])->map(fn ($value) => ['id' => (int) ($value['id'] ?? 0), 'value' => html_entity_decode((string) ($value['value'] ?? $value['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8')])->values(), 'units' => data_get($item, 'unit.units', []), 'default_unit_id' => data_get($item, 'unit.defaultUnitId')]; }
+    private function parameterData(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'name' => html_entity_decode((string) ($item['name'] ?? ''), ENT_QUOTES | ENT_HTML5, 'UTF-8'), 'description' => $item['description'] ?? '', 'type' => $item['type'] ?? 'TEXT', 'required' => (bool) ($item['required'] ?? $item['isRequired'] ?? false), 'distinctive' => (bool) ($item['distinctive'] ?? $item['isDistinctive'] ?? false), 'multivalue' => (bool) ($item['multivalue'] ?? $item['isMultivalue'] ?? false), 'allow_custom_values' => (bool) ($item['allowCustomValues'] ?? $item['allow_custom_values'] ?? true), 'dictionary_count' => count($item['values'] ?? []), 'values' => [], 'units' => data_get($item, 'unit.units', []), 'default_unit_id' => data_get($item, 'unit.defaultUnitId')]; }
+    private function dictionaryComparable(string $value): string { $value = mb_strtolower(trim($value)); $value = str_replace('ё', 'е', $value); return trim((string) preg_replace('/[^\p{L}\p{N}]+/u', ' ', $value)); }
+    private function dictionarySimilarity(string $left, string $right): int
+    {
+        if ($left === '' || $right === '') return 0;
+        if ($left === $right) return 100;
+        if (str_contains($left, $right) || str_contains($right, $left)) return 88;
+        $leftTokens = array_values(array_unique(preg_split('/\s+/u', $left, -1, PREG_SPLIT_NO_EMPTY)));
+        $rightTokens = array_values(array_unique(preg_split('/\s+/u', $right, -1, PREG_SPLIT_NO_EMPTY)));
+        $common = count(array_intersect($leftTokens, $rightTokens));
+        if ($common === 0) return 0;
+        return (int) round(100 * $common / max(count($leftTokens), count($rightTokens)));
+    }
     private function sortTree(array $node): array
     {
         if (array_is_list($node)) {
