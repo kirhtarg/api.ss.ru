@@ -565,8 +565,7 @@ class ShopGoodImagesController extends Controller
         }
 
         // Получаем изображения исходной вариации
-        $sourceImages = ShopGoodImage::whereNull('good_id')
-            ->where('variation_id', $sourceVariationId)
+        $sourceImages = ShopGoodImage::where('variation_id', $sourceVariationId)
             ->when($request->filled('image_ids'), fn ($query) => $query->whereIn('id', $request->input('image_ids')))
             ->ordered()
             ->get();
@@ -634,6 +633,17 @@ class ShopGoodImagesController extends Controller
                 }
             }
         }
+
+        $results['source_images'] = $sourceImages->count();
+        $results['target_variations'] = $targetVariationIds->count();
+        Log::info('Variation image batch copy completed', [
+            'good_id' => $good->id,
+            'source_variation_id' => $sourceVariationId,
+            'target_variation_ids' => $targetVariationIds->all(),
+            'source_images' => $results['source_images'],
+            'total_copied' => $results['total_copied'],
+            'errors' => $results['errors'],
+        ]);
 
         return response()->json([
             'success' => $results['total_copied'] > 0,
