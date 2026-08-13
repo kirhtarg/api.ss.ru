@@ -11,6 +11,7 @@ class ShopYandexMarketAttributeTemplate extends Model
         'account_id',
         'market_parameter_id',
         'market_parameter_name',
+        'source_signature',
         'mapping',
     ];
 

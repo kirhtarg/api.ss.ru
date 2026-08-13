@@ -162,8 +162,11 @@ class ShopYandexMarketSellerController extends Controller
         $parameters = collect($result['parameters'] ?? $result['categoryParameters'] ?? [])->map(fn ($item) => $this->parameterData((array) $item))->sortBy(fn ($item) => sprintf('%d%d%s', $item['required'] ? 0 : 1, $item['distinctive'] ? 0 : 1, $item['name']), SORT_NATURAL | SORT_FLAG_CASE)->values();
         $templates = ShopYandexMarketAttributeTemplate::query()
             ->where('account_id', $this->account()->id)
-            ->get(['market_parameter_id', 'mapping'])
-            ->mapWithKeys(fn (ShopYandexMarketAttributeTemplate $template) => [(string) $template->market_parameter_id => $template->mapping])
+            ->get(['market_parameter_id', 'source_signature', 'mapping'])
+            ->groupBy('market_parameter_id')
+            ->map(fn ($items) => $items->map(fn (ShopYandexMarketAttributeTemplate $template) => array_merge(
+                $template->mapping ?? [], ['source_signature' => $template->source_signature]
+            ))->values()->all())
             ->all();
 
         return response()->json(['success' => true, 'data' => [
@@ -203,6 +206,38 @@ class ShopYandexMarketSellerController extends Controller
         $mapping->fill($data)->save();
         if ($saveTemplates) $this->saveAttributeTemplates($account, $mapping->attribute_mappings ?? []);
         return response()->json(['success' => true, 'message' => 'Профиль категории сохранен.', 'data' => $mapping]);
+    }
+
+    public function saveDictionaryTemplate(Request $request)
+    {
+        $data = $request->validate([
+            'market_parameter_id' => 'required|integer|min:1',
+            'market_parameter_name' => 'required|string|max:255',
+            'source' => 'required|string|in:brand,property,variation_attribute,main_image,good,static',
+            'source_key' => 'nullable',
+            'dictionary_map' => 'required|array',
+            'dictionary_labels' => 'nullable|array',
+        ]);
+
+        $account = $this->account();
+        $signature = $this->sourceSignature($data['source'], $data['source_key'] ?? null);
+        $template = ShopYandexMarketAttributeTemplate::query()->firstOrNew([
+            'account_id' => $account->id,
+            'market_parameter_id' => (int) $data['market_parameter_id'],
+            'source_signature' => $signature,
+        ]);
+        $current = $template->mapping ?? [];
+        $template->fill([
+            'market_parameter_name' => $data['market_parameter_name'],
+            'mapping' => array_merge($current, [
+                'source' => $data['source'],
+                'source_key' => $data['source_key'] ?? '',
+                'dictionary_map' => array_merge($current['dictionary_map'] ?? [], $data['dictionary_map']),
+                'dictionary_labels' => array_merge($current['dictionary_labels'] ?? [], $data['dictionary_labels'] ?? []),
+            ]),
+        ])->save();
+
+        return response()->json(['success' => true, 'message' => 'Сопоставления значений сохранены для следующих профилей.', 'data' => $template->mapping]);
     }
 
     public function deleteMapping(ShopYandexMarketCategoryMapping $mapping)
@@ -445,14 +480,23 @@ class ShopYandexMarketSellerController extends Controller
             // Category metadata itself must never be copied into the reusable rule.
             $template = collect($mapping)->except([
                 'id', 'name', 'type', 'required', 'distinctive', 'multivalue', 'values',
-                'units', 'default_unit_id', 'allow_custom_values', 'mapping_origin', 'local_values',
+                'units', 'default_unit_id', 'allow_custom_values', 'mapping_origin', 'local_values', 'source_signature',
             ])->all();
 
             ShopYandexMarketAttributeTemplate::query()->updateOrCreate(
-                ['account_id' => $account->id, 'market_parameter_id' => $parameterId],
+                [
+                    'account_id' => $account->id,
+                    'market_parameter_id' => $parameterId,
+                    'source_signature' => $this->sourceSignature($template['source'] ?? '', $template['source_key'] ?? null),
+                ],
                 ['market_parameter_name' => (string) ($mapping['name'] ?? "ID {$parameterId}"), 'mapping' => $template],
             );
         }
+    }
+
+    private function sourceSignature(string $source, mixed $sourceKey): string
+    {
+        return mb_substr($source.':'.trim((string) $sourceKey), 0, 100);
     }
 
     private function hasUsableMappings(ShopYandexMarketAccount $account): bool
