@@ -380,6 +380,20 @@ class ShopYandexMarketSellerController extends Controller
             $query->where(fn ($q) => $q->where('shop_goods.name', 'like', "%{$search}%")->orWhere('shop_goods.sku', 'like', "%{$search}%")->orWhere('shop_goods.id', ctype_digit($search) ? (int) $search : 0)->orWhereHas('variations', fn ($v) => $v->where('sku', 'like', "%{$search}%")));
         }
         $total = (clone $query)->count(); $lastPage = max(1, (int) ceil($total / $perPage)); $page = min($page, $lastPage);
+        $eligibleIds = (clone $query)->reorder()->select('shop_goods.id');
+        $variationSummary = DB::query()->fromSub(
+            DB::table('shop_good_variations')
+                ->where('is_active', true)
+                ->whereIn('good_id', $eligibleIds)
+                ->selectRaw('good_id, COUNT(*) as variations_count')
+                ->groupBy('good_id'),
+            'eligible_variations'
+        )->selectRaw('COALESCE(SUM(variations_count), 0) as variations_total')
+            ->selectRaw('SUM(CASE WHEN variations_count > 1 THEN 1 ELSE 0 END) as variation_groups_total')
+            ->selectRaw('SUM(CASE WHEN variations_count = 1 THEN 1 ELSE 0 END) as single_variation_goods_total')
+            ->first();
+        $goodsWithVariations = (int) ($variationSummary->variation_groups_total ?? 0) + (int) ($variationSummary->single_variation_goods_total ?? 0);
+        $offersTotal = (int) ($variationSummary->variations_total ?? 0) + max(0, $total - $goodsWithVariations);
         $mappings = $resolver->mappings($account); $rows = [];
         foreach ($query->forPage($page, $perPage)->get() as $good) {
             $mapping = $resolver->mappingFor($good, $mappings, $account);
@@ -390,7 +404,12 @@ class ShopYandexMarketSellerController extends Controller
             }
         }
         return response()->json(['success' => true, 'data' => $rows, 'meta' => [
-            'eligible_goods' => $total, 'offers' => count($rows), 'offers_with_errors' => collect($rows)->filter(fn ($row) => ! empty($row['errors']))->count(),
+            'eligible_goods' => $total,
+            'eligible_offers' => $offersTotal,
+            'eligible_variations' => (int) ($variationSummary->variations_total ?? 0),
+            'eligible_variation_groups' => (int) ($variationSummary->variation_groups_total ?? 0),
+            'eligible_single_variation_goods' => (int) ($variationSummary->single_variation_goods_total ?? 0),
+            'offers' => count($rows), 'offers_with_errors' => collect($rows)->filter(fn ($row) => ! empty($row['errors']))->count(),
             'current_page' => $page, 'last_page' => $lastPage, 'per_page' => $perPage,
         ]]);
     }

@@ -543,13 +543,31 @@ class ShopGoodImagesController extends Controller
             'source_variation_id' => 'required|integer|exists:shop_good_variations,id',
             'target_variation_ids' => 'required|array|min:1',
             'target_variation_ids.*' => 'required|integer|exists:shop_good_variations,id',
+            'image_ids' => 'nullable|array|min:1',
+            'image_ids.*' => 'integer|exists:shop_good_images,id',
         ]);
 
-        $sourceVariationId = $request->input('source_variation_id');
-        $targetVariationIds = $request->input('target_variation_ids');
+        $good = ShopGood::findOrFail($goodId);
+        $sourceVariationId = (int) $request->input('source_variation_id');
+        $targetVariationIds = collect($request->input('target_variation_ids'))
+            ->map(fn ($id) => (int) $id)
+            ->reject(fn ($id) => $id === $sourceVariationId)
+            ->unique()
+            ->values();
+        $variationIds = $targetVariationIds->concat([$sourceVariationId])->unique()->values();
+        $ownedVariationIds = $good->variations()->whereIn('id', $variationIds)->pluck('id');
+
+        if (! $ownedVariationIds->contains($sourceVariationId) || $ownedVariationIds->count() !== $variationIds->count()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Исходная или целевые вариации не принадлежат выбранному товару.',
+            ], 422);
+        }
 
         // Получаем изображения исходной вариации
-        $sourceImages = ShopGoodImage::where('variation_id', $sourceVariationId)
+        $sourceImages = ShopGoodImage::whereNull('good_id')
+            ->where('variation_id', $sourceVariationId)
+            ->when($request->filled('image_ids'), fn ($query) => $query->whereIn('id', $request->input('image_ids')))
             ->ordered()
             ->get();
 
@@ -565,30 +583,26 @@ class ShopGoodImagesController extends Controller
             'errors' => [],
         ];
 
-        $frontendPublicPath = frontend_public_path();
+        $frontendPublicPath = realpath(frontend_public_path());
 
         foreach ($targetVariationIds as $targetVariationId) {
-            // Пропускаем, если целевая вариация совпадает с исходной
-            if ($targetVariationId == $sourceVariationId) {
-                continue;
-            }
-
             foreach ($sourceImages as $sourceImage) {
                 try {
-                    $sourcePath = $frontendPublicPath . '/' . $sourceImage->file_path;
+                    $relativeSourcePath = ltrim(str_replace('\\', '/', (string) $sourceImage->file_path), '/');
+                    $sourcePath = realpath(frontend_public_path($relativeSourcePath));
 
-                    if (!file_exists($sourcePath)) {
-                        $results['errors'][] = "Файл не найден: {$sourceImage->file_path}";
+                    if (! $sourcePath || ! $frontendPublicPath || ! str_starts_with($sourcePath, $frontendPublicPath . DIRECTORY_SEPARATOR)) {
+                        $results['errors'][] = "Битая ссылка: {$sourceImage->file_path}";
 
                         continue;
                     }
 
                     // Генерируем новое имя файла
-                    $pathInfo = pathinfo($sourceImage->file_path);
+                    $pathInfo = pathinfo($relativeSourcePath);
                     $extension = $pathInfo['extension'] ?? 'jpg';
                     $newFileName = 'variation_' . $targetVariationId . '_' . uniqid() . '.' . $extension;
                     $newRelativePath = ($pathInfo['dirname'] !== '.' ? $pathInfo['dirname'] : 'images') . '/' . $newFileName;
-                    $newFullPath = $frontendPublicPath . '/' . $newRelativePath;
+                    $newFullPath = frontend_public_path($newRelativePath);
 
                     // Убедимся, что директория существует
                     $directory = dirname($newFullPath);
@@ -622,10 +636,10 @@ class ShopGoodImagesController extends Controller
         }
 
         return response()->json([
-            'success' => true,
+            'success' => $results['total_copied'] > 0,
             'message' => "Скопировано {$results['total_copied']} изображений",
             'data' => $results,
-        ]);
+        ], $results['total_copied'] > 0 ? 200 : 422);
     }
 
     /**
