@@ -223,15 +223,16 @@ class ShopYandexMarketSellerController extends Controller
             if ($needle === '') continue;
             $exact = $byComparable->get($needle)?->first();
             if ($exact) {
-                $suggestions[] = ['local' => $localValue, 'remote' => $exact, 'score' => 100];
+                $suggestions[] = ['local' => $localValue, 'candidates' => [array_merge($exact, ['score' => 100])]];
                 continue;
             }
-            $best = null;
+            $candidates = [];
             foreach ($values as $remote) {
                 $score = $this->dictionarySimilarity($needle, $this->dictionaryComparable($remote['value']));
-                if ($score >= 70 && (! $best || $score > $best['score'])) $best = ['local' => $localValue, 'remote' => $remote, 'score' => $score];
+                if ($score >= 35) $candidates[] = array_merge($remote, ['score' => $score]);
             }
-            if ($best) $suggestions[] = $best;
+            usort($candidates, fn ($left, $right) => $right['score'] <=> $left['score'] ?: strnatcasecmp($left['value'], $right['value']));
+            if ($candidates) $suggestions[] = ['local' => $localValue, 'candidates' => array_slice($candidates, 0, 3)];
         }
         return response()->json(['success' => true, 'data' => $suggestions]);
     }
