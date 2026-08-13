@@ -524,7 +524,12 @@ class BikeproductsCatalogService
                         ? ShopGoodImage::query()->where('variation_id', $variation->id)
                         : ShopGoodImage::query()->where('good_id', $good->id)->whereNull('variation_id');
                     $existingImages = $query->orderBy('sort_order')->orderBy('id')->get();
-                    $existing = $existingImages->pluck('file_path')->all();
+                    $brokenExistingImages = $existingImages
+                        ->filter(fn (ShopGoodImage $image) => $this->isBrokenDatabaseImage($image));
+                    $existing = $existingImages
+                        ->reject(fn (ShopGoodImage $image) => $this->isBrokenDatabaseImage($image))
+                        ->pluck('file_path')
+                        ->all();
                     $deletedPaths = [];
                     $addedUrls = [];
                     if ($imageMode === 'delete_broken') {
@@ -545,13 +550,33 @@ class BikeproductsCatalogService
                         $existingImages = collect();
                         $existing = [];
                     }
+                    if (in_array($imageMode, ['append', 'reconcile'], true) && $brokenExistingImages->isNotEmpty()) {
+                        $brokenIdsToReplace = $brokenExistingImages
+                            ->filter(fn (ShopGoodImage $image) => $urls->contains(
+                                fn (string $url) => $this->sourceImageMatchesDatabasePath($url, $image->file_path),
+                            ))
+                            ->pluck('id')
+                            ->values();
+                        if ($brokenIdsToReplace->isNotEmpty()) {
+                            $deletedPaths = array_merge(
+                                $deletedPaths,
+                                $brokenExistingImages->whereIn('id', $brokenIdsToReplace)->pluck('file_path')->values()->all(),
+                            );
+                            ShopGoodImage::query()->whereIn('id', $brokenIdsToReplace)->delete();
+                            $existingImages = $existingImages->whereNotIn('id', $brokenIdsToReplace)->values();
+                            $brokenExistingImages = $brokenExistingImages->whereNotIn('id', $brokenIdsToReplace)->values();
+                        }
+                    }
                     if (in_array($imageMode, ['reconcile', 'prune'], true)) {
                         // A broken supplier URL is not evidence that the local
                         // image is obsolete. Keep existing bindings in that case.
                         $hasUnavailableSource = $allUrls->contains(function (string $url) use ($sourceAudits): bool {
                             return $sourceAudits->get($this->sourceUrlHash($url))?->status !== 'available';
                         });
-                        $availableImages = $existingImages->values()->all();
+                        $availableImages = $existingImages
+                            ->reject(fn (ShopGoodImage $image) => $this->isBrokenDatabaseImage($image))
+                            ->values()
+                            ->all();
                         $matchedImageIds = [];
                         $urlsToAdd = [];
                         foreach ($urls as $url) {
@@ -2275,12 +2300,17 @@ class BikeproductsCatalogService
                 ->values()
                 ->all();
             $databasePaths = collect($databaseImages)->pluck('file_path')->all();
-            $databaseBrokenPaths = collect($databaseImages)
-                ->filter(fn (ShopGoodImage $image) => $image->content_checked_at !== null && $image->content_hash === null)
-                ->pluck('file_path')
+            $databaseBrokenImages = collect($databaseImages)
+                ->filter(fn (ShopGoodImage $image) => $this->isBrokenDatabaseImage($image))
+                ->values();
+            $databaseBrokenPaths = $databaseBrokenImages->pluck('file_path')->all();
+            // Broken local files must never satisfy filename, SHA or visual
+            // comparison. They are rendered as an explicit repair candidate.
+            $availableImages = collect($databaseImages)
+                ->reject(fn (ShopGoodImage $image) => $this->isBrokenDatabaseImage($image))
                 ->values()
                 ->all();
-            $availableImages = $databaseImages;
+            $unpairedBrokenImages = $databaseBrokenImages->values()->all();
             $imagePairs = [];
             foreach ($sourceUrls as $sourceUrl) {
                 $sourceAudit = $sourceAudits->get($this->sourceUrlHash($sourceUrl));
@@ -2328,6 +2358,17 @@ class BikeproductsCatalogService
                     }
                 }
                 $databaseImage = $imageIndex === false ? null : $availableImages[$imageIndex];
+                $databaseBrokenImage = null;
+                if ($databaseImage === null && $sourceStatus === 'available') {
+                    $brokenIndex = collect($unpairedBrokenImages)->search(
+                        fn (ShopGoodImage $image) => $this->sourceImageMatchesDatabasePath($sourceUrl, $image->file_path),
+                    );
+                    if ($brokenIndex !== false) {
+                        $databaseBrokenImage = $unpairedBrokenImages[$brokenIndex];
+                        unset($unpairedBrokenImages[$brokenIndex]);
+                        $comparisonType = 'database_broken_filename';
+                    }
+                }
                 if ($databaseImage && $sourceAudit?->content_hash
                     && in_array($comparisonType, ['content', 'visual', 'normalized'], true)
                     && $databaseImage->source_content_hash !== $sourceAudit->content_hash) {
@@ -2346,8 +2387,11 @@ class BikeproductsCatalogService
                     'source_status' => $sourceStatus,
                     'source_error' => $sourceAudit?->error_message,
                     'comparison_type' => $comparisonType,
-                    'database_path' => $databaseImage?->file_path,
-                    'database_filename' => $databaseImage ? $this->sourceImageFileName($databaseImage->file_path) : null,
+                    'database_path' => ($databaseImage ?? $databaseBrokenImage)?->file_path,
+                    'database_filename' => ($databaseImage ?? $databaseBrokenImage)
+                        ? $this->sourceImageFileName(($databaseImage ?? $databaseBrokenImage)->file_path)
+                        : null,
+                    'database_broken' => $databaseBrokenImage !== null,
                     'is_match' => $databaseImage !== null,
                 ];
             }
@@ -2392,6 +2436,9 @@ class BikeproductsCatalogService
                 'match_summary' => $matchSummary,
                 'database_only_paths' => collect($availableImages)->pluck('file_path')->values()->all(),
                 'database_broken_paths' => $databaseBrokenPaths,
+                'database_broken_unpaired_paths' => collect($unpairedBrokenImages)->pluck('file_path')->values()->all(),
+                'has_broken_database_filename_match' => collect($imagePairs)
+                    ->contains(fn (array $pair) => ($pair['comparison_type'] ?? null) === 'database_broken_filename'),
                 'good_name' => $good->name,
                 'good_slug' => $good->slug,
             ];
@@ -2423,6 +2470,9 @@ class BikeproductsCatalogService
             'normalized_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'normalized')->count(),
             'broken_source_urls' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('source_status', 'broken')->count(),
             'broken_database_urls' => collect($imageComparisons)->flatMap(fn (array $row) => $row['database_broken_paths'] ?? [])->count(),
+            'broken_database_filename_matches' => collect($imageComparisons)
+                ->where('has_broken_database_filename_match', true)
+                ->count(),
             'unchecked_source_urls' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('source_status', 'not_audited')->count(),
         ];
         if ($statuses !== []) {
@@ -2433,6 +2483,9 @@ class BikeproductsCatalogService
                     }
                     if ($status === 'broken') {
                         return collect($row['image_pairs'])->contains(fn (array $pair) => $pair['source_status'] === 'broken') || ! empty($row['database_broken_paths']);
+                    }
+                    if ($status === 'broken_database_filename') {
+                        return (bool) ($row['has_broken_database_filename_match'] ?? false);
                     }
                     if ($status === 'visual') {
                         return collect($row['image_pairs'])->contains(fn (array $pair) => in_array($pair['comparison_type'], ['visual', 'normalized'], true));
@@ -4484,6 +4537,11 @@ class BikeproductsCatalogService
         } catch (\Throwable) {
             return null;
         }
+    }
+
+    private function isBrokenDatabaseImage(ShopGoodImage $image): bool
+    {
+        return $image->content_checked_at !== null && $image->content_hash === null;
     }
 
     private function updateImageAuditSummary(SupplierCatalogSnapshot $snapshot, string $status): void
