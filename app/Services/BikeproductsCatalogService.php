@@ -55,45 +55,150 @@ class BikeproductsCatalogService
             ->get(['source_url_hash', 'content_hash', 'perceptual_hash', 'width', 'height'])
             ->keyBy('source_url_hash');
         $contentAudit = $this->imageContentAuditStatus($snapshot);
+        $downloadedAny = false;
         foreach ($items as $item) {
             $match = $matches->get($this->normalizeSku($item->external_sku));
             if (! $match) continue;
             $variation = $match['type'] === 'variation' ? $match['model'] : null;
             $good = $variation ? $variation->good : $match['model'];
+            if (! $good) continue;
             foreach ($this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl) as $source) {
                 $url = $source['url'];
                 if ($contentAudit['status'] === 'completed' && ! $sourceAudits->has($this->sourceUrlHash($url))) continue;
                 if (! str_starts_with($url, 'http')) continue;
+                $ownerImages = $variation
+                    ? ShopGoodImage::query()->where('variation_id', $variation->id)
+                    : ShopGoodImage::query()->where('good_id', $good->id)->whereNull('variation_id');
+                // Older runs left the supplier URL in the database while the
+                // asynchronous download was pending. It is only a temporary
+                // marker and must never survive a success or failure.
+                $pendingExternalImages = (clone $ownerImages)->where('file_path', $url)->get();
                 try {
                     $response = Http::timeout(45)->connectTimeout(10)->get($url);
                     if (! $response->successful() || $response->body() === '') throw new \RuntimeException('HTTP '.$response->status());
-                    $extension = strtolower(pathinfo((string) parse_url($url, PHP_URL_PATH), PATHINFO_EXTENSION)) ?: 'jpg';
                     $sourceAudit = $sourceAudits->get($this->sourceUrlHash($url));
                     $contentHash = $sourceAudit?->content_hash ?? hash('sha256', $response->body());
-                    $relativePath = 'images/shop/goods/supplier/'.$contentHash.'.'.$extension;
+                    $processed = $this->fitSupplierImageToSystemSize($response->body());
+                    $relativePath = 'images/shop/goods/supplier/'.$contentHash.'.'.$processed['extension'];
                     $absolutePath = frontend_public_path($relativePath);
                     if (! is_dir(dirname($absolutePath))) mkdir(dirname($absolutePath), 0755, true);
-                    if (! is_file($absolutePath)) file_put_contents($absolutePath, $response->body());
-                    $imageQuery = ShopGoodImage::query()->where('file_path', $url);
-                    if ($variation) {
-                        $imageQuery->where('variation_id', $variation->id);
-                    } else {
-                        $imageQuery->where('good_id', $good->id)->whereNull('variation_id');
-                    }
-                    $imageQuery->update([
+                    // The supplier audit uses the original SHA for matching,
+                    // while the stored file must follow the same visual rules
+                    // as imports: system size, square canvas and white fields.
+                    file_put_contents($absolutePath, $processed['binary']);
+                    $metadata = [
                         'file_path' => '/'.$relativePath,
                         'source_content_hash' => $contentHash,
-                        'content_hash' => $contentHash,
-                        'perceptual_hash' => $sourceAudit?->perceptual_hash ?? $this->perceptualImageHash($response->body()),
-                        'image_width' => $sourceAudit?->width,
-                        'image_height' => $sourceAudit?->height,
+                        'content_hash' => hash('sha256', $processed['binary']),
+                        'perceptual_hash' => $this->perceptualImageHash($processed['binary']),
+                        'image_width' => $processed['width'],
+                        'image_height' => $processed['height'],
                         'content_checked_at' => now(),
-                    ]);
+                    ];
+                    $existingLocalImages = (clone $ownerImages)
+                        ->where('file_path', 'not like', 'http%')
+                        ->get();
+                    $existingMatch = $existingLocalImages->first(function (ShopGoodImage $image) use ($contentHash, $url): bool {
+                        return $image->source_content_hash === $contentHash
+                            || $this->sourceImageMatchesDatabasePath($url, $image->file_path);
+                    });
+                    $image = $existingMatch ?: $pendingExternalImages->shift();
+                    if ($image) {
+                        $image->update($metadata);
+                    } else {
+                        $image = ShopGoodImage::create([
+                            'good_id' => $variation ? null : $good->id,
+                            'variation_id' => $variation?->id,
+                            ...$metadata,
+                            'is_main' => ! (clone $ownerImages)->exists(),
+                            'sort_order' => (int) ((clone $ownerImages)->max('sort_order') ?? 0) + 1,
+                        ]);
+                    }
+                    if ($pendingExternalImages->isNotEmpty()) {
+                        ShopGoodImage::query()->whereIn('id', $pendingExternalImages->pluck('id'))->delete();
+                    }
+                    // Several products or variations may intentionally share
+                    // one local file. Its availability cannot differ between
+                    // bindings, so keep audit metadata consistent everywhere.
+                    ShopGoodImage::query()
+                        ->where('file_path', '/'.$relativePath)
+                        ->update(collect($metadata)->except('file_path')->all());
+                    $downloadedAny = true;
                 } catch (\Throwable $exception) {
+                    // Never leave an external supplier URL in the shop data
+                    // after an unsuccessful worker attempt.
+                    if ($pendingExternalImages->isNotEmpty()) {
+                        ShopGoodImage::query()->whereIn('id', $pendingExternalImages->pluck('id'))->delete();
+                    }
                     Log::warning('Supplier image download failed', ['snapshot_id' => $snapshotId, 'sku' => $item->external_sku, 'url' => $url, 'error' => $exception->getMessage()]);
                 }
             }
         }
+        if ($downloadedAny) {
+            // The worker changes the image rows after the synchronous action
+            // response. Touching invalidates the paginated audit cache.
+            $snapshot->touch();
+        }
+    }
+
+    /** @return array{binary: string, extension: string, width: int|null, height: int|null} */
+    private function fitSupplierImageToSystemSize(string $binary): array
+    {
+        if (! function_exists('imagecreatefromstring')) {
+            $dimensions = @getimagesizefromstring($binary);
+            return [
+                'binary' => $binary,
+                'extension' => $this->supplierImageExtensionFromDimensions($dimensions),
+                'width' => is_array($dimensions) ? (int) ($dimensions[0] ?? 0) : null,
+                'height' => is_array($dimensions) ? (int) ($dimensions[1] ?? 0) : null,
+            ];
+        }
+
+        $source = @imagecreatefromstring($binary);
+        if (! $source instanceof \GdImage) {
+            $dimensions = @getimagesizefromstring($binary);
+            return [
+                'binary' => $binary,
+                'extension' => $this->supplierImageExtensionFromDimensions($dimensions),
+                'width' => is_array($dimensions) ? (int) ($dimensions[0] ?? 0) : null,
+                'height' => is_array($dimensions) ? (int) ($dimensions[1] ?? 0) : null,
+            ];
+        }
+
+        $target = $this->imageAuditTargetSize();
+        $canvas = $this->imageAuditFitWhite($source, $target['width'], $target['height']);
+        if ($canvas === false) {
+            imagedestroy($source);
+            $dimensions = @getimagesizefromstring($binary);
+            return [
+                'binary' => $binary,
+                'extension' => $this->supplierImageExtensionFromDimensions($dimensions),
+                'width' => is_array($dimensions) ? (int) ($dimensions[0] ?? 0) : null,
+                'height' => is_array($dimensions) ? (int) ($dimensions[1] ?? 0) : null,
+            ];
+        }
+        ob_start();
+        imagejpeg($canvas, null, 90);
+        $processed = (string) ob_get_clean();
+        imagedestroy($canvas);
+        imagedestroy($source);
+
+        return [
+            'binary' => $processed !== '' ? $processed : $binary,
+            'extension' => $processed !== '' ? 'jpg' : $this->supplierImageExtensionFromDimensions(@getimagesizefromstring($binary)),
+            'width' => $processed !== '' ? $target['width'] : null,
+            'height' => $processed !== '' ? $target['height'] : null,
+        ];
+    }
+
+    private function supplierImageExtensionFromDimensions(array|false $dimensions): string
+    {
+        return match ($dimensions[2] ?? null) {
+            IMAGETYPE_PNG => 'png',
+            IMAGETYPE_GIF => 'gif',
+            IMAGETYPE_WEBP => 'webp',
+            default => 'jpg',
+        };
     }
 
     /** @return array{affected: int, skipped: int, message: string, created?: array<string, array<int, int>>, log?: array<int, array<string, mixed>>, warnings?: array<int, string>} */
@@ -534,7 +639,7 @@ class BikeproductsCatalogService
                     $addedUrls = [];
                     if ($imageMode === 'delete_broken') {
                         $brokenImageIds = $existingImages
-                            ->filter(fn (ShopGoodImage $image) => $image->content_checked_at !== null && $image->content_hash === null)
+                            ->filter(fn (ShopGoodImage $image) => $this->isBrokenDatabaseImage($image))
                             ->pluck('id')
                             ->values();
                         if ($brokenImageIds->isEmpty()) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_broken_database_images', ['scope' => 'images', 'mode' => $imageMode, 'good_id' => $good->id, 'variation_id' => $variation?->id]); continue; }
@@ -612,13 +717,9 @@ class BikeproductsCatalogService
                     $nextSort = (int) $query->max('sort_order') + 1;
                     foreach ($urls as $url) {
                         if (collect($existing)->contains(fn (string $path) => $this->sourceImageMatchesDatabasePath($url, $path))) continue;
-                        ShopGoodImage::create([
-                            'good_id' => $variation ? null : $good->id,
-                            'variation_id' => $variation?->id,
-                            'file_path' => $url,
-                            'is_main' => $existing === [] && $nextSort === 1,
-                            'sort_order' => $nextSort++,
-                        ]);
+                        // Do not persist supplier URLs. The download worker
+                        // creates a binding only after the file was saved to
+                        // the local shop media directory successfully.
                         $existing[] = $url;
                         $addedUrls[] = $url;
                     }
@@ -4493,11 +4594,19 @@ class BikeproductsCatalogService
         foreach ($images as $image) {
             $binary = $this->databaseImageBinary((string) $image->file_path);
             if ($binary === null) {
-                $image->update(['content_checked_at' => now()]);
+                ShopGoodImage::query()
+                    ->where('file_path', $image->file_path)
+                    ->update([
+                        'content_hash' => null,
+                        'perceptual_hash' => null,
+                        'image_width' => null,
+                        'image_height' => null,
+                        'content_checked_at' => now(),
+                    ]);
                 continue;
             }
             $dimensions = @getimagesizefromstring($binary);
-            $image->update([
+            ShopGoodImage::query()->where('file_path', $image->file_path)->update([
                 'content_hash' => hash('sha256', $binary),
                 'perceptual_hash' => $this->perceptualImageHash($binary),
                 'image_width' => is_array($dimensions) ? (int) ($dimensions[0] ?? 0) : null,
@@ -4515,21 +4624,22 @@ class BikeproductsCatalogService
         if ($filePath === '') {
             return null;
         }
-        if (! str_starts_with($filePath, 'http')) {
-            try {
-                $path = frontend_public_path(ltrim($filePath, '/'));
-                if (is_file($path) && filesize($path) <= 20 * 1024 * 1024) {
-                    $binary = @file_get_contents($path);
-                    if ($binary !== false && $binary !== '') {
-                        return $binary;
-                    }
-                }
-            } catch (\Throwable) {
-                // The public URL below is a safe fallback when API and shop
-                // frontend are deployed on separate hosts.
-            }
-            $filePath = 'https://skateandsnow.ru/'.ltrim($filePath, '/');
+        if (str_starts_with($filePath, 'http')) {
+            return null;
         }
+        try {
+            $path = frontend_public_path(ltrim($filePath, '/'));
+            if (is_file($path) && filesize($path) <= 20 * 1024 * 1024) {
+                $binary = @file_get_contents($path);
+                if ($binary !== false && $binary !== '') {
+                    return $binary;
+                }
+            }
+        } catch (\Throwable) {
+            // The public URL below is a safe fallback when API and shop
+            // frontend are deployed on separate hosts.
+        }
+        $filePath = 'https://skateandsnow.ru/'.ltrim($filePath, '/');
         try {
             $response = Http::timeout(20)->connectTimeout(8)->get($filePath);
             $binary = $response->successful() ? $response->body() : '';
@@ -4541,7 +4651,10 @@ class BikeproductsCatalogService
 
     private function isBrokenDatabaseImage(ShopGoodImage $image): bool
     {
-        return $image->content_checked_at !== null && $image->content_hash === null;
+        // External supplier URLs are not valid shop image bindings. They can
+        // disappear at any time and must be repaired into local media.
+        return str_starts_with((string) $image->file_path, 'http')
+            || ($image->content_checked_at !== null && $image->content_hash === null);
     }
 
     private function updateImageAuditSummary(SupplierCatalogSnapshot $snapshot, string $status): void

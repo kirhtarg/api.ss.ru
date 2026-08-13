@@ -19,7 +19,8 @@ class SyncSupplierCatalogImagesJob implements ShouldQueue
     /** @param array<int, int> $itemIds */
     public function __construct(private readonly int $snapshotId, private readonly array $itemIds)
     {
-        $this->onQueue('images-download');
+        // Use the default queue worker already configured for the API.
+        // A dedicated images-download worker is not a deployment requirement.
     }
 
     public function handle(BikeproductsCatalogService $catalog): void
