@@ -18,6 +18,7 @@ use App\Services\YandexMarket\YandexMarketClient;
 use App\Services\YandexMarket\YandexMarketPayloadBuilder;
 use App\Services\YandexMarket\YandexMarketProductResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Cache;
 use Throwable;
@@ -160,6 +161,49 @@ class ShopYandexMarketSellerController extends Controller
         $mappedCount = collect(array_keys($counts))->filter(fn ($value) => isset($mappedValues[$value]))->count();
         $perPage = (int) ($data['per_page'] ?? 50); $page = (int) ($data['page'] ?? 1); $total = $rows->count();
         return response()->json(['success' => true, 'data' => $rows->forPage($page, $perPage)->values(), 'meta' => ['current_page' => $page, 'per_page' => $perPage, 'total' => $total, 'last_page' => max(1, (int) ceil($total / $perPage)), 'mapped_count' => $mappedCount]]);
+    }
+
+    public function localSourceValueStats(Request $request, YandexMarketProductResolver $resolver)
+    {
+        $data = $request->validate([
+            'category_ids' => 'required|array|min:1', 'category_ids.*' => 'integer',
+            'selection_tag_id' => 'nullable|integer|exists:shop_tags,id',
+            'mappings' => 'required|array|min:1|max:100',
+            'mappings.*.key' => 'required|string|max:255',
+            'mappings.*.source' => 'required|string|in:brand,property,variation_attribute',
+            'mappings.*.source_key' => 'nullable|integer|min:1',
+            'mappings.*.mapped_values' => 'nullable|array',
+            'mappings.*.mapped_values.*' => 'string|max:1000',
+        ]);
+        $account = $this->account();
+        $tagId = (int) ($data['selection_tag_id'] ?? $account->selection_tag_id);
+        $mappings = collect($data['mappings'])->map(fn ($mapping) => [
+            'key' => $mapping['key'], 'source' => $mapping['source'], 'source_key' => $mapping['source_key'] ?? null,
+            'mapped_values' => array_fill_keys($mapping['mapped_values'] ?? [], true),
+        ])->values()->all();
+        $cacheKey = 'yandex-market:local-source-value-stats:'.hash('sha256', json_encode([$account->id, $data['category_ids'], $tagId, collect($mappings)->map(fn ($mapping) => Arr::except($mapping, 'mapped_values'))->all()]));
+        $countsByMapping = Cache::remember($cacheKey, now()->addMinutes(15), function () use ($data, $tagId, $resolver, $mappings) {
+            $counts = array_fill_keys(array_column($mappings, 'key'), []);
+            $query = \App\Models\ShopGood::query()->with(['brands:id,name', 'properties.values', 'variations.attributeValues.attribute'])
+                ->where('is_active', true)->whereHas('categories', fn ($query) => $query->whereIn('shop_categories.id', $data['category_ids']));
+            if ($tagId) $query->whereHas('tags', fn ($query) => $query->where('shop_tags.id', $tagId));
+            $query->chunkById(200, function ($goods) use (&$counts, $mappings, $resolver) {
+                foreach ($goods as $good) foreach ($mappings as $mapping) {
+                    $variations = $mapping['source'] === 'variation_attribute' ? $good->variations->where('is_active', true) : collect([null]);
+                    foreach ($variations as $variation) {
+                        $value = trim((string) $resolver->sourceValue($mapping, $good, $variation));
+                        if ($value !== '') $counts[$mapping['key']][$value] = ($counts[$mapping['key']][$value] ?? 0) + 1;
+                    }
+                }
+            });
+            return $counts;
+        });
+        $stats = [];
+        foreach ($mappings as $mapping) {
+            $values = $countsByMapping[$mapping['key']] ?? [];
+            $stats[$mapping['key']] = ['total' => count($values), 'mapped' => count(array_intersect_key($values, $mapping['mapped_values']))];
+        }
+        return response()->json(['success' => true, 'data' => $stats]);
     }
 
     public function categories(Request $request)

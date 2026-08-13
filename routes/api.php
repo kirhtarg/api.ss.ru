@@ -2603,6 +2603,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/local-tags', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localTags']);
                 Route::get('/local-sources', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localSources']);
                 Route::post('/local-source-values', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localSourceValues']);
+                Route::post('/local-source-value-stats', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'localSourceValueStats']);
                 Route::get('/categories', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'categories']);
                 Route::post('/parameters', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'parameters']);
                 Route::post('/dictionary-values', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'dictionaryValues']);
