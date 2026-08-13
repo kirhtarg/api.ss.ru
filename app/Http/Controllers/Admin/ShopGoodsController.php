@@ -648,42 +648,17 @@ class ShopGoodsController extends Controller
                 });
             } elseif ($request->get('stock_variations_empty') === '1' || $request->get('stock_goods_empty') === '1') {
                 $query->where(function ($mainQuery) {
-                    // Вариант 1: Товары с вариациями - у всех вариаций должны быть пустые все виды остатков.
-                    // Остатки основного товара в этом случае игнорируются.
+                    // «Остаток → Нет в наличии» относится только к stock_quantity.
+                    // Проверка всех трёх видов остатков выполняется отдельным фильтром «Общ.ост».
                     $mainQuery->whereHas('variations')
                         ->whereDoesntHave('variations', function ($varQ) {
-                            $varQ->where('stock_quantity', '>', 0)
-                                ->orWhere(function ($remote) {
-                                    $remote->whereNotNull('remote_stock_quantity')
-                                        ->where('remote_stock_quantity', '!=', '')
-                                        ->where('remote_stock_quantity', '!=', '0')
-                                        ->whereRaw('LENGTH(TRIM(remote_stock_quantity)) > 0');
-                                })
-                                ->orWhere(function ($fastRemote) {
-                                    $fastRemote->whereNotNull('fast_remote_stock_quantity')
-                                        ->where('fast_remote_stock_quantity', '!=', '')
-                                        ->where('fast_remote_stock_quantity', '!=', '0')
-                                        ->whereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) > 0');
-                                });
+                            $varQ->where('stock_quantity', '>', 0);
                         })
-                    // Вариант 2: Товары без вариаций - у основного товара должны быть пустые все виды остатков.
                         ->orWhere(function ($noVariationsQuery) {
                             $noVariationsQuery->whereDoesntHave('variations')
                                 ->where(function ($stockQuery) {
                                     $stockQuery->where('stock_quantity', '=', 0)
                                         ->orWhereNull('stock_quantity');
-                                })
-                                ->where(function ($remoteQuery) {
-                                    $remoteQuery->whereNull('remote_stock_quantity')
-                                        ->orWhere('remote_stock_quantity', '=', '0')
-                                        ->orWhere('remote_stock_quantity', '=', '')
-                                        ->orWhereRaw('LENGTH(TRIM(remote_stock_quantity)) = 0');
-                                })
-                                ->where(function ($fastRemoteQuery) {
-                                    $fastRemoteQuery->whereNull('fast_remote_stock_quantity')
-                                        ->orWhere('fast_remote_stock_quantity', '=', '0')
-                                        ->orWhere('fast_remote_stock_quantity', '=', '')
-                                        ->orWhereRaw('LENGTH(TRIM(fast_remote_stock_quantity)) = 0');
                                 });
                         });
                 });
@@ -1112,60 +1087,6 @@ class ShopGoodsController extends Controller
                         ->orWhere(function ($noVariationsQuery) use ($exactValue) {
                             $noVariationsQuery->whereDoesntHave('variations')
                                 ->where('fast_remote_stock_quantity', '=', $exactValue);
-                        });
-                });
-            }
-        }
-
-        // Фильтр по основному остатку (stock_quantity). У/с и У/с быстро
-        // намеренно не учитываются здесь: для них есть отдельные фильтры и «Общ.ост».
-        if ($request->filled('stock_variations_not_empty') && $request->filled('stock_goods_not_empty')) {
-            // Проверяем, если хотя бы один из параметров включен
-            if ($request->get('stock_variations_not_empty') === '1' || $request->get('stock_goods_not_empty') === '1') {
-                $query->where(function ($mainQuery) {
-                    // Вариант 1: Товары с вариациями - проверяем остатки вариаций (хотя бы одна вариация с остатком > 0)
-                    $mainQuery->whereHas('variations', function ($varQ) {
-                        $varQ->where('stock_quantity', '>', 0);
-                    })
-                    // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                        ->orWhere(function ($noVariationsQuery) {
-                            $noVariationsQuery->whereDoesntHave('variations')
-                                ->where('stock_quantity', '>', 0);
-                        });
-                });
-            }
-        } elseif ($request->filled('stock_variations_empty') && $request->filled('stock_goods_empty')) {
-            // Проверяем, если хотя бы один из параметров включен
-            if ($request->get('stock_variations_empty') === '1' || $request->get('stock_goods_empty') === '1') {
-                $query->where(function ($mainQuery) {
-                    // Вариант 1: у всех вариаций основной остаток пустой или равен нулю.
-                    $mainQuery->whereHas('variations')
-                        ->whereDoesntHave('variations', function ($varQ) {
-                            $varQ->where('stock_quantity', '>', 0);
-                        })
-                    // Вариант 2: у товара без вариаций основной остаток пустой или равен нулю.
-                        ->orWhere(function ($noVariationsQuery) {
-                            $noVariationsQuery->whereDoesntHave('variations')
-                                ->where(function ($stockQuery) {
-                                    $stockQuery->where('stock_quantity', '=', 0)
-                                        ->orWhereNull('stock_quantity');
-                                });
-                        });
-                });
-            }
-        } elseif ($request->filled('stock_variations_exact') && $request->filled('stock_goods_exact')) {
-            $exactValue = $request->get('stock_variations_exact');
-
-            // Проверяем, если хотя бы один из параметров включен
-            if ($request->get('stock_variations_exact') !== '' || $request->get('stock_goods_exact') !== '') {
-                $query->where(function ($mainQuery) use ($exactValue) {
-                    // Вариант 1: Товары с вариациями - проверяем сумму остатков вариаций
-                    $mainQuery->whereHas('variations')
-                        ->whereRaw('(SELECT COALESCE(SUM(stock_quantity), 0) FROM shop_good_variations WHERE good_id = shop_goods.id) = ?', [$exactValue])
-                    // Вариант 2: Товары без вариаций - проверяем остатки основного товара
-                        ->orWhere(function ($noVariationsQuery) use ($exactValue) {
-                            $noVariationsQuery->whereDoesntHave('variations')
-                                ->where('stock_quantity', '=', $exactValue);
                         });
                 });
             }
