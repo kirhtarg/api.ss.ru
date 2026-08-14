@@ -283,6 +283,8 @@ class BikeproductsCatalogController extends Controller
             'variation_count' => ['nullable', 'in:all,single,multiple'],
             'main_stock' => ['nullable', 'in:all,zero,in_stock'],
             'remote_stock' => ['nullable', 'in:all,empty,not_empty'],
+            'axis_issues' => ['nullable', 'array', 'max:3'],
+            'axis_issues.*' => ['string', 'in:different,missing,extra'],
             'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
             'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,database_duplicate_sku'],
@@ -292,9 +294,9 @@ class BikeproductsCatalogController extends Controller
             'success' => true,
             'data' => $this->cachedAudit(
                 $snapshot,
-                'variations-v18',
+                'variations-v20',
                 $data,
-                fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null, $data['main_stock'] ?? 'all', $data['remote_stock'] ?? 'all'),
+                fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null, $data['main_stock'] ?? 'all', $data['remote_stock'] ?? 'all', $data['axis_issues'] ?? []),
             ),
         ]);
     }
@@ -371,6 +373,8 @@ class BikeproductsCatalogController extends Controller
             'variation_count' => ['nullable', 'in:all,single,multiple'],
             'main_stock' => ['nullable', 'in:all,zero,in_stock'],
             'remote_stock' => ['nullable', 'in:all,empty,not_empty'],
+            'axis_issues' => ['nullable', 'array', 'max:3'],
+            'axis_issues.*' => ['string', 'in:different,missing,extra'],
             'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
             'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,database_duplicate_sku'],
@@ -378,7 +382,7 @@ class BikeproductsCatalogController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $this->catalog->variationSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null, $data['main_stock'] ?? 'all', $data['remote_stock'] ?? 'all'),
+            'data' => $this->catalog->variationSelection($snapshot, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null, $data['main_stock'] ?? 'all', $data['remote_stock'] ?? 'all', $data['axis_issues'] ?? []),
         ]);
     }
 

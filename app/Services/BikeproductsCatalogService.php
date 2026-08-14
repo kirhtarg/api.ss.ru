@@ -1494,7 +1494,7 @@ class BikeproductsCatalogService
     }
 
     /** @return array{data: array<int, array<string, mixed>>, meta: array<string, int>} */
-    public function variationAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?string $search = null, array $filters = [], string $variationCount = 'all', ?int $goodId = null, string $mainStockFilter = 'all', string $remoteStockFilter = 'all'): array
+    public function variationAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?string $search = null, array $filters = [], string $variationCount = 'all', ?int $goodId = null, string $mainStockFilter = 'all', string $remoteStockFilter = 'all', array $axisIssues = []): array
     {
         $this->assertReadySnapshot($snapshot);
         $this->ensureDefaultMappings($snapshot->supplier_code);
@@ -1843,6 +1843,7 @@ class BikeproductsCatalogService
             'source_price_excluded',
             'database_duplicate_sku',
         ]));
+        $axisIssues = array_values(array_intersect($axisIssues, ['different', 'missing', 'extra']));
         $duplicateSkuOnly = count($filters) === 1 && $filters[0] === 'database_duplicate_sku';
         $deleteCandidateGoodOnly = count($filters) === 1 && $filters[0] === 'delete_candidate_good';
         if ($deleteCandidateGoodOnly) {
@@ -1872,24 +1873,30 @@ class BikeproductsCatalogService
                 ->filter(fn (array $row) => in_array($row['status'], $filters, true) || $expandGoodIds->contains($row['database_good_id']))
                 ->values();
         }
+        if ($axisIssues !== []) {
+            $rows = $rows
+                ->filter(fn (array $row) => ($row['status'] ?? null) === 'attention'
+                    && array_intersect($row['axis_issue_types'] ?? [], $axisIssues) !== [])
+                ->values();
+        }
         // Фильтр относится к товарам базы. Строки, которые есть только в
         // файле, не имеют родительского товара базы и остаются видимыми лишь
         // в режиме «Все».
-        if (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $variationCount === 'single') {
+        if (! $duplicateSkuOnly && $variationCount === 'single') {
             $rows = $rows->filter(fn (array $row) => $row['database_good_id']
                 && ($variationCountByGood->get($row['database_good_id']) ?? 0) === 1)->values();
-        } elseif (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $variationCount === 'multiple') {
+        } elseif (! $duplicateSkuOnly && $variationCount === 'multiple') {
             $rows = $rows->filter(fn (array $row) => $row['database_good_id']
                 && ($variationCountByGood->get($row['database_good_id']) ?? 0) > 1)->values();
         }
-        if (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $mainStockFilter === 'zero') {
+        if (! $duplicateSkuOnly && $mainStockFilter === 'zero') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ! ($row['has_main_stock'] ?? false))->values();
-        } elseif (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $mainStockFilter === 'in_stock') {
+        } elseif (! $duplicateSkuOnly && $mainStockFilter === 'in_stock') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ($row['has_main_stock'] ?? false))->values();
         }
-        if (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $remoteStockFilter === 'empty') {
+        if (! $duplicateSkuOnly && $remoteStockFilter === 'empty') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ! ($row['has_remote_stock'] ?? false))->values();
-        } elseif (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $remoteStockFilter === 'not_empty') {
+        } elseif (! $duplicateSkuOnly && $remoteStockFilter === 'not_empty') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ($row['has_remote_stock'] ?? false))->values();
         }
         // Пагинируем товарами, а не отдельными SKU: все вариации одного товара
@@ -1952,6 +1959,15 @@ class BikeproductsCatalogService
                 'database_duplicate_sku' => $allRows->where('status', 'database_duplicate_sku')->pluck('database_variation_id')->unique()->count(),
                 'database_duplicate_sku_groups' => $databaseDuplicateSkuGroups->count(),
                 'attention_goods' => $countGroups($allRows->where('status', 'attention')),
+                'attention_axis_different' => $allRows
+                    ->filter(fn (array $row) => ($row['status'] ?? null) === 'attention' && in_array('different', $row['axis_issue_types'] ?? [], true))
+                    ->count(),
+                'attention_axis_missing' => $allRows
+                    ->filter(fn (array $row) => ($row['status'] ?? null) === 'attention' && in_array('missing', $row['axis_issue_types'] ?? [], true))
+                    ->count(),
+                'attention_axis_extra' => $allRows
+                    ->filter(fn (array $row) => ($row['status'] ?? null) === 'attention' && in_array('extra', $row['axis_issue_types'] ?? [], true))
+                    ->count(),
                 'attention_single_variation_goods' => $countGroups($allRows->where('status', 'attention_single_variation')),
                 'match_goods' => $countGroups($allRows->where('status', 'match')),
             ],
@@ -1965,9 +1981,9 @@ class BikeproductsCatalogService
     }
 
     /** @return array{database_variation_ids: array<int, int>, database_good_ids: array<int, int>, source_item_ids: array<int, int>, groups_total: int} */
-    public function variationSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null, array $filters = [], string $variationCount = 'all', ?int $goodId = null, string $mainStockFilter = 'all', string $remoteStockFilter = 'all'): array
+    public function variationSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null, array $filters = [], string $variationCount = 'all', ?int $goodId = null, string $mainStockFilter = 'all', string $remoteStockFilter = 'all', array $axisIssues = []): array
     {
-        $audit = $this->variationAudit($snapshot, 1, 100000, $search, $filters, $variationCount, $goodId, $mainStockFilter, $remoteStockFilter);
+        $audit = $this->variationAudit($snapshot, 1, 100000, $search, $filters, $variationCount, $goodId, $mainStockFilter, $remoteStockFilter, $axisIssues);
         $rows = collect($audit['data']);
         $selectedRows = $filters === []
             ? $rows
