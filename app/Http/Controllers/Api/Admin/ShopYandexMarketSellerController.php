@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\ProcessYandexMarketSellerSyncJob;
 use App\Models\Setting;
 use App\Models\ShopCategory;
+use App\Models\ShopGood;
 use App\Models\ShopTag;
 use App\Models\ShopVariationAttribute;
 use App\Models\ShopYandexMarketAccount;
@@ -286,9 +287,13 @@ class ShopYandexMarketSellerController extends Controller
         if (! $account) return response()->json(['success' => true, 'data' => []]);
         $mappings = ShopYandexMarketCategoryMapping::query()->where('account_id', $account->id)->latest()->get();
         $categoryNames = ShopCategory::query()->whereIn('id', $mappings->flatMap(fn ($mapping) => $mapping->categoryIds())->unique())->pluck('name', 'id');
-        return response()->json(['success' => true, 'data' => $mappings->map(function ($mapping) use ($categoryNames) {
+        return response()->json(['success' => true, 'data' => $mappings->map(function ($mapping) use ($categoryNames, $account) {
             $data = $mapping->toArray();
             $data['local_categories'] = $mapping->categoryIds()->map(fn ($id) => ['id' => $id, 'name' => $categoryNames[$id] ?? "ID {$id}"])->values();
+            $data['selection_tag_name'] = $mapping->selection_tag_id
+                ? ShopTag::query()->find($mapping->selection_tag_id)?->name
+                : ShopTag::query()->find($account->selection_tag_id)?->name;
+            $data['profile_stats'] = $this->profileStats($mapping, $account);
             return $data;
         })]);
     }
@@ -370,11 +375,25 @@ class ShopYandexMarketSellerController extends Controller
 
     public function preview(Request $request, YandexMarketPayloadBuilder $builder, YandexMarketProductResolver $resolver)
     {
-        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:50', 'search' => 'nullable|string|max:255', 'good_ids' => 'nullable|array|max:100', 'good_ids.*' => 'integer']);
+        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:50', 'search' => 'nullable|string|max:255', 'good_ids' => 'nullable|array|max:100', 'good_ids.*' => 'integer', 'mapping_id' => 'nullable|integer|min:1']);
         $account = $this->account();
         if (! $this->hasUsableMappings($account)) return response()->json(['success' => false, 'message' => 'Создайте активный профиль с категорией и тегом отбора (или задайте тег по умолчанию в подключении).'], 422);
         $page = (int) ($data['page'] ?? 1); $perPage = (int) ($data['per_page'] ?? 10);
-        $query = $resolver->query($account, $data['good_ids'] ?? null)->orderByDesc('shop_goods.id');
+        $mappings = $resolver->mappings($account);
+        $selectedMapping = filled($data['mapping_id'] ?? null)
+            ? $mappings->firstWhere('id', (int) $data['mapping_id'])
+            : null;
+        if (filled($data['mapping_id'] ?? null) && ! $selectedMapping) {
+            return response()->json(['success' => false, 'message' => 'Профиль категории не найден или выключен.'], 422);
+        }
+        $baseQuery = $resolver->query($account, $data['good_ids'] ?? null)->orderByDesc('shop_goods.id');
+        $categoryFacets = $this->previewCategoryFacets($mappings, $account, $resolver);
+        $query = clone $baseQuery;
+        if ($selectedMapping) {
+            $tagId = $resolver->selectionTagId($selectedMapping, $account);
+            $query->whereHas('tags', fn ($tags) => $tags->where('shop_tags.id', $tagId))
+                ->whereHas('categories', fn ($categories) => $categories->whereIn('shop_categories.id', $selectedMapping->categoryIds()->all()));
+        }
         if (filled($data['search'] ?? null)) {
             $search = trim($data['search']);
             $query->where(fn ($q) => $q->where('shop_goods.name', 'like', "%{$search}%")->orWhere('shop_goods.sku', 'like', "%{$search}%")->orWhere('shop_goods.id', ctype_digit($search) ? (int) $search : 0)->orWhereHas('variations', fn ($v) => $v->where('sku', 'like', "%{$search}%")));
@@ -394,21 +413,32 @@ class ShopYandexMarketSellerController extends Controller
             ->first();
         $goodsWithVariations = (int) ($variationSummary->variation_groups_total ?? 0) + (int) ($variationSummary->single_variation_goods_total ?? 0);
         $offersTotal = (int) ($variationSummary->variations_total ?? 0) + max(0, $total - $goodsWithVariations);
-        $mappings = $resolver->mappings($account); $rows = [];
+        $rows = [];
         foreach ($query->forPage($page, $perPage)->get() as $good) {
-            $mapping = $resolver->mappingFor($good, $mappings, $account);
+            $mapping = $selectedMapping ?: $resolver->mappingFor($good, $mappings, $account);
             foreach ($resolver->rowsForGood($good, $mapping) as $row) {
                 $built = $builder->build($good, $row['variation'], $account, $mapping);
-                $built['errors'] = array_values(array_unique(array_merge($built['errors'], $row['row_errors'])));
+                $built['local_errors'] = array_values(array_unique(array_merge($built['errors'], $row['row_errors'])));
+                $built['local_categories'] = $this->goodCategoriesForMapping($good, $mapping);
                 $rows[] = $built;
             }
         }
+        $marketErrors = $this->latestMarketErrorsByOffer($account->id, array_column($rows, 'offer_id'));
+        $rows = array_map(function (array $row) use ($marketErrors) {
+            $row['market_errors'] = $marketErrors[$row['offer_id']] ?? [];
+            $row['errors'] = array_values(array_unique(array_merge(
+                $row['local_errors'],
+                array_map(fn (string $error) => "Яндекс Маркет: {$error}", $row['market_errors']),
+            )));
+            return $row;
+        }, $rows);
         return response()->json(['success' => true, 'data' => $rows, 'meta' => [
             'eligible_goods' => $total,
             'eligible_offers' => $offersTotal,
             'eligible_variations' => (int) ($variationSummary->variations_total ?? 0),
             'eligible_variation_groups' => (int) ($variationSummary->variation_groups_total ?? 0),
             'eligible_single_variation_goods' => (int) ($variationSummary->single_variation_goods_total ?? 0),
+            'category_facets' => $categoryFacets,
             'offers' => count($rows), 'offers_with_errors' => collect($rows)->filter(fn ($row) => ! empty($row['errors']))->count(),
             'current_page' => $page, 'last_page' => $lastPage, 'per_page' => $perPage,
         ]]);
@@ -432,7 +462,12 @@ class ShopYandexMarketSellerController extends Controller
         $data = $request->validate(['search' => 'nullable|string|max:255', 'status' => 'nullable|string|max:50', 'stock_filter' => 'nullable|in:zero', 'error_filter' => 'nullable|boolean', 'per_page' => 'nullable|integer|min:10|max:100']);
         $query = $this->productBindingsQuery($this->account(), $data)
             ->with(['good:id,name,sku,is_active,stock_quantity', 'variation:id,good_id,name,sku,is_active,stock_quantity']);
-        if ($data['error_filter'] ?? false) $query->whereNotNull('errors');
+        if ($data['error_filter'] ?? false) {
+            $query->where(function ($query) {
+                $query->where('status', 'error')
+                    ->orWhereRaw("JSON_LENGTH(COALESCE(errors, JSON_ARRAY())) > 0");
+            });
+        }
         return response()->json(['success' => true, 'data' => $query->paginate($data['per_page'] ?? 50)]);
     }
 
@@ -647,6 +682,93 @@ class ShopYandexMarketSellerController extends Controller
     private function hasStockCampaign(ShopYandexMarketAccount $account): bool
     {
         return (bool) $account->campaign_id || ShopYandexMarketCategoryMapping::query()->where('account_id', $account->id)->where('is_active', true)->whereNotNull('campaign_id')->exists();
+    }
+
+    /** @return array{goods: int, variations: int, variation_groups: int, offers: int} */
+    private function profileStats(ShopYandexMarketCategoryMapping $mapping, ShopYandexMarketAccount $account): array
+    {
+        $tagId = (int) ($mapping->selection_tag_id ?: $account->selection_tag_id);
+        if (! $tagId || $mapping->categoryIds()->isEmpty()) {
+            return ['goods' => 0, 'variations' => 0, 'variation_groups' => 0, 'offers' => 0];
+        }
+
+        $goods = ShopGood::query()
+            ->where('is_active', true)
+            ->whereHas('categories', fn ($query) => $query->whereIn('shop_categories.id', $mapping->categoryIds()->all()))
+            ->whereHas('tags', fn ($query) => $query->where('shop_tags.id', $tagId))
+            ->withCount(['variations as active_variations_count' => fn ($query) => $query->where('is_active', true)])
+            ->get(['id']);
+        $variations = (int) $goods->sum('active_variations_count');
+        $variationGroups = $goods->filter(fn (ShopGood $good) => $good->active_variations_count > 1)->count();
+
+        return [
+            'goods' => $goods->count(),
+            'variations' => $variations,
+            'variation_groups' => $variationGroups,
+            'offers' => $variations + $goods->where('active_variations_count', 0)->count(),
+        ];
+    }
+
+    /** @return array<int, array<string, mixed>> */
+    private function previewCategoryFacets($mappings, ShopYandexMarketAccount $account, YandexMarketProductResolver $resolver): array
+    {
+        $categoryIds = $mappings->flatMap(fn (ShopYandexMarketCategoryMapping $mapping) => $mapping->categoryIds())->unique()->values();
+        $categoryNames = ShopCategory::query()->whereIn('id', $categoryIds)->pluck('name', 'id');
+        $tagIds = $mappings->map(fn (ShopYandexMarketCategoryMapping $mapping) => $resolver->selectionTagId($mapping, $account))->filter()->unique()->values();
+        $tagNames = ShopTag::query()->whereIn('id', $tagIds)->pluck('name', 'id');
+
+        return $mappings->map(function (ShopYandexMarketCategoryMapping $mapping) use ($account, $resolver, $categoryNames, $tagNames) {
+            $stats = $this->profileStats($mapping, $account);
+            return [
+                'key' => (string) $mapping->id,
+                'mapping_id' => (int) $mapping->id,
+                'name' => $mapping->market_category_name,
+                'tag' => $tagNames[$resolver->selectionTagId($mapping, $account)] ?? null,
+                'goods' => $stats['goods'],
+                'variations' => $stats['variations'],
+                'offers' => $stats['offers'],
+                'local_categories' => $mapping->categoryIds()->map(fn ($id) => ['id' => (int) $id, 'name' => $categoryNames[$id] ?? "ID {$id}"])->values()->all(),
+            ];
+        })->values()->all();
+    }
+
+    /** @return array<int, array{id: int, name: string}> */
+    private function goodCategoriesForMapping(ShopGood $good, ?ShopYandexMarketCategoryMapping $mapping): array
+    {
+        if (! $mapping) {
+            return [];
+        }
+
+        return $good->categories
+            ->filter(fn (ShopCategory $category) => $mapping->categoryIds()->contains((int) $category->id))
+            ->map(fn (ShopCategory $category) => ['id' => (int) $category->id, 'name' => $category->name])
+            ->values()
+            ->all();
+    }
+
+    /** @return array<string, array<int, string>> */
+    private function latestMarketErrorsByOffer(int $accountId, array $offerIds): array
+    {
+        $offerIds = array_values(array_filter(array_unique($offerIds)));
+        if (! $offerIds) {
+            return [];
+        }
+
+        $latestItemIds = DB::table('shop_yandex_market_sync_items as items')
+            ->join('shop_yandex_market_sync_runs as runs', 'runs.id', '=', 'items.run_id')
+            ->where('runs.account_id', $accountId)
+            ->where('runs.type', 'products')
+            ->whereIn('items.offer_id', $offerIds)
+            ->groupBy('items.offer_id')
+            ->selectRaw('MAX(items.id) as id')
+            ->pluck('id');
+
+        return ShopYandexMarketSyncItem::query()
+            ->whereIn('id', $latestItemIds)
+            ->get(['offer_id', 'errors'])
+            ->filter(fn (ShopYandexMarketSyncItem $item) => ! empty($item->errors))
+            ->mapWithKeys(fn (ShopYandexMarketSyncItem $item) => [$item->offer_id => array_values((array) $item->errors)])
+            ->all();
     }
     private function accountData(ShopYandexMarketAccount $account): array { return array_merge($account->toArray(), ['has_api_key' => filled($account->api_key), 'api_key' => '']); }
     private function campaignData(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'domain' => $item['domain'] ?? $item['name'] ?? '', 'business_id' => (int) data_get($item, 'business.id', $item['businessId'] ?? 0), 'business_name' => data_get($item, 'business.name', ''), 'placement_type' => $item['placementType'] ?? '', 'api_availability' => $item['apiAvailability'] ?? 'AVAILABLE']; }

@@ -37,11 +37,11 @@ class YandexMarketPayloadBuilder
                 'type' => 'CUSTOMS_COMMODITY_CODE',
                 'code' => $parameters['customsCommodityCode'],
             ]] : null,
-            'basicPrice' => [
+            'basicPrice' => array_filter([
                 'value' => $price['final'],
-                'discountBase' => $price['old_price'] ?: null,
+                'discountBase' => $price['discount_base'],
                 'currencyId' => 'RUR',
-            ],
+            ], fn ($value) => $value !== null),
         ];
         $offer = array_filter($offer, fn ($value) => $value !== null && $value !== '' && $value !== []);
 
@@ -52,6 +52,9 @@ class YandexMarketPayloadBuilder
         if ($offer['vendor'] === '') $errors[] = 'Не заполнен бренд.';
         if (empty($offer['pictures'])) $errors[] = 'Не добавлено изображение.';
         if ($price['final'] <= 0) $errors[] = 'Цена должна быть больше нуля.';
+        if ($price['old_price'] && $price['discount_base'] === null) {
+            $errors[] = "Скидка {$price['discount_percent']}% не будет принята Яндекс Маркетом: допустим диапазон от 5% до 99%.";
+        }
         foreach ($dimensions as $key => $value) if ($value <= 0) $errors[] = 'Не заполнены вес и габариты товара.';
         foreach ($parameters['missing'] as $name) $errors[] = "Не заполнена обязательная характеристика: {$name}.";
 
@@ -85,7 +88,7 @@ class YandexMarketPayloadBuilder
     {
         $price = $this->priceSummary($good, $variation, $mapping);
         return ['offerId' => $this->offerId($good, $variation, $account), 'price' => array_filter([
-            'value' => $price['final'], 'discountBase' => $price['old_price'] ?: null, 'currencyId' => 'RUR',
+            'value' => $price['final'], 'discountBase' => $price['discount_base'], 'currencyId' => 'RUR',
         ], fn ($value) => $value !== null)];
     }
 
@@ -203,7 +206,22 @@ class YandexMarketPayloadBuilder
         $sale = (float) round($sale);
         $dumping = (float) round($dumping);
         $final = $source === 'dumping' ? $dumping : ($source === 'sale' ? $sale : $base);
-        return ['base' => $base, 'sale' => $sale ?: null, 'dumping' => $dumping ?: null, 'source' => $source, 'final' => $final, 'old_price' => $base > $final ? $base : null];
+        $oldPrice = $base > $final ? $base : null;
+        $discountPercent = $oldPrice ? round((($oldPrice - $final) / $oldPrice) * 100, 2) : null;
+        $discountBase = $discountPercent !== null && $discountPercent >= 5 && $discountPercent <= 99
+            ? $oldPrice
+            : null;
+
+        return [
+            'base' => $base,
+            'sale' => $sale ?: null,
+            'dumping' => $dumping ?: null,
+            'source' => $source,
+            'final' => $final,
+            'old_price' => $oldPrice,
+            'discount_percent' => $discountPercent,
+            'discount_base' => $discountBase,
+        ];
     }
 
     private function adjust(float $price, ?array $rule): float
