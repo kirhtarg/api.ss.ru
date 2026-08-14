@@ -588,7 +588,7 @@ class BikeproductsCatalogService
             return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Поля товаров обновлены', 'log' => $actionLog];
         }
 
-        if (in_array($scope, ['prices', 'stocks'], true)) {
+        if (in_array($scope, ['prices', 'stocks', 'zero_stocks'], true)) {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'good')->where('is_check_enabled', true)->get();
             $targets = $scope === 'prices'
                 ? ['price', 'sale_price', 'demping_price']
@@ -622,16 +622,30 @@ class BikeproductsCatalogService
                     }
                     $match = $priceStockMatches->get($sourceSku);
                     if (! $match) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_match_not_found', ['scope' => $scope, 'source_sku' => $sourceSku]); continue; }
-                    $values = collect($this->mappedGoodAttributes($item, $mappings))->only($targets)->all();
+                    $values = $scope === 'zero_stocks'
+                        ? $mappings
+                            ->filter(function (SupplierCatalogFieldMapping $mapping) use ($item, $targets): bool {
+                                $target = (string) data_get($mapping->conditions, 'target');
+
+                                return in_array($target, $targets, true)
+                                    && $this->isEmptyStockValue($item->raw_payload[$mapping->source_field] ?? null);
+                            })
+                            ->mapWithKeys(function (SupplierCatalogFieldMapping $mapping): array {
+                                $target = (string) data_get($mapping->conditions, 'target');
+
+                                return [$target => $target === 'stock_quantity' ? 0 : null];
+                            })
+                            ->all()
+                        : collect($this->mappedGoodAttributes($item, $mappings))->only($targets)->all();
                     if ($values === []) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_mapped_values', ['scope' => $scope, 'source_sku' => $sourceSku, 'targets' => $targets]); continue; }
                     $model = $match['model'];
                     $fieldChanges = $this->modelFieldChanges($model, $values);
                     $model->update($values);
                     $affected++;
-                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', $scope === 'prices' ? 'mapped_prices_updated' : 'mapped_stocks_updated', ['scope' => $scope, 'match_type' => $match['type'], 'good_id' => $match['type'] === 'variation' ? $model->good_id : $model->id, 'variation_id' => $match['type'] === 'variation' ? $model->id : null, 'fields' => $fieldChanges]);
+                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', $scope === 'prices' ? 'mapped_prices_updated' : ($scope === 'zero_stocks' ? 'mapped_stocks_zeroed' : 'mapped_stocks_updated'), ['scope' => $scope, 'match_type' => $match['type'], 'good_id' => $match['type'] === 'variation' ? $model->good_id : $model->id, 'variation_id' => $match['type'] === 'variation' ? $model->id : null, 'fields' => $fieldChanges]);
                 }
             });
-            return ['affected' => $affected, 'skipped' => $skipped, 'message' => $scope === 'prices' ? 'Цены обновлены' : 'Остатки обновлены', 'log' => $actionLog];
+            return ['affected' => $affected, 'skipped' => $skipped, 'message' => $scope === 'prices' ? 'Цены обновлены' : ($scope === 'zero_stocks' ? 'Остатки обнулены' : 'Остатки обновлены'), 'log' => $actionLog];
         }
         if ($scope === 'properties') {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'product')->where('is_check_enabled', true)->whereNotNull('property_id')->get();
@@ -3242,6 +3256,15 @@ class BikeproductsCatalogService
                 ->groupBy($groupKey)
                 ->count();
         };
+        $countStockStateGroups = function (array $statuses) use ($statsRows, $groupKey, $stockFields): int {
+            return $statsRows
+                ->filter(fn (array $row) => collect($row['differences'])->contains(
+                    fn (array $difference) => in_array($difference['field'], $stockFields, true)
+                        && in_array($difference['status'], $statuses, true),
+                ))
+                ->groupBy($groupKey)
+                ->count();
+        };
         if ($paginateByGood) {
             $groups = $allRows->groupBy(fn (array $row) => $row['database_good_id'] ? 'good-'.$row['database_good_id'] : 'source-'.$row['external_sku']);
             $total = $groups->count();
@@ -3257,6 +3280,8 @@ class BikeproductsCatalogService
             'stats' => [
                 'price_differences' => $countDifferenceGroups($priceFields),
                 'stock_differences' => $countDifferenceGroups($stockFields),
+                'source_empty_stocks' => $countStockStateGroups(['source_empty', 'empty_both']),
+                'database_empty_stocks' => $countStockStateGroups(['database_empty', 'empty_both']),
                 'goods_with_differences' => $statsRows
                     ->filter(fn (array $row) => collect($row['differences'])->contains(
                         fn (array $difference) => in_array($difference['field'], array_merge($priceFields, $stockFields), true)
@@ -3266,7 +3291,7 @@ class BikeproductsCatalogService
                     ->count(),
                 'synchronized' => $statsRows
                     ->filter(fn (array $row) => collect($row['differences'])->every(
-                        fn (array $difference) => in_array($difference['status'], ['match', 'not_mapped'], true),
+                        fn (array $difference) => in_array($difference['status'], ['match', 'not_mapped', 'empty_both'], true),
                     ))
                     ->groupBy($groupKey)
                     ->count(),

@@ -571,7 +571,7 @@ class BikeproductsCatalogController extends Controller
             return $response;
         }
         $data = $request->validate([
-            'scope' => ['required', 'in:goods,prices,stocks,properties,images'],
+            'scope' => ['required', 'in:goods,prices,stocks,zero_stocks,properties,images'],
             'item_ids' => ['required', 'array', 'min:1', 'max:10000'],
             'item_ids.*' => ['integer', 'distinct'],
             'image_mode' => ['nullable', 'in:append,replace,reconcile,prune,delete_broken'],
