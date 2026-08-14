@@ -403,7 +403,7 @@ class BikeproductsCatalogController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'search' => ['nullable', 'string', 'max:120'],
             'statuses' => ['nullable', 'array', 'max:1'],
-            'statuses.*' => ['string', 'in:match,source_missing_in_database,database_missing_in_source,content,visual,broken,broken_database_filename'],
+            'statuses.*' => ['string', 'in:match,source_missing_in_database,database_missing_in_source,content,visual,source_broken,database_broken,broken_database_filename'],
         ]);
         return response()->json(['success' => true, 'data' => $this->cachedAudit(
             $snapshot,
@@ -764,7 +764,7 @@ class BikeproductsCatalogController extends Controller
         $version = $snapshot->updated_at?->format('Uu') ?? '0';
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v34:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v35:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.

@@ -2560,6 +2560,7 @@ class BikeproductsCatalogService
             $brokenSourceCount = (int) ($sourceStatusCounts['broken'] ?? 0);
             $unsupportedSourceCount = (int) ($sourceStatusCounts['unsupported'] ?? 0);
             $hasUnavailableSource = ($brokenSourceCount + $unsupportedSourceCount) > 0;
+            $hasBrokenSource = $hasUnavailableSource;
             $hasAvailableSource = $contentAuditStatus['status'] === 'completed' ? $availableSourceCount > 0 : $sourceTotalCount > 0;
             // A row containing only unavailable supplier URLs is a supplier
             // link error, not an image difference that can be repaired from
@@ -2600,6 +2601,8 @@ class BikeproductsCatalogService
                 'unsupported_source_count' => $unsupportedSourceCount,
                 'has_available_source' => $hasAvailableSource,
                 'has_unavailable_source' => $hasUnavailableSource,
+                'has_broken_source' => $hasBrokenSource,
+                'has_broken_database' => $databaseBrokenPaths !== [],
                 'has_only_unavailable_source' => $hasOnlyUnavailableSource,
                 'database_count' => $actualCount,
                 'is_match' => $isMatch,
@@ -2658,6 +2661,8 @@ class BikeproductsCatalogService
             'normalized_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'normalized')->count(),
             'broken_source_urls' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('source_status', 'broken')->count(),
             'broken_database_urls' => collect($imageComparisons)->flatMap(fn (array $row) => $row['database_broken_paths'] ?? [])->count(),
+            'broken_source_items' => collect($imageComparisons)->where('has_broken_source', true)->count(),
+            'broken_database_items' => collect($imageComparisons)->where('has_broken_database', true)->count(),
             'broken_database_filename_matches' => collect($imageComparisons)
                 ->where('has_broken_database_filename_match', true)
                 ->count(),
@@ -2675,8 +2680,11 @@ class BikeproductsCatalogService
                     if ($status === 'database_missing_in_source') {
                         return (bool) ($row['has_database_missing_in_source'] ?? false);
                     }
-                    if ($status === 'broken') {
-                        return collect($row['image_pairs'])->contains(fn (array $pair) => $pair['source_status'] === 'broken') || ! empty($row['database_broken_paths']);
+                    if ($status === 'source_broken') {
+                        return (bool) ($row['has_broken_source'] ?? false);
+                    }
+                    if ($status === 'database_broken') {
+                        return (bool) ($row['has_broken_database'] ?? false);
                     }
                     if ($status === 'broken_database_filename') {
                         return (bool) ($row['has_broken_database_filename_match'] ?? false);
