@@ -15,17 +15,23 @@ class SyncSupplierCatalogImagesJob implements ShouldQueue
 
     public int $timeout = 1800;
     public int $tries = 2;
+    private string $mode = 'append';
 
     /** @param array<int, int> $itemIds */
-    public function __construct(private readonly int $snapshotId, private readonly array $itemIds)
+    public function __construct(
+        private readonly int $snapshotId,
+        private readonly array $itemIds,
+        string $mode = 'append',
+    )
     {
+        $this->mode = $mode;
         // Use the default queue worker already configured for the API.
         // A dedicated images-download worker is not a deployment requirement.
     }
 
     public function handle(BikeproductsCatalogService $catalog): void
     {
-        $catalog->downloadAttachedImages($this->snapshotId, $this->itemIds);
+        $catalog->downloadAttachedImages($this->snapshotId, $this->itemIds, $this->mode);
     }
 
     public function failed(\Throwable $exception): void
@@ -33,6 +39,7 @@ class SyncSupplierCatalogImagesJob implements ShouldQueue
         \Log::error('Supplier image sync job failed', [
             'snapshot_id' => $this->snapshotId,
             'item_ids' => $this->itemIds,
+            'mode' => $this->mode,
             'error' => $exception->getMessage(),
         ]);
     }

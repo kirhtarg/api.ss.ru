@@ -584,7 +584,7 @@ class BikeproductsCatalogController extends Controller
             && $result['affected'] > 0
             && in_array($imageMode, ['append', 'replace', 'reconcile'], true)
         ) {
-            $jobs = $this->dispatchImageSyncJobs($snapshot, $data['item_ids']);
+            $jobs = $this->dispatchImageSyncJobs($snapshot, $data['item_ids'], $imageMode);
             $result['message'] .= ". Скачивание файлов запущено в очереди: {$jobs} задач";
         }
 
@@ -599,7 +599,7 @@ class BikeproductsCatalogController extends Controller
      *
      * @param array<int, int> $itemIds
      */
-    private function dispatchImageSyncJobs(SupplierCatalogSnapshot $snapshot, array $itemIds): int
+    private function dispatchImageSyncJobs(SupplierCatalogSnapshot $snapshot, array $itemIds, string $mode = 'append'): int
     {
         $ids = array_values(array_unique(array_filter(
             array_map(static fn ($id) => (int) $id, $itemIds),
@@ -607,7 +607,7 @@ class BikeproductsCatalogController extends Controller
         )));
 
         foreach (array_chunk($ids, 10) as $chunk) {
-            SyncSupplierCatalogImagesJob::dispatch($snapshot->id, $chunk);
+            SyncSupplierCatalogImagesJob::dispatch($snapshot->id, $chunk, $mode);
         }
 
         return (int) ceil(count($ids) / 10);

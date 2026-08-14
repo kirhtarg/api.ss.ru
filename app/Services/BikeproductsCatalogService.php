@@ -39,7 +39,7 @@ class BikeproductsCatalogService
     private array $variationAttributeIds = [];
 
     /** @param array<int, int> $itemIds */
-    public function downloadAttachedImages(int $snapshotId, array $itemIds): void
+    public function downloadAttachedImages(int $snapshotId, array $itemIds, string $mode = 'append'): void
     {
         $snapshot = SupplierCatalogSnapshot::find($snapshotId);
         if (! $snapshot || $snapshot->status !== 'ready') {
@@ -77,15 +77,20 @@ class BikeproductsCatalogService
                 Log::warning('Supplier image sync skipped: parent good missing', ['snapshot_id' => $snapshotId, 'item_id' => $item->id, 'sku' => $item->external_sku]);
                 continue;
             }
-            foreach ($this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl) as $source) {
+            $sources = $this->imageSourcesForItem($item, $imageSourceFields, $imageBaseUrl);
+            $downloadedPaths = [];
+            $replaceCanPrune = $mode === 'replace' && $sources !== [];
+            foreach ($sources as $source) {
                 $url = $source['url'];
                 if ($contentAudit['status'] === 'completed' && ! $sourceAudits->has($this->sourceUrlHash($url))) {
                     $skipped++;
+                    $replaceCanPrune = false;
                     Log::warning('Supplier image sync skipped: source audit is not available', ['snapshot_id' => $snapshotId, 'item_id' => $item->id, 'sku' => $item->external_sku, 'url' => $url]);
                     continue;
                 }
                 if (! str_starts_with($url, 'http')) {
                     $skipped++;
+                    $replaceCanPrune = false;
                     continue;
                 }
                 $ownerImages = $variation
@@ -119,6 +124,7 @@ class BikeproductsCatalogService
                         'image_height' => $processed['height'],
                         'content_checked_at' => now(),
                     ];
+                    $downloadedPaths[] = $metadata['file_path'];
                     $existingLocalImages = (clone $ownerImages)
                         ->where('file_path', 'not like', 'http%')
                         ->get();
@@ -152,6 +158,7 @@ class BikeproductsCatalogService
                     $downloadedAny = true;
                 } catch (\Throwable $exception) {
                     $failed++;
+                    $replaceCanPrune = false;
                     // Never leave an external supplier URL in the shop data
                     // after an unsuccessful worker attempt.
                     if ($pendingExternalImages->isNotEmpty()) {
@@ -159,6 +166,18 @@ class BikeproductsCatalogService
                     }
                     Log::warning('Supplier image download failed', ['snapshot_id' => $snapshotId, 'sku' => $item->external_sku, 'url' => $url, 'error' => $exception->getMessage()]);
                 }
+            }
+            // "Replace" is deliberately finalised only after every source
+            // file for this owner has been downloaded and saved locally. This
+            // keeps existing bindings intact when the queue is delayed or a
+            // supplier URL fails instead of leaving a product without images.
+            if ($replaceCanPrune && $downloadedPaths !== []) {
+                $ownerImages = $variation
+                    ? ShopGoodImage::query()->where('variation_id', $variation->id)
+                    : ShopGoodImage::query()->where('good_id', $good->id)->whereNull('variation_id');
+                (clone $ownerImages)
+                    ->whereNotIn('file_path', array_values(array_unique($downloadedPaths)))
+                    ->delete();
             }
         }
         if ($downloadedAny) {
@@ -685,9 +704,11 @@ class BikeproductsCatalogService
                         continue;
                     }
                     if ($imageMode === 'replace') {
-                        $deletedPaths = $existingImages->pluck('file_path')->values()->all();
-                        $query->delete();
-                        $existingImages = collect();
+                        // Do not delete current bindings here. Files are
+                        // downloaded asynchronously, therefore the worker
+                        // removes stale bindings only after it has saved every
+                        // available source image for this owner.
+                        $deletedPaths = [];
                         $existing = [];
                     }
                     if (in_array($imageMode, ['append', 'reconcile'], true) && $brokenExistingImages->isNotEmpty()) {
@@ -767,7 +788,7 @@ class BikeproductsCatalogService
                 }
             });
             return ['affected' => $affected, 'skipped' => $skipped, 'message' => match ($imageMode) {
-                'replace' => 'Привязки изображений заменены',
+                'replace' => 'Замена привязок изображений поставлена в очередь',
                 'reconcile' => 'Лишние привязки удалены, недостающие изображения добавлены',
                 'prune' => 'Лишние привязки изображений удалены',
                 'delete_broken' => 'Битые привязки изображений удалены',
