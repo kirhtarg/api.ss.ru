@@ -4,6 +4,7 @@ namespace App\Services\YandexMarket;
 
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
+use App\Models\Setting;
 use App\Models\ShopYandexMarketAccount;
 use App\Models\ShopYandexMarketCategoryMapping;
 use App\Models\ShopYandexMarketProductBinding;
@@ -12,6 +13,8 @@ class YandexMarketPayloadBuilder
 {
     /** @var array<int, array<string, string>> */
     private array $offerIdsByAccount = [];
+    private ?string $siteLogo = null;
+    private bool $siteLogoResolved = false;
 
     public function __construct(private readonly YandexMarketProductResolver $resolver) {}
 
@@ -54,7 +57,11 @@ class YandexMarketPayloadBuilder
         if (! $offer['marketCategoryId']) $errors[] = 'Не выбрана категория Яндекс Маркета.';
         if ($offer['name'] === '') $errors[] = 'Не заполнено название.';
         if ($offer['vendor'] === '') $errors[] = 'Не заполнен бренд.';
-        if (empty($offer['pictures'])) $errors[] = 'Не добавлено изображение.';
+        if (empty($offer['pictures'])) {
+            $errors[] = 'Нет изображения и не настроен логотип сайта для резервной передачи.';
+        } elseif ($media['uses_placeholder']) {
+            $warnings[] = 'Нет собственного изображения: в Яндекс Маркет передается логотип сайта.';
+        }
         if ($price['final'] <= 0) $errors[] = 'Цена должна быть больше нуля.';
         if ($price['old_price'] && $price['discount_base'] === null) {
             $warnings[] = "Скидка {$price['discount_percent']}% не передается в Яндекс Маркет: допустим диапазон от 5% до 99%.";
@@ -81,7 +88,7 @@ class YandexMarketPayloadBuilder
             'dimensions_summary' => ['values' => $dimensions, 'sent' => $hasDimensions],
             'weight_dimensions' => $offer['weightDimensions'] ?? null,
             'variation_group_id' => $parameters['variation_group_name'] ?? null,
-            'media_summary' => ['count' => count($media['pictures']), 'primary' => $media['pictures'][0] ?? null],
+            'media_summary' => ['count' => count($media['pictures']), 'primary' => $media['pictures'][0] ?? null, 'uses_placeholder' => $media['uses_placeholder']],
             'offer_mapping' => ['offer' => $offer],
             'category_parameter_values' => $parameters['payload'],
             'errors' => array_values(array_unique($errors)),
@@ -282,7 +289,28 @@ class YandexMarketPayloadBuilder
         $source = $variation && $variation->images->isNotEmpty() ? $variation->images : $good->images;
         $pictures = $source->sortBy(fn ($image) => sprintf('%d-%09d-%09d', $image->is_main ? 0 : 1, $image->sort_order, $image->id))
             ->map(fn ($image) => $this->imageUrl((string) $image->url, $account))->filter()->unique()->take(20)->values()->all();
-        return compact('pictures');
+        $usesPlaceholder = false;
+        if (! $pictures && ($logo = $this->siteLogoUrl($account))) {
+            $pictures[] = $logo;
+            $usesPlaceholder = true;
+        }
+        return ['pictures' => $pictures, 'uses_placeholder' => $usesPlaceholder];
+    }
+
+    private function siteLogoUrl(ShopYandexMarketAccount $account): ?string
+    {
+        if (! $this->siteLogoResolved) {
+            $settings = Setting::query()->whereIn('key', ['main_site', 'site_logo'])->pluck('value', 'key');
+            $logo = trim((string) ($settings['site_logo'] ?? ''));
+            if ($logo !== '') {
+                $this->siteLogo = preg_match('~^https?://~i', $logo)
+                    ? $logo
+                    : rtrim((string) ($settings['main_site'] ?? $account->image_base_url), '/').'/'.ltrim($logo, '/');
+            }
+            $this->siteLogoResolved = true;
+        }
+
+        return filter_var($this->siteLogo, FILTER_VALIDATE_URL) ? $this->siteLogo : null;
     }
 
     private function imageUrl(string $url, ShopYandexMarketAccount $account): ?string

@@ -2614,6 +2614,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/mappings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'saveMapping']);
                 Route::delete('/mappings/{mapping}', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'deleteMapping']);
                 Route::post('/preview', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'preview']);
+                Route::post('/preview/clear-market-responses', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'clearMarketResponses']);
                 Route::post('/sync', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'startSync']);
                 Route::get('/products', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'products']);
                 Route::post('/products/refresh', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'refreshProducts']);

@@ -375,7 +375,7 @@ class ShopYandexMarketSellerController extends Controller
 
     public function preview(Request $request, YandexMarketPayloadBuilder $builder, YandexMarketProductResolver $resolver)
     {
-        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:50', 'search' => 'nullable|string|max:255', 'good_ids' => 'nullable|array|max:100', 'good_ids.*' => 'integer', 'mapping_id' => 'nullable|integer|min:1', 'errors_only' => 'nullable|boolean', 'error_types' => 'nullable|array', 'error_types.*' => 'in:image,required,price,discount,category,market,other']);
+        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:50', 'search' => 'nullable|string|max:255', 'good_ids' => 'nullable|array|max:100', 'good_ids.*' => 'integer', 'mapping_id' => 'nullable|integer|min:1', 'errors_only' => 'nullable|boolean', 'stock_zero' => 'nullable|boolean', 'error_types' => 'nullable|array', 'error_types.*' => 'in:image,required,price,discount,category,market,other']);
         $account = $this->account();
         if (! $this->hasUsableMappings($account)) return response()->json(['success' => false, 'message' => 'Создайте активный профиль с категорией и тегом отбора (или задайте тег по умолчанию в подключении).'], 422);
         $page = (int) ($data['page'] ?? 1); $perPage = (int) ($data['per_page'] ?? 10);
@@ -394,10 +394,6 @@ class ShopYandexMarketSellerController extends Controller
             $query->whereHas('tags', fn ($tags) => $tags->where('shop_tags.id', $tagId))
                 ->whereHas('categories', fn ($categories) => $categories->whereIn('shop_categories.id', $selectedMapping->categoryIds()->all()));
         }
-        if (filled($data['search'] ?? null)) {
-            $search = trim($data['search']);
-            $query->where(fn ($q) => $q->where('shop_goods.name', 'like', "%{$search}%")->orWhere('shop_goods.sku', 'like', "%{$search}%")->orWhere('shop_goods.id', ctype_digit($search) ? (int) $search : 0)->orWhereHas('variations', fn ($v) => $v->where('sku', 'like', "%{$search}%")));
-        }
         $total = (clone $query)->count(); $lastPage = max(1, (int) ceil($total / $perPage)); $page = min($page, $lastPage);
         $eligibleIds = (clone $query)->reorder()->select('shop_goods.id');
         $variationSummary = DB::query()->fromSub(
@@ -414,6 +410,7 @@ class ShopYandexMarketSellerController extends Controller
         $goodsWithVariations = (int) ($variationSummary->variation_groups_total ?? 0) + (int) ($variationSummary->single_variation_goods_total ?? 0);
         $offersTotal = (int) ($variationSummary->variations_total ?? 0) + max(0, $total - $goodsWithVariations);
         $allRows = [];
+        $placeholderImage = $this->siteLogoUrl();
         $goods = $query->get();
         foreach ($goods as $good) {
             $mapping = $selectedMapping ?: $resolver->mappingFor($good, $mappings, $account);
@@ -421,9 +418,24 @@ class ShopYandexMarketSellerController extends Controller
                 $built = $builder->build($good, $row['variation'], $account, $mapping);
                 $built['local_errors'] = array_values(array_unique(array_merge($built['errors'], $row['row_errors'])));
                 $built['local_warnings'] = $built['warnings'] ?? [];
+                $built['media_summary']['placeholder'] = $placeholderImage;
                 $built['local_categories'] = $this->goodCategoriesForMapping($good, $mapping);
                 $allRows[] = $built;
             }
+        }
+        if (filled($data['search'] ?? null)) {
+            $search = (string) $data['search'];
+            $allRows = array_values(array_filter($allRows, fn (array $row) => $this->previewSearchMatches($row, $search)));
+            $matchedGoodIds = collect($allRows)->pluck('good_id')->map(fn ($id) => (int) $id)->unique();
+            $goods = $goods->filter(fn (ShopGood $good) => $matchedGoodIds->contains((int) $good->id))->values();
+            $total = $goods->count();
+            $offersTotal = count($allRows);
+            $variationCounts = collect($allRows)->groupBy('good_id')->map(fn ($rows) => $rows->filter(fn (array $row) => ! empty($row['variation_id']))->count());
+            $variationSummary = (object) [
+                'variations_total' => $variationCounts->sum(),
+                'variation_groups_total' => $variationCounts->filter(fn ($count) => $count > 1)->count(),
+                'single_variation_goods_total' => $variationCounts->filter(fn ($count) => $count === 1)->count(),
+            ];
         }
         $marketErrors = $this->latestMarketErrorsByOffer($account->id, array_column($allRows, 'offer_id'));
         $allRows = array_map(function (array $row) use ($marketErrors) {
@@ -435,18 +447,36 @@ class ShopYandexMarketSellerController extends Controller
             $row['error_types'] = $this->previewErrorTypes($row);
             return $row;
         }, $allRows);
+        $allGoods = collect($allRows)->groupBy('good_id');
+        $validRows = collect($allRows)->filter(fn (array $row) => empty($row['errors']));
+        $validGoods = $allGoods->filter(fn ($rows) => $rows->every(fn (array $row) => empty($row['errors'])));
+        $validVariationRows = $validRows->filter(fn (array $row) => ! empty($row['variation_id']));
+        $validVariationGoods = $validGoods->filter(fn ($rows) => $rows->contains(fn (array $row) => ! empty($row['variation_id'])));
+        $validSimpleGoods = $validGoods->filter(fn ($rows) => $rows->every(fn (array $row) => empty($row['variation_id'])));
         $errorTypes = array_values(array_unique($data['error_types'] ?? []));
+        $stockZero = (bool) ($data['stock_zero'] ?? false);
         $filteredGoodIds = collect($allRows)
-            ->filter(fn (array $row) => (! empty($row['errors']) || ! empty($row['local_warnings'])) && (! $errorTypes || array_intersect($row['error_types'], $errorTypes)))
+            ->filter(function (array $row) use ($stockZero, $data, $errorTypes) {
+                if ($stockZero && (int) $row['stock'] !== 0) {
+                    return false;
+                }
+                if (! ($data['errors_only'] ?? false) && ! $errorTypes) {
+                    return true;
+                }
+                if (empty($row['errors']) && empty($row['local_warnings'])) {
+                    return false;
+                }
+                return ! $errorTypes || ! empty(array_intersect($row['error_types'], $errorTypes));
+            })
             ->pluck('good_id')->map(fn ($id) => (int) $id)->unique()->all();
-        $displayGoods = (($data['errors_only'] ?? false) || $errorTypes)
+        $displayGoods = (($data['errors_only'] ?? false) || $errorTypes || $stockZero)
             ? $goods->filter(fn (ShopGood $good) => in_array((int) $good->id, $filteredGoodIds, true))->values()
             : $goods;
         $displayTotal = $displayGoods->count();
         $displayLastPage = max(1, (int) ceil($displayTotal / $perPage));
         $page = min($page, $displayLastPage);
         $pageGoodIds = $displayGoods->forPage($page, $perPage)->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $rows = array_values(array_filter($allRows, fn (array $row) => in_array((int) $row['good_id'], $pageGoodIds, true)));
+        $rows = array_values(array_filter($allRows, fn (array $row) => in_array((int) $row['good_id'], $pageGoodIds, true) && (! $stockZero || (int) $row['stock'] === 0)));
         return response()->json(['success' => true, 'data' => $rows, 'meta' => [
             'eligible_goods' => $total,
             'eligible_offers' => $offersTotal,
@@ -455,8 +485,14 @@ class ShopYandexMarketSellerController extends Controller
             'eligible_single_variation_goods' => (int) ($variationSummary->single_variation_goods_total ?? 0),
             'category_facets' => $categoryFacets,
             'offers' => count($rows),
-            'offers_with_errors' => collect($allRows)->filter(fn ($row) => ! empty($row['errors']))->count(),
-            'offers_with_errors_on_page' => collect($rows)->filter(fn ($row) => ! empty($row['errors']))->count(),
+            'offers_with_errors' => collect($allRows)->filter(fn ($row) => ! empty($row['errors']) || ! empty($row['local_warnings']))->count(),
+            'offers_with_errors_on_page' => collect($rows)->filter(fn ($row) => ! empty($row['errors']) || ! empty($row['local_warnings']))->count(),
+            'zero_stock_offers' => collect($allRows)->filter(fn (array $row) => (int) $row['stock'] === 0)->count(),
+            'valid_offers' => $validRows->count(),
+            'valid_goods' => $validGoods->count(),
+            'valid_variations' => $validVariationRows->count(),
+            'valid_variation_groups' => $validVariationGoods->count(),
+            'valid_goods_without_variations' => $validSimpleGoods->count(),
             'error_type_counts' => collect($allRows)->flatMap(fn (array $row) => collect($row['error_types'] ?? [])->map(fn ($type) => ['type' => $type, 'offer_id' => $row['offer_id']]))
                 ->groupBy('type')->map(fn ($items) => $items->pluck('offer_id')->unique()->count())->all(),
             'current_page' => $page, 'last_page' => $displayLastPage, 'per_page' => $perPage,
@@ -465,21 +501,40 @@ class ShopYandexMarketSellerController extends Controller
 
     public function startSync(Request $request)
     {
-        $data = $request->validate(['mode' => 'required|in:products,prices,stocks', 'good_ids' => 'nullable|array', 'good_ids.*' => 'integer|exists:shop_goods,id']);
+        $data = $request->validate(['mode' => 'required|in:products,prices,stocks', 'purpose' => 'nullable|in:upload,validation', 'good_ids' => 'nullable|array', 'good_ids.*' => 'integer|exists:shop_goods,id']);
         $account = $this->account();
         if (! $this->hasUsableMappings($account)) return response()->json(['success' => false, 'message' => 'Создайте активный профиль с категорией и тегом отбора (или задайте тег по умолчанию в подключении).'], 422);
         if (! $account->business_id) return response()->json(['success' => false, 'message' => 'Сначала проверьте подключение и выберите кабинет.'], 422);
         if ($data['mode'] === 'stocks' && ! $this->hasStockCampaign($account)) return response()->json(['success' => false, 'message' => 'Укажите магазин/склад Маркета хотя бы в одном активном профиле или в настройках подключения по умолчанию.'], 422);
-        [$run, $created] = $this->startRun($account, $request->user()?->id, ['type' => $data['mode'], 'good_ids' => $data['good_ids'] ?? null]);
+        [$run, $created] = $this->startRun($account, $request->user()?->id, ['type' => $data['mode'], 'good_ids' => $data['good_ids'] ?? null, 'meta' => ['purpose' => $data['purpose'] ?? 'upload']]);
         if (! $created) return response()->json(['success' => true, 'message' => 'Операция уже выполняется.', 'data' => $run], 202);
         ProcessYandexMarketSellerSyncJob::dispatch($run->id);
-        return response()->json(['success' => true, 'message' => 'Синхронизация поставлена в очередь.', 'data' => $run], 202);
+        $message = ($data['purpose'] ?? null) === 'validation'
+            ? 'Проверка офферов через API Яндекс Маркета поставлена в очередь.'
+            : 'Синхронизация поставлена в очередь.';
+        return response()->json(['success' => true, 'message' => $message, 'data' => $run], 202);
+    }
+
+    public function clearMarketResponses()
+    {
+        $account = $this->account();
+        $bindings = ShopYandexMarketProductBinding::query()->where('account_id', $account->id);
+        $bindingsCount = (clone $bindings)->where(fn ($query) => $query->whereNotNull('errors')->orWhereNotNull('warnings')->orWhereNotNull('remote_payload'))->count();
+        $bindings->update(['errors' => null, 'warnings' => null, 'remote_payload' => null]);
+
+        $runIds = ShopYandexMarketSyncRun::query()->where('account_id', $account->id)->whereIn('type', ['products', 'readback'])->pluck('id');
+        $items = ShopYandexMarketSyncItem::query()->whereIn('run_id', $runIds);
+        $itemsCount = (clone $items)->where(fn ($query) => $query->whereNotNull('errors')->orWhereNotNull('response_payload'))->count();
+        $items->update(['errors' => null, 'response_payload' => null]);
+
+        return response()->json(['success' => true, 'message' => "Очищены ответы Яндекс Маркета: привязок {$bindingsCount}, записей журнала {$itemsCount}."]);
     }
 
     public function products(Request $request)
     {
-        $data = $request->validate(['search' => 'nullable|string|max:255', 'status' => 'nullable|string|max:50', 'stock_filter' => 'nullable|in:zero', 'error_filter' => 'nullable|boolean', 'per_page' => 'nullable|integer|min:10|max:100']);
-        $query = $this->productBindingsQuery($this->account(), $data)
+        $data = $request->validate(['search' => 'nullable|string|max:255', 'status' => 'nullable|string|max:50', 'stock_filter' => 'nullable|in:zero', 'error_filter' => 'nullable|boolean', 'issue_type' => 'nullable|in:image,required,price,discount,not_found,other', 'per_page' => 'nullable|integer|min:10|max:100']);
+        $account = $this->account();
+        $query = $this->productBindingsQuery($account, $data)
             ->with(['good:id,name,sku,is_active,stock_quantity', 'variation:id,good_id,name,sku,is_active,stock_quantity']);
         if ($data['error_filter'] ?? false) {
             $query->where(function ($query) {
@@ -487,7 +542,28 @@ class ShopYandexMarketSellerController extends Controller
                     ->orWhereRaw("JSON_LENGTH(COALESCE(errors, JSON_ARRAY())) > 0");
             });
         }
-        return response()->json(['success' => true, 'data' => $query->paginate($data['per_page'] ?? 50)]);
+        if (filled($data['issue_type'] ?? null)) {
+            $matchingIds = ShopYandexMarketProductBinding::query()->where('account_id', $account->id)
+                ->get(['id', 'status', 'errors', 'warnings'])
+                ->filter(fn (ShopYandexMarketProductBinding $binding) => in_array($data['issue_type'], $this->productIssueTypes($binding), true))
+                ->pluck('id');
+            $query->whereIn('id', $matchingIds);
+        }
+        $paginator = $query->paginate($data['per_page'] ?? 50);
+        $submissionErrors = $this->latestMarketErrorsByOffer(
+            $account->id,
+            collect($paginator->items())->pluck('offer_id')->all(),
+        );
+        $paginator->getCollection()->transform(function (ShopYandexMarketProductBinding $binding) use ($submissionErrors) {
+            $binding->setAttribute('submission_errors', $submissionErrors[$binding->offer_id] ?? []);
+            return $binding;
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => $paginator,
+            'meta' => $this->productBindingStats($account),
+        ]);
     }
 
     public function deleteProducts(Request $request)
@@ -665,6 +741,38 @@ class ShopYandexMarketSellerController extends Controller
         }
         return $query;
     }
+
+    /** @return array{total: int, statuses: array<string, int>, issue_types: array<string, int>} */
+    private function productBindingStats(ShopYandexMarketAccount $account): array
+    {
+        $bindings = ShopYandexMarketProductBinding::query()
+            ->where('account_id', $account->id)
+            ->get(['status', 'errors', 'warnings']);
+        $statuses = $bindings->countBy(fn (ShopYandexMarketProductBinding $binding) => $binding->status ?: 'unknown')->all();
+        $issueTypes = [];
+        foreach ($bindings as $binding) {
+            foreach ($this->productIssueTypes($binding) as $type) {
+                $issueTypes[$type] = ($issueTypes[$type] ?? 0) + 1;
+            }
+        }
+
+        return ['total' => $bindings->count(), 'statuses' => $statuses, 'issue_types' => $issueTypes];
+    }
+
+    /** @return array<int, string> */
+    private function productIssueTypes(ShopYandexMarketProductBinding $binding): array
+    {
+        $issues = collect(array_merge((array) $binding->errors, (array) $binding->warnings))
+            ->map(fn ($issue) => mb_strtolower(is_string($issue) ? $issue : json_encode($issue, JSON_UNESCAPED_UNICODE)));
+        $types = [];
+        if ($issues->contains(fn ($issue) => str_contains($issue, 'изображен'))) $types[] = 'image';
+        if ($issues->contains(fn ($issue) => str_contains($issue, 'обязательн') || str_contains($issue, 'характеристик'))) $types[] = 'required';
+        if ($issues->contains(fn ($issue) => str_contains($issue, 'цен'))) $types[] = 'price';
+        if ($issues->contains(fn ($issue) => str_contains($issue, 'скидк'))) $types[] = 'discount';
+        if ($binding->status === 'error' || $issues->contains(fn ($issue) => str_contains($issue, 'не вернул карточку'))) $types[] = 'not_found';
+        if (! $types && $issues->isNotEmpty()) $types[] = 'other';
+        return array_values(array_unique($types));
+    }
     private function saveAttributeTemplates(ShopYandexMarketAccount $account, array $mappings): void
     {
         foreach ($mappings as $mapping) {
@@ -794,15 +902,55 @@ class ShopYandexMarketSellerController extends Controller
     private function previewErrorTypes(array $row): array
     {
         $errors = collect($row['local_errors'] ?? [])->map(fn ($error) => mb_strtolower((string) $error));
+        $warnings = collect($row['local_warnings'] ?? [])->map(fn ($warning) => mb_strtolower((string) $warning));
         $types = [];
-        if ($errors->contains(fn ($error) => str_contains($error, 'изображен'))) $types[] = 'image';
+        if ($errors->contains(fn ($error) => str_contains($error, 'изображен')) || $warnings->contains(fn ($warning) => str_contains($warning, 'изображен'))) $types[] = 'image';
         if ($errors->contains(fn ($error) => str_contains($error, 'обязательн') || str_contains($error, 'отличающ'))) $types[] = 'required';
         if ($errors->contains(fn ($error) => str_contains($error, 'цена'))) $types[] = 'price';
-        if (collect($row['local_warnings'] ?? [])->contains(fn ($warning) => str_contains(mb_strtolower((string) $warning), 'скидк'))) $types[] = 'discount';
+        if ($warnings->contains(fn ($warning) => str_contains($warning, 'скидк'))) $types[] = 'discount';
         if ($errors->contains(fn ($error) => str_contains($error, 'категор') || str_contains($error, 'профил'))) $types[] = 'category';
         if (! empty($row['market_errors'])) $types[] = 'market';
         if (! $types && ! empty($row['errors'])) $types[] = 'other';
         return array_values(array_unique($types));
+    }
+
+    private function previewSearchMatches(array $row, string $search): bool
+    {
+        $needle = mb_strtolower(trim($search));
+        if ($needle === '') {
+            return true;
+        }
+
+        $attributes = collect($row['variation_attributes'] ?? [])
+            ->flatMap(fn (array $attribute) => [$attribute['name'] ?? '', $attribute['value'] ?? ''])
+            ->all();
+        $haystack = array_merge([
+            $row['name'] ?? '',
+            $row['sku'] ?? '',
+            $row['offer_id'] ?? '',
+            $row['good_id'] ?? '',
+            $row['variation_id'] ?? '',
+        ], $attributes);
+
+        return collect($haystack)->contains(fn ($value) => str_contains(mb_strtolower((string) $value), $needle));
+    }
+
+    private function siteLogoUrl(): ?string
+    {
+        $settings = Setting::query()
+            ->whereIn('key', ['main_site', 'site_logo'])
+            ->pluck('value', 'key');
+        $logo = trim((string) ($settings['site_logo'] ?? ''));
+
+        if ($logo === '') {
+            return null;
+        }
+        if (str_starts_with($logo, 'http://') || str_starts_with($logo, 'https://')) {
+            return $logo;
+        }
+
+        $base = rtrim((string) ($settings['main_site'] ?? config('app.frontend_url', config('app.url'))), '/');
+        return $base === '' ? null : $base.'/'.ltrim($logo, '/');
     }
     private function accountData(ShopYandexMarketAccount $account): array { return array_merge($account->toArray(), ['has_api_key' => filled($account->api_key), 'api_key' => '']); }
     private function campaignData(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'domain' => $item['domain'] ?? $item['name'] ?? '', 'business_id' => (int) data_get($item, 'business.id', $item['businessId'] ?? 0), 'business_name' => data_get($item, 'business.name', ''), 'placement_type' => $item['placementType'] ?? '', 'api_availability' => $item['apiAvailability'] ?? 'AVAILABLE']; }
