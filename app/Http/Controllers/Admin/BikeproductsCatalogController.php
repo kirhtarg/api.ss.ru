@@ -539,7 +539,7 @@ class BikeproductsCatalogController extends Controller
             fn () => $this->catalog->applyGoodAction($snapshot, $data['action'], $data['ids']),
         );
         if ($data['action'] === 'create' && $result['affected'] > 0) {
-            $jobs = $this->dispatchImageSyncJobs($snapshot, $data['ids']);
+            $jobs = $this->dispatchImageSyncJobs($snapshot, $data['ids'], 'append', $result['action_run_id'] ?? null);
             $result['message'] .= ". Скачивание изображений запущено в очереди: {$jobs} задач";
         }
 
@@ -587,7 +587,7 @@ class BikeproductsCatalogController extends Controller
             && $result['affected'] > 0
             && in_array($imageMode, ['append', 'replace', 'reconcile'], true)
         ) {
-            $jobs = $this->dispatchImageSyncJobs($snapshot, $data['item_ids'], $imageMode);
+            $jobs = $this->dispatchImageSyncJobs($snapshot, $data['item_ids'], $imageMode, $result['action_run_id'] ?? null);
             $result['message'] .= ". Скачивание файлов запущено в очереди: {$jobs} задач";
         }
 
@@ -602,18 +602,60 @@ class BikeproductsCatalogController extends Controller
      *
      * @param array<int, int> $itemIds
      */
-    private function dispatchImageSyncJobs(SupplierCatalogSnapshot $snapshot, array $itemIds, string $mode = 'append'): int
+    private function dispatchImageSyncJobs(SupplierCatalogSnapshot $snapshot, array $itemIds, string $mode = 'append', ?int $actionRunId = null): int
     {
         $ids = array_values(array_unique(array_filter(
             array_map(static fn ($id) => (int) $id, $itemIds),
             static fn (int $id) => $id > 0,
         )));
 
+        $jobs = (int) ceil(count($ids) / 10);
+        $this->initializeImageSyncRun($actionRunId, $jobs, count($ids));
         foreach (array_chunk($ids, 10) as $chunk) {
-            SyncSupplierCatalogImagesJob::dispatch($snapshot->id, $chunk, $mode);
+            SyncSupplierCatalogImagesJob::dispatch($snapshot->id, $chunk, $actionRunId, $mode);
         }
 
-        return (int) ceil(count($ids) / 10);
+        return $jobs;
+    }
+
+    private function initializeImageSyncRun(?int $actionRunId, int $jobs, int $items): void
+    {
+        if (! $actionRunId || $jobs < 1) {
+            return;
+        }
+
+        $run = SupplierCatalogActionRun::find($actionRunId);
+        if (! $run) {
+            return;
+        }
+        $result = $run->result ?? [];
+        $result['image_sync'] = [
+            'status' => 'queued',
+            'total_jobs' => $jobs,
+            'completed_jobs' => 0,
+            'failed_jobs' => 0,
+            'total_items' => $items,
+            'created' => 0,
+            'updated' => 0,
+            'skipped' => 0,
+            'failed' => 0,
+        ];
+        $run->update(['result' => $result]);
+    }
+
+    public function imageSyncStatus(SupplierCatalogSnapshot $snapshot, SupplierCatalogActionRun $actionRun): JsonResponse
+    {
+        abort_unless(
+            (int) $actionRun->snapshot_id === (int) $snapshot->id && $actionRun->scope === 'images',
+            404,
+            'Запуск синхронизации изображений не найден.',
+        );
+
+        return response()->json(['success' => true, 'data' => ($actionRun->result ?? [])['image_sync'] ?? [
+            'status' => 'completed',
+            'total_jobs' => 0,
+            'completed_jobs' => 0,
+        ]]);
     }
 
     public function priceStockAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse

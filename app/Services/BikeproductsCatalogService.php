@@ -38,13 +38,13 @@ class BikeproductsCatalogService
     /** @var array<string, int> */
     private array $variationAttributeIds = [];
 
-    /** @param array<int, int> $itemIds */
-    public function downloadAttachedImages(int $snapshotId, array $itemIds, string $mode = 'append'): void
+    /** @param array<int, int> $itemIds @return array{created: int, updated: int, skipped: int, failed: int} */
+    public function downloadAttachedImages(int $snapshotId, array $itemIds, string $mode = 'append'): array
     {
         $snapshot = SupplierCatalogSnapshot::find($snapshotId);
         if (! $snapshot || $snapshot->status !== 'ready') {
             Log::warning('Supplier image sync skipped: snapshot is unavailable', ['snapshot_id' => $snapshotId]);
-            return;
+            return ['created' => 0, 'updated' => 0, 'skipped' => count($itemIds), 'failed' => 0];
         }
         $this->ensureDefaultMappings($snapshot->supplier_code);
         $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
@@ -193,6 +193,8 @@ class BikeproductsCatalogService
             'skipped' => $skipped,
             'failed' => $failed,
         ]);
+
+        return compact('created', 'updated', 'skipped', 'failed');
     }
 
     /** @return array{binary: string, extension: string, width: int|null, height: int|null} */
