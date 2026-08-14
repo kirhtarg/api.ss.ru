@@ -10,6 +10,9 @@ use App\Models\ShopYandexMarketProductBinding;
 
 class YandexMarketPayloadBuilder
 {
+    /** @var array<int, array<string, string>> */
+    private array $offerIdsByAccount = [];
+
     public function __construct(private readonly YandexMarketProductResolver $resolver) {}
 
     public function build(ShopGood $good, ?ShopGoodVariation $variation, ShopYandexMarketAccount $account, ?ShopYandexMarketCategoryMapping $mapping): array
@@ -46,6 +49,7 @@ class YandexMarketPayloadBuilder
         $offer = array_filter($offer, fn ($value) => $value !== null && $value !== '' && $value !== []);
 
         $errors = [];
+        $warnings = [];
         if (! $mapping) $errors[] = 'Не найден профиль категории Яндекс Маркета.';
         if (! $offer['marketCategoryId']) $errors[] = 'Не выбрана категория Яндекс Маркета.';
         if ($offer['name'] === '') $errors[] = 'Не заполнено название.';
@@ -53,7 +57,7 @@ class YandexMarketPayloadBuilder
         if (empty($offer['pictures'])) $errors[] = 'Не добавлено изображение.';
         if ($price['final'] <= 0) $errors[] = 'Цена должна быть больше нуля.';
         if ($price['old_price'] && $price['discount_base'] === null) {
-            $errors[] = "Скидка {$price['discount_percent']}% не будет принята Яндекс Маркетом: допустим диапазон от 5% до 99%.";
+            $warnings[] = "Скидка {$price['discount_percent']}% не передается в Яндекс Маркет: допустим диапазон от 5% до 99%.";
         }
         foreach ($dimensions as $key => $value) if ($value <= 0) $errors[] = 'Не заполнены вес и габариты товара.';
         foreach ($parameters['missing'] as $name) $errors[] = "Не заполнена обязательная характеристика: {$name}.";
@@ -81,6 +85,7 @@ class YandexMarketPayloadBuilder
             'offer_mapping' => ['offer' => $offer],
             'category_parameter_values' => $parameters['payload'],
             'errors' => array_values(array_unique($errors)),
+            'warnings' => array_values(array_unique($warnings)),
         ];
     }
 
@@ -102,11 +107,24 @@ class YandexMarketPayloadBuilder
 
     public function offerId(ShopGood $good, ?ShopGoodVariation $variation, ShopYandexMarketAccount $account): string
     {
-        $binding = $account->exists ? ShopYandexMarketProductBinding::query()->where('account_id', $account->id)
-            ->where('good_id', $good->id)
-            ->when($variation, fn ($q) => $q->where('variation_id', $variation->id), fn ($q) => $q->whereNull('variation_id'))
-            ->oldest('id')->first() : null;
-        return (string) ($binding?->offer_id ?: ($variation ? "g_{$good->id}_v_{$variation->id}" : "g_{$good->id}"));
+        $key = $good->id.':'.($variation?->id ?: 0);
+        if ($account->exists && ! array_key_exists($account->id, $this->offerIdsByAccount)) {
+            $this->offerIdsByAccount[$account->id] = [];
+            ShopYandexMarketProductBinding::query()
+                ->where('account_id', $account->id)
+                ->orderBy('id')
+                ->get(['good_id', 'variation_id', 'offer_id'])
+                ->each(function (ShopYandexMarketProductBinding $binding) use ($account) {
+                    $bindingKey = $binding->good_id.':'.($binding->variation_id ?: 0);
+                    $this->offerIdsByAccount[$account->id][$bindingKey] ??= (string) $binding->offer_id;
+                });
+        }
+
+        if ($account->exists) {
+            return $this->offerIdsByAccount[$account->id][$key] ?? ($variation ? "g_{$good->id}_v_{$variation->id}" : "g_{$good->id}");
+        }
+
+        return $variation ? "g_{$good->id}_v_{$variation->id}" : "g_{$good->id}";
     }
 
     private function parameters(?ShopYandexMarketCategoryMapping $mapping, ShopGood $good, ?ShopGoodVariation $variation, bool $hasVariations, array $media): array

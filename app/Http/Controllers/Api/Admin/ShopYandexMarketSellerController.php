@@ -375,7 +375,7 @@ class ShopYandexMarketSellerController extends Controller
 
     public function preview(Request $request, YandexMarketPayloadBuilder $builder, YandexMarketProductResolver $resolver)
     {
-        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:50', 'search' => 'nullable|string|max:255', 'good_ids' => 'nullable|array|max:100', 'good_ids.*' => 'integer', 'mapping_id' => 'nullable|integer|min:1']);
+        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:50', 'search' => 'nullable|string|max:255', 'good_ids' => 'nullable|array|max:100', 'good_ids.*' => 'integer', 'mapping_id' => 'nullable|integer|min:1', 'errors_only' => 'nullable|boolean', 'error_types' => 'nullable|array', 'error_types.*' => 'in:image,required,price,discount,category,market,other']);
         $account = $this->account();
         if (! $this->hasUsableMappings($account)) return response()->json(['success' => false, 'message' => 'Создайте активный профиль с категорией и тегом отбора (или задайте тег по умолчанию в подключении).'], 422);
         $page = (int) ($data['page'] ?? 1); $perPage = (int) ($data['per_page'] ?? 10);
@@ -413,25 +413,40 @@ class ShopYandexMarketSellerController extends Controller
             ->first();
         $goodsWithVariations = (int) ($variationSummary->variation_groups_total ?? 0) + (int) ($variationSummary->single_variation_goods_total ?? 0);
         $offersTotal = (int) ($variationSummary->variations_total ?? 0) + max(0, $total - $goodsWithVariations);
-        $rows = [];
-        foreach ($query->forPage($page, $perPage)->get() as $good) {
+        $allRows = [];
+        $goods = $query->get();
+        foreach ($goods as $good) {
             $mapping = $selectedMapping ?: $resolver->mappingFor($good, $mappings, $account);
             foreach ($resolver->rowsForGood($good, $mapping) as $row) {
                 $built = $builder->build($good, $row['variation'], $account, $mapping);
                 $built['local_errors'] = array_values(array_unique(array_merge($built['errors'], $row['row_errors'])));
+                $built['local_warnings'] = $built['warnings'] ?? [];
                 $built['local_categories'] = $this->goodCategoriesForMapping($good, $mapping);
-                $rows[] = $built;
+                $allRows[] = $built;
             }
         }
-        $marketErrors = $this->latestMarketErrorsByOffer($account->id, array_column($rows, 'offer_id'));
-        $rows = array_map(function (array $row) use ($marketErrors) {
+        $marketErrors = $this->latestMarketErrorsByOffer($account->id, array_column($allRows, 'offer_id'));
+        $allRows = array_map(function (array $row) use ($marketErrors) {
             $row['market_errors'] = $marketErrors[$row['offer_id']] ?? [];
             $row['errors'] = array_values(array_unique(array_merge(
                 $row['local_errors'],
                 array_map(fn (string $error) => "Яндекс Маркет: {$error}", $row['market_errors']),
             )));
+            $row['error_types'] = $this->previewErrorTypes($row);
             return $row;
-        }, $rows);
+        }, $allRows);
+        $errorTypes = array_values(array_unique($data['error_types'] ?? []));
+        $filteredGoodIds = collect($allRows)
+            ->filter(fn (array $row) => (! empty($row['errors']) || ! empty($row['local_warnings'])) && (! $errorTypes || array_intersect($row['error_types'], $errorTypes)))
+            ->pluck('good_id')->map(fn ($id) => (int) $id)->unique()->all();
+        $displayGoods = (($data['errors_only'] ?? false) || $errorTypes)
+            ? $goods->filter(fn (ShopGood $good) => in_array((int) $good->id, $filteredGoodIds, true))->values()
+            : $goods;
+        $displayTotal = $displayGoods->count();
+        $displayLastPage = max(1, (int) ceil($displayTotal / $perPage));
+        $page = min($page, $displayLastPage);
+        $pageGoodIds = $displayGoods->forPage($page, $perPage)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $rows = array_values(array_filter($allRows, fn (array $row) => in_array((int) $row['good_id'], $pageGoodIds, true)));
         return response()->json(['success' => true, 'data' => $rows, 'meta' => [
             'eligible_goods' => $total,
             'eligible_offers' => $offersTotal,
@@ -439,8 +454,12 @@ class ShopYandexMarketSellerController extends Controller
             'eligible_variation_groups' => (int) ($variationSummary->variation_groups_total ?? 0),
             'eligible_single_variation_goods' => (int) ($variationSummary->single_variation_goods_total ?? 0),
             'category_facets' => $categoryFacets,
-            'offers' => count($rows), 'offers_with_errors' => collect($rows)->filter(fn ($row) => ! empty($row['errors']))->count(),
-            'current_page' => $page, 'last_page' => $lastPage, 'per_page' => $perPage,
+            'offers' => count($rows),
+            'offers_with_errors' => collect($allRows)->filter(fn ($row) => ! empty($row['errors']))->count(),
+            'offers_with_errors_on_page' => collect($rows)->filter(fn ($row) => ! empty($row['errors']))->count(),
+            'error_type_counts' => collect($allRows)->flatMap(fn (array $row) => collect($row['error_types'] ?? [])->map(fn ($type) => ['type' => $type, 'offer_id' => $row['offer_id']]))
+                ->groupBy('type')->map(fn ($items) => $items->pluck('offer_id')->unique()->count())->all(),
+            'current_page' => $page, 'last_page' => $displayLastPage, 'per_page' => $perPage,
         ]]);
     }
 
@@ -769,6 +788,21 @@ class ShopYandexMarketSellerController extends Controller
             ->filter(fn (ShopYandexMarketSyncItem $item) => ! empty($item->errors))
             ->mapWithKeys(fn (ShopYandexMarketSyncItem $item) => [$item->offer_id => array_values((array) $item->errors)])
             ->all();
+    }
+
+    /** @return array<int, string> */
+    private function previewErrorTypes(array $row): array
+    {
+        $errors = collect($row['local_errors'] ?? [])->map(fn ($error) => mb_strtolower((string) $error));
+        $types = [];
+        if ($errors->contains(fn ($error) => str_contains($error, 'изображен'))) $types[] = 'image';
+        if ($errors->contains(fn ($error) => str_contains($error, 'обязательн') || str_contains($error, 'отличающ'))) $types[] = 'required';
+        if ($errors->contains(fn ($error) => str_contains($error, 'цена'))) $types[] = 'price';
+        if (collect($row['local_warnings'] ?? [])->contains(fn ($warning) => str_contains(mb_strtolower((string) $warning), 'скидк'))) $types[] = 'discount';
+        if ($errors->contains(fn ($error) => str_contains($error, 'категор') || str_contains($error, 'профил'))) $types[] = 'category';
+        if (! empty($row['market_errors'])) $types[] = 'market';
+        if (! $types && ! empty($row['errors'])) $types[] = 'other';
+        return array_values(array_unique($types));
     }
     private function accountData(ShopYandexMarketAccount $account): array { return array_merge($account->toArray(), ['has_api_key' => filled($account->api_key), 'api_key' => '']); }
     private function campaignData(array $item): array { return ['id' => (int) ($item['id'] ?? 0), 'domain' => $item['domain'] ?? $item['name'] ?? '', 'business_id' => (int) data_get($item, 'business.id', $item['businessId'] ?? 0), 'business_name' => data_get($item, 'business.name', ''), 'placement_type' => $item['placementType'] ?? '', 'api_availability' => $item['apiAvailability'] ?? 'AVAILABLE']; }
