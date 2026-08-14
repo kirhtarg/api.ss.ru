@@ -1873,9 +1873,10 @@ class BikeproductsCatalogService
                 ->filter(fn (array $row) => in_array($row['status'], $filters, true) || $expandGoodIds->contains($row['database_good_id']))
                 ->values();
         }
+        $axisIssueCandidateRows = $rows;
         if ($axisIssues !== []) {
             $rows = $rows
-                ->filter(fn (array $row) => ($row['status'] ?? null) === 'attention'
+                ->filter(fn (array $row) => in_array($row['status'] ?? null, ['attention', 'attention_single_variation'], true)
                     && array_intersect($row['axis_issue_types'] ?? [], $axisIssues) !== [])
                 ->values();
         }
@@ -1944,6 +1945,11 @@ class BikeproductsCatalogService
                 'filtered_variations' => $rows->whereNotNull('database_variation_id')->count(),
                 'axis_repair_filtered_variations' => $rows
                     ->whereIn('status', ['attention', 'attention_single_variation'])
+                    ->whereNotNull('database_variation_id')
+                    ->count(),
+                'axis_missing_filtered_variations' => $axisIssueCandidateRows
+                    ->filter(fn (array $row) => in_array($row['status'] ?? null, ['attention', 'attention_single_variation'], true)
+                        && in_array('missing', $row['axis_issue_types'] ?? [], true))
                     ->whereNotNull('database_variation_id')
                     ->count(),
                 'delete_candidate_goods' => $allRows->where('status', 'delete_candidate_good')->pluck('database_good_id')->unique()->count(),
