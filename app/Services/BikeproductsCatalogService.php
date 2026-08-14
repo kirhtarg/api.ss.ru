@@ -1500,12 +1500,14 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v23:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v24:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
-        if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'])) {
+        if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'], $cachedBase['duplicate_sku_groups'])) {
             $allRows = collect($cachedBase['rows']);
             $variationCountByGood = collect($cachedBase['variation_counts']);
             $baseStats = $cachedBase['stats'];
+            $databaseDuplicateSkuGroups = collect($cachedBase['duplicate_sku_groups'])
+                ->map(fn (array $group) => collect($group));
         } else {
         $mappings = $this->getMappings($snapshot->supplier_code);
         $priceMappings = $this->priceFieldMappings($snapshot->supplier_code);
@@ -1814,6 +1816,9 @@ class BikeproductsCatalogService
             'rows' => $allRows->all(),
             'variation_counts' => $variationCountByGood->all(),
             'stats' => $baseStats,
+            'duplicate_sku_groups' => $databaseDuplicateSkuGroups
+                ->map(fn (Collection $group) => $this->databaseVariationDuplicatePayload($group))
+                ->all(),
         ], now()->addMinutes(15));
         }
 
@@ -1839,7 +1844,19 @@ class BikeproductsCatalogService
             'database_duplicate_sku',
         ]));
         $duplicateSkuOnly = count($filters) === 1 && $filters[0] === 'database_duplicate_sku';
-        if ($filters !== []) {
+        $deleteCandidateGoodOnly = count($filters) === 1 && $filters[0] === 'delete_candidate_good';
+        if ($deleteCandidateGoodOnly) {
+            // The card counts parent goods, so its table must not be narrowed by
+            // contextual rows or a previous row-level status.
+            $candidateGoodIds = $allRows
+                ->where('status', 'delete_candidate_good')
+                ->pluck('database_good_id')
+                ->filter()
+                ->unique();
+            $rows = $rows
+                ->filter(fn (array $row) => $candidateGoodIds->contains($row['database_good_id'] ?? null))
+                ->values();
+        } elseif ($filters !== []) {
             $matchedRows = $rows->whereIn('status', $filters);
             $expandGoodIds = $matchedRows
                 ->whereIn('status', [
@@ -1858,21 +1875,21 @@ class BikeproductsCatalogService
         // Фильтр относится к товарам базы. Строки, которые есть только в
         // файле, не имеют родительского товара базы и остаются видимыми лишь
         // в режиме «Все».
-        if (! $duplicateSkuOnly && $variationCount === 'single') {
+        if (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $variationCount === 'single') {
             $rows = $rows->filter(fn (array $row) => $row['database_good_id']
                 && ($variationCountByGood->get($row['database_good_id']) ?? 0) === 1)->values();
-        } elseif (! $duplicateSkuOnly && $variationCount === 'multiple') {
+        } elseif (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $variationCount === 'multiple') {
             $rows = $rows->filter(fn (array $row) => $row['database_good_id']
                 && ($variationCountByGood->get($row['database_good_id']) ?? 0) > 1)->values();
         }
-        if (! $duplicateSkuOnly && $mainStockFilter === 'zero') {
+        if (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $mainStockFilter === 'zero') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ! ($row['has_main_stock'] ?? false))->values();
-        } elseif (! $duplicateSkuOnly && $mainStockFilter === 'in_stock') {
+        } elseif (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $mainStockFilter === 'in_stock') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ($row['has_main_stock'] ?? false))->values();
         }
-        if (! $duplicateSkuOnly && $remoteStockFilter === 'empty') {
+        if (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $remoteStockFilter === 'empty') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ! ($row['has_remote_stock'] ?? false))->values();
-        } elseif (! $duplicateSkuOnly && $remoteStockFilter === 'not_empty') {
+        } elseif (! $duplicateSkuOnly && ! $deleteCandidateGoodOnly && $remoteStockFilter === 'not_empty') {
             $rows = $rows->filter(fn (array $row) => $row['database_variation_id'] && ($row['has_remote_stock'] ?? false))->values();
         }
         // Пагинируем товарами, а не отдельными SKU: все вариации одного товара
@@ -1882,26 +1899,29 @@ class BikeproductsCatalogService
             : ($row['database_good_id']
                 ? 'good-'.$row['database_good_id']
                 : 'source-'.($row['source_group_name'] ?: $row['external_sku'])));
-        $total = $groups->count();
-        $pageRows = $groups->forPage($page, $perPage)->flatten(1)->values();
         $duplicateSkuGroupsPayload = $duplicateSkuOnly
-            ? $groups
-                ->forPage($page, $perPage)
-                ->map(function (Collection $groupRows): array {
-                    $variations = $groupRows
-                        ->flatMap(fn (array $row) => $row['database_duplicate_sku_variations'] ?? [])
+            ? $databaseDuplicateSkuGroups
+                ->map(function (Collection $variations, string $sku): array {
+                    $normalized = $variations
                         ->unique('id')
                         ->sortBy('id')
                         ->values();
 
                     return [
-                        'sku' => (string) ($variations->first()['sku'] ?? $groupRows->first()['external_sku'] ?? ''),
-                        'variations' => $variations->all(),
+                        'sku' => $sku,
+                        'variations' => $normalized->all(),
                     ];
                 })
                 ->filter(fn (array $group) => count($group['variations']) > 1)
+                ->sortBy('sku')
                 ->values()
-                ->all()
+            : collect();
+        $total = $duplicateSkuOnly ? $duplicateSkuGroupsPayload->count() : $groups->count();
+        $pageRows = $duplicateSkuOnly
+            ? collect()
+            : $groups->forPage($page, $perPage)->flatten(1)->values();
+        $duplicateSkuGroupsPayload = $duplicateSkuOnly
+            ? $duplicateSkuGroupsPayload->forPage($page, $perPage)->values()->all()
             : [];
 
         $countGroups = fn (Collection $items): int => $items->groupBy(fn (array $row) => $row['database_good_id'] ? 'good-'.$row['database_good_id'] : 'source-'.($row['source_group_name'] ?: $row['external_sku']))->count();
