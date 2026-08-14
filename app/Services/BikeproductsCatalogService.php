@@ -895,6 +895,10 @@ class BikeproductsCatalogService
                 $targetAxes = $isSingleProductSource
                     ? $this->creationAxesForItem($source, $snapshot->supplier_code)
                     : $this->sourceAxesForItem($source, $mappings, $snapshot->supplier_code);
+                // Год из одиночной строки поставщика не должен создавать новую ось
+                // у уже существующей вариации. Он участвует только если ось «Год»
+                // уже есть в базе у этой вариации.
+                $targetAxes = $this->withoutAbsentDatabaseYearAxis($variation, $targetAxes);
                 if ($targetAxes === []) {
                     $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'skipped', 'source_axes_empty', ['scope' => 'variations', 'action' => $action]);
                     continue;
@@ -1500,7 +1504,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v24:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v26:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'], $cachedBase['duplicate_sku_groups'])) {
             $allRows = collect($cachedBase['rows']);
@@ -3785,12 +3789,19 @@ class BikeproductsCatalogService
 
             return $comparisons;
         }
-        $sourceYear = $this->nullableString($source->source_year)
-            ?? $this->nullableString($source->raw_payload['MODELNYY_GOD'] ?? null)
-            ?? (string) now()->year;
         $databaseAxes = $variation->attributeValues->groupBy('attribute_id')
             ->map(fn (Collection $values) => $values->pluck('value')->values()->all());
         $databaseYear = $databaseAxes->get($yearAttributeId, []);
+        // Год у Байкпродакс является дополнительным признаком. Если в базе оси
+        // «Год» нет, сравниваем только фактические оси строки (цвет/размер),
+        // не создавая ложного расхождения и не предлагая добавить год.
+        if ($databaseYear === []) {
+            return $this->variationComparisons($variation, $source, collect(), $supplierCode);
+        }
+
+        $sourceYear = $this->nullableString($source->source_year)
+            ?? $this->nullableString($source->raw_payload['MODELNYY_GOD'] ?? null)
+            ?? (string) now()->year;
         $yearMatches = collect($databaseYear)->contains(fn (string $value) => $this->normalizeComparisonValue($value) === $this->normalizeComparisonValue($sourceYear));
         $comparisons = [[
             'status' => $databaseYear === [] ? 'missing_in_database' : ($yearMatches ? 'match' : 'different'),
@@ -3891,12 +3902,25 @@ class BikeproductsCatalogService
 
         $normalized['color'] = $this->nullableString($parts[0]);
         $normalized['size'] = $this->nullableString($parts[1]);
+        // Some source names omit the empty size position and contain only
+        // "(Color, 2026 (SKU))". A model year must never become Size.
+        if ($this->isSourceYearValue($normalized['size'])) {
+            $normalized['year'] = $normalized['size'];
+            $normalized['size'] = null;
+        } elseif (isset($parts[2]) && $this->isSourceYearValue($this->nullableString($parts[2]))) {
+            $normalized['year'] = $this->nullableString($parts[2]);
+        }
         if ($normalized['color'] === null || $normalized['size'] === null) {
             return $normalized;
         }
         $normalized['is_variation'] = true;
 
         return $normalized;
+    }
+
+    private function isSourceYearValue(?string $value): bool
+    {
+        return $value !== null && preg_match('/^(?:19|20)\\d{2}$/', trim($value)) === 1;
     }
 
     /** @param array<string, mixed> $payload */
@@ -3978,6 +4002,32 @@ class BikeproductsCatalogService
             'attribute_name' => 'Год',
             'value' => $year,
         ]];
+    }
+
+    /**
+     * Existing variations may not use the optional Year axis. Do not introduce it
+     * while repairing axes from a Bikeproducts single-product source row.
+     *
+     * @param array<int, array{attribute_id: int, attribute_name: string, value: string}> $axes
+     * @return array<int, array{attribute_id: int, attribute_name: string, value: string}>
+     */
+    private function withoutAbsentDatabaseYearAxis(ShopGoodVariation $variation, array $axes): array
+    {
+        $yearAttributeId = $this->standardVariationAttributeIds()['Год'] ?? null;
+        if (! $yearAttributeId) {
+            return $axes;
+        }
+
+        $containsYear = $variation->attributeValues
+            ->contains(fn (ShopVariationAttributeValue $value) => (int) $value->attribute_id === (int) $yearAttributeId);
+        if ($containsYear) {
+            return $axes;
+        }
+
+        return array_values(array_filter(
+            $axes,
+            fn (array $axis) => (int) $axis['attribute_id'] !== (int) $yearAttributeId,
+        ));
     }
 
     private function isSourceVariationItem(SupplierCatalogItem $item): bool
