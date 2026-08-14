@@ -1942,6 +1942,10 @@ class BikeproductsCatalogService
                 'comparison_groups' => $total,
                 'filtered_goods' => $total,
                 'filtered_variations' => $rows->whereNotNull('database_variation_id')->count(),
+                'axis_repair_filtered_variations' => $rows
+                    ->whereIn('status', ['attention', 'attention_single_variation'])
+                    ->whereNotNull('database_variation_id')
+                    ->count(),
                 'delete_candidate_goods' => $allRows->where('status', 'delete_candidate_good')->pluck('database_good_id')->unique()->count(),
                 'delete_candidate_variations' => $allRows->where('status', 'delete_candidate_variation')->count(),
                 'delete_candidate_variation_goods' => $countGroups($allRows->where('status', 'delete_candidate_variation')),

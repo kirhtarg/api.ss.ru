@@ -294,7 +294,7 @@ class BikeproductsCatalogController extends Controller
             'success' => true,
             'data' => $this->cachedAudit(
                 $snapshot,
-                'variations-v20',
+                'variations-v21',
                 $data,
                 fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null, $data['main_stock'] ?? 'all', $data['remote_stock'] ?? 'all', $data['axis_issues'] ?? []),
             ),
