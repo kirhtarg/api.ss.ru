@@ -536,8 +536,8 @@ class BikeproductsCatalogController extends Controller
             fn () => $this->catalog->applyGoodAction($snapshot, $data['action'], $data['ids']),
         );
         if ($data['action'] === 'create' && $result['affected'] > 0) {
-            SyncSupplierCatalogImagesJob::dispatch($snapshot->id, $data['ids']);
-            $result['message'] .= '. Скачивание изображений запущено в очереди';
+            $jobs = $this->dispatchImageSyncJobs($snapshot, $data['ids']);
+            $result['message'] .= ". Скачивание изображений запущено в очереди: {$jobs} задач";
         }
 
         return response()->json(['success' => true, 'data' => $result]);
@@ -578,12 +578,39 @@ class BikeproductsCatalogController extends Controller
             $data['item_ids'],
             fn () => $this->catalog->applyMappedUpdate($snapshot, $data['scope'], $data['item_ids'], $data['image_mode'] ?? 'append'),
         );
-        if ($data['scope'] === 'images' && $result['affected'] > 0) {
-            SyncSupplierCatalogImagesJob::dispatch($snapshot->id, $data['item_ids']);
-            $result['message'] .= '. Скачивание файлов запущено в очереди';
+        $imageMode = $data['image_mode'] ?? 'append';
+        if (
+            $data['scope'] === 'images'
+            && $result['affected'] > 0
+            && in_array($imageMode, ['append', 'replace', 'reconcile'], true)
+        ) {
+            $jobs = $this->dispatchImageSyncJobs($snapshot, $data['item_ids']);
+            $result['message'] .= ". Скачивание файлов запущено в очереди: {$jobs} задач";
         }
 
         return response()->json(['success' => true, 'data' => $result]);
+    }
+
+    /**
+     * A mass image operation may contain hundreds of source rows. One job for
+     * all of them first clears bindings and then spends too long downloading
+     * files serially. Small independent jobs let the standard workers restore
+     * bindings concurrently and isolate a failed supplier URL to its batch.
+     *
+     * @param array<int, int> $itemIds
+     */
+    private function dispatchImageSyncJobs(SupplierCatalogSnapshot $snapshot, array $itemIds): int
+    {
+        $ids = array_values(array_unique(array_filter(
+            array_map(static fn ($id) => (int) $id, $itemIds),
+            static fn (int $id) => $id > 0,
+        )));
+
+        foreach (array_chunk($ids, 10) as $chunk) {
+            SyncSupplierCatalogImagesJob::dispatch($snapshot->id, $chunk);
+        }
+
+        return (int) ceil(count($ids) / 10);
     }
 
     public function priceStockAudit(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
