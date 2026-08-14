@@ -403,7 +403,7 @@ class BikeproductsCatalogController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'search' => ['nullable', 'string', 'max:120'],
             'statuses' => ['nullable', 'array', 'max:1'],
-            'statuses.*' => ['string', 'in:match,different,content,visual,broken,broken_database_filename'],
+            'statuses.*' => ['string', 'in:match,source_missing_in_database,database_missing_in_source,content,visual,broken,broken_database_filename'],
         ]);
         return response()->json(['success' => true, 'data' => $this->cachedAudit(
             $snapshot,
@@ -449,9 +449,12 @@ class BikeproductsCatalogController extends Controller
         if ($response = $this->notReadyResponse($snapshot)) {
             return $response;
         }
-        $data = $request->validate(['search' => ['nullable', 'string', 'max:120']]);
+        $data = $request->validate([
+            'search' => ['nullable', 'string', 'max:120'],
+            'mode' => ['nullable', 'in:append,replace,reconcile,prune,delete_broken'],
+        ]);
         return response()->json(['success' => true, 'data' => [
-            'item_ids' => $this->catalog->imageSelection($snapshot, $data['search'] ?? null),
+            'item_ids' => $this->catalog->imageSelection($snapshot, $data['mode'] ?? 'reconcile', $data['search'] ?? null),
         ]]);
     }
 
@@ -719,7 +722,7 @@ class BikeproductsCatalogController extends Controller
         $version = $snapshot->updated_at?->format('Uu') ?? '0';
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v32:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v34:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.

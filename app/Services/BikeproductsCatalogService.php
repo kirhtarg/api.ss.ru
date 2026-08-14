@@ -2559,10 +2559,24 @@ class BikeproductsCatalogService
             $unsupportedSourceCount = (int) ($sourceStatusCounts['unsupported'] ?? 0);
             $hasUnavailableSource = ($brokenSourceCount + $unsupportedSourceCount) > 0;
             $hasAvailableSource = $contentAuditStatus['status'] === 'completed' ? $availableSourceCount > 0 : $sourceTotalCount > 0;
+            // A row containing only unavailable supplier URLs is a supplier
+            // link error, not an image difference that can be repaired from
+            // the file. It must remain exclusively in the broken-links view.
+            $hasOnlyUnavailableSource = $sourceTotalCount > 0
+                && ! $hasAvailableSource
+                && $hasUnavailableSource;
             $expectedCount = $contentAuditStatus['status'] === 'completed' ? $availableSourceCount : $sourceTotalCount;
             $actualCount = count($databasePaths);
             $isMatch = ! $hasUnavailableSource && $expectedCount === $actualCount && collect($imagePairs)->every('is_match');
             $matchSummary = collect($imagePairs)->countBy('comparison_type')->all();
+            // These are independent directions of a difference. A variation
+            // may have both: a new supplier image to add and an obsolete local
+            // binding to remove.
+            $hasSourceMissingInDatabase = collect($imagePairs)->contains(
+                fn (array $pair) => ($pair['source_status'] ?? null) === 'available' && ! ($pair['is_match'] ?? false),
+            );
+            $hasDatabaseMissingInSource = ! $hasOnlyUnavailableSource
+                && ($availableImages !== [] || $unpairedBrokenImages !== []);
             $variationLabel = $variation
                 ? $variation->attributeValues
                     ->map(fn ($value) => trim(($value->attribute?->name ? $value->attribute->name.': ' : '').(string) $value->value))
@@ -2584,9 +2598,10 @@ class BikeproductsCatalogService
                 'unsupported_source_count' => $unsupportedSourceCount,
                 'has_available_source' => $hasAvailableSource,
                 'has_unavailable_source' => $hasUnavailableSource,
+                'has_only_unavailable_source' => $hasOnlyUnavailableSource,
                 'database_count' => $actualCount,
                 'is_match' => $isMatch,
-                'status' => $isMatch ? 'match' : 'different',
+                'status' => $hasOnlyUnavailableSource ? 'broken_only' : ($isMatch ? 'match' : 'different'),
                 'source_urls' => $sourceUrls->all(),
                 'database_paths' => $databasePaths,
                 'image_pairs' => $imagePairs,
@@ -2594,6 +2609,9 @@ class BikeproductsCatalogService
                 'database_only_paths' => collect($availableImages)->pluck('file_path')->values()->all(),
                 'database_broken_paths' => $databaseBrokenPaths,
                 'database_broken_unpaired_paths' => collect($unpairedBrokenImages)->pluck('file_path')->values()->all(),
+                'has_source_missing_in_database' => $hasSourceMissingInDatabase,
+                'has_database_missing_in_source' => $hasDatabaseMissingInSource,
+                'can_prune_database_only' => $hasDatabaseMissingInSource && ! $hasUnavailableSource,
                 'has_broken_database_filename_match' => collect($imagePairs)
                     ->contains(fn (array $pair) => ($pair['comparison_type'] ?? null) === 'database_broken_filename'),
                 'good_name' => $good->name,
@@ -2621,6 +2639,17 @@ class BikeproductsCatalogService
             'matched' => count(array_filter($imageComparisons, fn (array $row) => $row['is_match'])),
             'different' => count($coverageMismatches),
             'actionable_different' => collect($coverageMismatches)->where('has_available_source', true)->count(),
+            'source_missing_in_database' => collect($imageComparisons)->where('has_source_missing_in_database', true)->count(),
+            'database_missing_in_source' => collect($imageComparisons)->where('has_database_missing_in_source', true)->count(),
+            'actionable_source_missing_in_database' => collect($imageComparisons)
+                ->filter(fn (array $row) => ($row['has_source_missing_in_database'] ?? false) && ($row['has_available_source'] ?? false))
+                ->count(),
+            'actionable_database_missing_in_source' => collect($imageComparisons)
+                ->filter(fn (array $row) => $row['can_prune_database_only'] ?? false)
+                ->count(),
+            'actionable_reconcile' => collect($imageComparisons)
+                ->filter(fn (array $row) => (($row['has_source_missing_in_database'] ?? false) && ($row['has_available_source'] ?? false)) || (($row['can_prune_database_only'] ?? false) && ($row['has_available_source'] ?? false)))
+                ->count(),
             'filename_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'filename')->count(),
             'content_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'content')->count(),
             'visual_matches' => collect($imageComparisons)->flatMap(fn (array $row) => $row['image_pairs'])->where('comparison_type', 'visual')->count(),
@@ -2635,8 +2664,14 @@ class BikeproductsCatalogService
         if ($statuses !== []) {
             $imageComparisons = array_values(array_filter($imageComparisons, function (array $row) use ($statuses): bool {
                 return collect($statuses)->contains(function (string $status) use ($row): bool {
-                    if (in_array($status, ['match', 'different'], true)) {
+                    if ($status === 'match') {
                         return $row['status'] === $status;
+                    }
+                    if ($status === 'source_missing_in_database') {
+                        return (bool) ($row['has_source_missing_in_database'] ?? false);
+                    }
+                    if ($status === 'database_missing_in_source') {
+                        return (bool) ($row['has_database_missing_in_source'] ?? false);
                     }
                     if ($status === 'broken') {
                         return collect($row['image_pairs'])->contains(fn (array $pair) => $pair['source_status'] === 'broken') || ! empty($row['database_broken_paths']);
@@ -2713,11 +2748,22 @@ class BikeproductsCatalogService
     }
 
     /** @return array<int, int> */
-    public function imageSelection(SupplierCatalogSnapshot $snapshot, ?string $search = null): array
+    public function imageSelection(SupplierCatalogSnapshot $snapshot, string $mode = 'reconcile', ?string $search = null): array
     {
-        return collect($this->imageAudit($snapshot, 1, 100000, $search, ['different'])['image_comparisons'])
+        return collect($this->imageAudit($snapshot, 1, 100000, $search)['image_comparisons'])
             ->flatMap(fn (array $group) => $group['rows'])
-            ->filter(fn (array $row) => ! ($row['source_only'] ?? false) && (($row['has_available_source'] ?? false) || ! empty($row['database_broken_paths'])))
+            ->filter(function (array $row) use ($mode): bool {
+                if ($row['source_only'] ?? false) {
+                    return false;
+                }
+
+                return match ($mode) {
+                    'append', 'replace' => (bool) (($row['has_source_missing_in_database'] ?? false) && ($row['has_available_source'] ?? false)),
+                    'prune' => (bool) ($row['can_prune_database_only'] ?? false),
+                    'delete_broken' => ! empty($row['database_broken_paths']),
+                    default => (bool) ((($row['has_source_missing_in_database'] ?? false) && ($row['has_available_source'] ?? false)) || ($row['can_prune_database_only'] ?? false)),
+                };
+            })
             ->pluck('item_id')
             ->map(fn ($id) => (int) $id)
             ->values()
