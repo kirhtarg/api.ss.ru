@@ -673,8 +673,8 @@ class BikeproductsCatalogController extends Controller
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
             'good_id' => ['nullable', 'integer', 'min:1'],
-            'filters' => ['nullable', 'array', 'max:2'],
-            'filters.*' => ['string', 'in:prices,stocks'],
+            'filters' => ['nullable', 'array', 'max:4'],
+            'filters.*' => ['string', 'in:prices,stocks,source_empty_stocks,database_empty_stocks'],
         ]);
 
         return response()->json(['success' => true, 'data' => $this->cachedAudit(
@@ -703,8 +703,8 @@ class BikeproductsCatalogController extends Controller
         $data = $request->validate([
             'search' => ['nullable', 'string', 'max:120'],
             'good_id' => ['nullable', 'integer', 'min:1'],
-            'filters' => ['nullable', 'array', 'max:2'],
-            'filters.*' => ['string', 'in:prices,stocks'],
+            'filters' => ['nullable', 'array', 'max:4'],
+            'filters.*' => ['string', 'in:prices,stocks,source_empty_stocks,database_empty_stocks'],
         ]);
 
         return response()->json(['success' => true, 'data' => [

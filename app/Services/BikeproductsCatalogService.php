@@ -3069,20 +3069,32 @@ class BikeproductsCatalogService
                 foreach ($mappings as $mapping) {
                     $target = (string) data_get($mapping->conditions, 'target');
                     $sourceValue = $this->nullableString($item->raw_payload[$mapping->source_field] ?? null);
-                    if ($target === '' || $sourceValue === null) {
+                    $isStockTarget = in_array($target, ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'], true);
+                    if ($target === '' || ($sourceValue === null && ! $isStockTarget)) {
                         continue;
                     }
                     $comparisonSourceValue = $this->normalizeMappedGoodValue(
-                        $this->applyMappingAdjustment($sourceValue, $mapping->conditions ?? []),
+                        $sourceValue === null ? null : $this->applyMappingAdjustment($sourceValue, $mapping->conditions ?? []),
                         $target,
                     );
+                    $databaseRawValue = $target === 'brand'
+                        ? null
+                        : ($comparisonModel->{$target} ?? null);
                     $databaseValues = $target === 'brand'
                         ? $good->brands->pluck('name')->values()->all()
-                        : [trim((string) ($comparisonModel->{$target} ?? ''))];
+                        : [trim((string) ($databaseRawValue ?? ''))];
                     $databaseValues = array_values(array_filter($databaseValues, static fn ($value) => $value !== ''));
                     $matchesValue = collect($databaseValues)->contains(fn (string $value) => $this->mappedGoodValuesMatch($target, $value, $comparisonSourceValue));
+                    $sourceStockEmpty = $isStockTarget && $this->isEmptyStockValue($comparisonSourceValue);
+                    $databaseStockEmpty = $isStockTarget && $this->isEmptyStockValue($databaseRawValue);
                     $differences[] = [
-                        'status' => empty($databaseValues) ? 'missing_in_database' : ($matchesValue ? 'match' : 'different'),
+                        'status' => $sourceStockEmpty && $databaseStockEmpty
+                            ? 'empty_both'
+                            : ($sourceStockEmpty
+                                ? 'source_empty'
+                                : ($databaseStockEmpty
+                                    ? 'database_empty'
+                                    : (empty($databaseValues) ? 'missing_in_database' : ($matchesValue ? 'match' : 'different')))),
                         'field' => $target,
                         'source_field' => $mapping->source_field,
                         'source_value' => $comparisonSourceValue,
@@ -3197,11 +3209,22 @@ class BikeproductsCatalogService
         if ($differenceTypes !== []) {
             $rows = array_values(array_filter($rows, function (array $row) use ($differenceTypes, $priceFields, $stockFields): bool {
                 return collect($row['differences'])->contains(function (array $difference) use ($differenceTypes, $priceFields, $stockFields): bool {
-                    if (in_array($difference['status'], ['match', 'not_mapped'], true)) {
-                        return false;
-                    }
-                    return (in_array('prices', $differenceTypes, true) && in_array($difference['field'], $priceFields, true))
-                        || (in_array('stocks', $differenceTypes, true) && in_array($difference['field'], $stockFields, true));
+                    $field = (string) ($difference['field'] ?? '');
+                    $status = (string) ($difference['status'] ?? '');
+                    $isPriceDifference = in_array('prices', $differenceTypes, true)
+                        && in_array($field, $priceFields, true)
+                        && ! in_array($status, ['match', 'not_mapped', 'empty_both'], true);
+                    $isStockDifference = in_array('stocks', $differenceTypes, true)
+                        && in_array($field, $stockFields, true)
+                        && ! in_array($status, ['match', 'not_mapped', 'empty_both'], true);
+                    $isSourceEmptyStock = in_array('source_empty_stocks', $differenceTypes, true)
+                        && in_array($field, $stockFields, true)
+                        && in_array($status, ['source_empty', 'empty_both'], true);
+                    $isDatabaseEmptyStock = in_array('database_empty_stocks', $differenceTypes, true)
+                        && in_array($field, $stockFields, true)
+                        && in_array($status, ['database_empty', 'empty_both'], true);
+
+                    return $isPriceDifference || $isStockDifference || $isSourceEmptyStock || $isDatabaseEmptyStock;
                 });
             }));
         }
@@ -3214,7 +3237,7 @@ class BikeproductsCatalogService
             return $statsRows
                 ->filter(fn (array $row) => collect($row['differences'])->contains(
                     fn (array $difference) => in_array($difference['field'], $fields, true)
-                        && ! in_array($difference['status'], ['match', 'not_mapped'], true),
+                        && ! in_array($difference['status'], ['match', 'not_mapped', 'empty_both'], true),
                 ))
                 ->groupBy($groupKey)
                 ->count();
@@ -3237,7 +3260,7 @@ class BikeproductsCatalogService
                 'goods_with_differences' => $statsRows
                     ->filter(fn (array $row) => collect($row['differences'])->contains(
                         fn (array $difference) => in_array($difference['field'], array_merge($priceFields, $stockFields), true)
-                            && ! in_array($difference['status'], ['match', 'not_mapped'], true),
+                            && ! in_array($difference['status'], ['match', 'not_mapped', 'empty_both'], true),
                     ))
                     ->groupBy($groupKey)
                     ->count(),
@@ -3336,8 +3359,12 @@ class BikeproductsCatalogService
         return in_array($target, ['weight', 'depth', 'width', 'height'], true);
     }
 
-    private function normalizeMappedGoodValue(string $value, string $target): string
+    private function normalizeMappedGoodValue(?string $value, string $target): ?string
     {
+        if ($value === null) {
+            return null;
+        }
+
         if (in_array($target, ['price', 'sale_price', 'demping_price'], true)) {
             $decimal = $this->nullableDecimal($value);
 
@@ -4374,6 +4401,18 @@ class BikeproductsCatalogService
         }
 
         return (float) str_replace(',', '.', $value);
+    }
+
+    private function isEmptyStockValue(mixed $value): bool
+    {
+        $normalized = $this->nullableString($value);
+        if ($normalized === null) {
+            return true;
+        }
+
+        $decimal = $this->nullableDecimal($normalized);
+
+        return $decimal !== null && $decimal == 0.0;
     }
 
     /** @return array<int, string> */
