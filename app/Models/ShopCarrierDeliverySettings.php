@@ -28,6 +28,13 @@ class ShopCarrierDeliverySettings extends Model
         'default_height',
         'settings',
         'is_active',
+        'oauth_client_id',
+        'oauth_client_secret',
+        'oauth_access_token',
+        'oauth_expires_at',
+        'seller_id',
+        'store_domain',
+        'logistics_schema',
     ];
 
     protected $casts = [
@@ -37,6 +44,16 @@ class ShopCarrierDeliverySettings extends Model
         'default_height' => 'decimal:2',
         'settings' => 'array',
         'is_active' => 'boolean',
+        'oauth_client_secret' => 'encrypted',
+        'oauth_access_token' => 'encrypted',
+        'oauth_expires_at' => 'datetime',
+    ];
+
+    protected $hidden = [
+        'api_token',
+        'client_secret',
+        'oauth_client_secret',
+        'oauth_access_token',
     ];
 
     public static function getActive(string $carrier): ?self

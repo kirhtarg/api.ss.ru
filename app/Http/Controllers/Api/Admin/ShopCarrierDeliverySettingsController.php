@@ -29,7 +29,7 @@ class ShopCarrierDeliverySettingsController extends Controller
 
         return response()->json([
             'success' => true,
-            'data' => $settings,
+            'data' => $this->settingsPayload($settings),
         ]);
     }
 
@@ -58,6 +58,13 @@ class ShopCarrierDeliverySettingsController extends Controller
             'default_width' => 'nullable|numeric|min:1|max:1000',
             'default_height' => 'nullable|numeric|min:1|max:1000',
             'settings' => 'nullable|array',
+            'oauth_client_id' => 'nullable|string|max:255',
+            'oauth_client_secret' => 'nullable|string|max:2000',
+            'oauth_access_token' => 'nullable|string|max:4000',
+            'oauth_expires_at' => 'nullable|date',
+            'seller_id' => 'nullable|string|max:255',
+            'store_domain' => 'nullable|string|max:255',
+            'logistics_schema' => 'nullable|in:FBS,FBO,BOTH',
             'is_active' => 'boolean',
         ]);
 
@@ -78,6 +85,16 @@ class ShopCarrierDeliverySettingsController extends Controller
         }
         $validated['settings'] = $settingsData;
 
+        $existing = ShopCarrierDeliverySettings::where('carrier', $carrier)->first();
+        if ($carrier === 'ozon') {
+            foreach (['oauth_client_secret', 'oauth_access_token'] as $secret) {
+                if (blank($validated[$secret] ?? null) && $existing?->{$secret}) {
+                    unset($validated[$secret]);
+                }
+            }
+            $validated['store_domain'] = $this->normalizeStoreDomain((string) ($validated['store_domain'] ?? ''));
+        }
+
         $settings = ShopCarrierDeliverySettings::updateOrCreate(
             ['carrier' => $carrier],
             array_merge($validated, ['carrier' => $carrier])
@@ -90,7 +107,7 @@ class ShopCarrierDeliverySettingsController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Настройки доставки сохранены',
-            'data' => $settings,
+            'data' => $this->settingsPayload($settings),
         ]);
     }
 
@@ -106,6 +123,10 @@ class ShopCarrierDeliverySettingsController extends Controller
 
         if ($carrier === 'yandex') {
             return $this->validateYandexCredentials($request);
+        }
+
+        if ($carrier === 'ozon') {
+            return $this->validateOzonCredentials($request);
         }
 
         $apiUrl = trim((string) $request->get('api_url', ''));
@@ -140,6 +161,75 @@ class ShopCarrierDeliverySettingsController extends Controller
                 'data' => ['valid' => false],
             ], 422);
         }
+    }
+
+    private function validateOzonCredentials(Request $request): JsonResponse
+    {
+        $token = trim((string) $request->input('oauth_access_token', ''));
+        $settings = ShopCarrierDeliverySettings::where('carrier', 'ozon')->first();
+        if ($token === '' && $settings) {
+            $token = trim((string) $settings->oauth_access_token);
+        }
+
+        if ($token === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Укажите OAuth access token Ozon Delivery. Обычный Api-Key Seller API для Ozon Логистики не подходит.',
+                'data' => ['valid' => false],
+            ], 422);
+        }
+
+        try {
+            $url = 'https://api-seller.ozon.ru/v1/seller/ozon-logistics/info';
+            $response = Http::withToken($token)
+                ->acceptJson()
+                ->asJson()
+                ->timeout(20)
+                ->post($url, []);
+            $data = $response->json();
+            $enabled = (bool) data_get($data, 'ozon_logistics_enabled', false);
+            $message = $response->successful()
+                ? ($enabled ? 'Ozon Доставка подключена и доступна для этого OAuth-токена.' : 'OAuth-токен принят, но Ozon Доставка не включена в кабинете.')
+                : (data_get($data, 'message') ?? data_get($data, 'error.message') ?? $response->body());
+
+            return response()->json([
+                'success' => $response->successful() && $enabled,
+                'message' => $message,
+                'data' => [
+                    'valid' => $response->successful() && $enabled,
+                    'status' => $response->status(),
+                    'url' => $url,
+                    'ozon_logistics_enabled' => $enabled,
+                    'available_schemas' => array_values((array) data_get($data, 'available_schemas', [])),
+                    'response' => $data,
+                ],
+            ], $response->successful() && $enabled ? 200 : 422);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка проверки Ozon Delivery: '.$e->getMessage(),
+                'data' => ['valid' => false],
+            ], 422);
+        }
+    }
+
+    private function settingsPayload(ShopCarrierDeliverySettings $settings): array
+    {
+        return array_merge($settings->toArray(), [
+            'has_oauth_client_secret' => filled($settings->oauth_client_secret),
+            'has_oauth_access_token' => filled($settings->oauth_access_token),
+        ]);
+    }
+
+    private function normalizeStoreDomain(string $domain): ?string
+    {
+        $domain = trim($domain);
+        if ($domain === '') {
+            return null;
+        }
+
+        $domain = preg_replace('#^https?://#i', '', $domain);
+        return rtrim((string) $domain, '/');
     }
 
     private function validateYandexCredentials(Request $request): JsonResponse
@@ -483,7 +573,6 @@ class ShopCarrierDeliverySettingsController extends Controller
         return null;
     }
 }
-
 
 
 
