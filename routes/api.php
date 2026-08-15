@@ -2610,6 +2610,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/dictionary-values', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'dictionaryValues']);
                 Route::post('/dictionary-suggestions', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'dictionarySuggestions']);
                 Route::post('/attribute-templates/dictionary', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'saveDictionaryTemplate']);
+                Route::delete('/attribute-templates/dictionary', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'removeDictionaryTemplateMapping']);
                 Route::get('/mappings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'mappings']);
                 Route::post('/mappings', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'saveMapping']);
                 Route::delete('/mappings/{mapping}', [\App\Http\Controllers\Api\Admin\ShopYandexMarketSellerController::class, 'deleteMapping']);

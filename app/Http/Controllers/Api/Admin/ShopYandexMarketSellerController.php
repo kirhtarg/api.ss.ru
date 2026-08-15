@@ -131,6 +131,7 @@ class ShopYandexMarketSellerController extends Controller
             'source_key' => 'nullable|integer|min:1', 'selection_tag_id' => 'nullable|integer|exists:shop_tags,id',
             'category_ids' => 'required|array|min:1', 'category_ids.*' => 'integer',
             'search' => 'nullable|string|max:255', 'page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:100',
+            'unmapped_only' => 'nullable|boolean',
             'mapped_values' => 'nullable|array', 'mapped_values.*' => 'string|max:1000',
         ]);
         $account = $this->account();
@@ -156,12 +157,16 @@ class ShopYandexMarketSellerController extends Controller
             return $counts;
         });
         $rows = collect($counts)->map(fn ($count, $value) => ['value' => $value, 'count' => $count]);
-        $search = mb_strtolower(trim((string) ($data['search'] ?? '')));
-        if ($search !== '') $rows = $rows->filter(fn ($item) => str_contains(mb_strtolower($item['value']), $search))->values();
+        $valuesTotal = $rows->count();
         $mappedValues = array_fill_keys($data['mapped_values'] ?? [], true);
         $mappedCount = collect(array_keys($counts))->filter(fn ($value) => isset($mappedValues[$value]))->count();
+        if ($data['unmapped_only'] ?? false) {
+            $rows = $rows->filter(fn ($item) => ! isset($mappedValues[$item['value']]))->values();
+        }
+        $search = mb_strtolower(trim((string) ($data['search'] ?? '')));
+        if ($search !== '') $rows = $rows->filter(fn ($item) => str_contains(mb_strtolower($item['value']), $search))->values();
         $perPage = (int) ($data['per_page'] ?? 50); $page = (int) ($data['page'] ?? 1); $total = $rows->count();
-        return response()->json(['success' => true, 'data' => $rows->forPage($page, $perPage)->values(), 'meta' => ['current_page' => $page, 'per_page' => $perPage, 'total' => $total, 'last_page' => max(1, (int) ceil($total / $perPage)), 'mapped_count' => $mappedCount]]);
+        return response()->json(['success' => true, 'data' => $rows->forPage($page, $perPage)->values(), 'meta' => ['current_page' => $page, 'per_page' => $perPage, 'total' => $total, 'last_page' => max(1, (int) ceil($total / $perPage)), 'values_total' => $valuesTotal, 'mapped_count' => $mappedCount]]);
     }
 
     public function localSourceValueStats(Request $request, YandexMarketProductResolver $resolver)
@@ -366,6 +371,48 @@ class ShopYandexMarketSellerController extends Controller
         return response()->json(['success' => true, 'message' => $profileSaved ? 'Сопоставления сохранены в текущем профиле и общем шаблоне.' : 'Сопоставления сохранены в общем шаблоне. Сохраните новый профиль, чтобы применить их в нём.', 'data' => $template->mapping, 'profile_saved' => $profileSaved]);
     }
 
+    public function removeDictionaryTemplateMapping(Request $request)
+    {
+        $data = $request->validate([
+            'market_parameter_id' => 'required|integer|min:1',
+            'source' => 'required|string|in:brand,property,variation_attribute,main_image,good,static',
+            'source_key' => 'nullable', 'profile_id' => 'nullable|integer|min:1',
+            'local_value' => 'required|string|max:1000',
+        ]);
+
+        $account = $this->account();
+        $signature = $this->sourceSignature($data['source'], $data['source_key'] ?? null);
+        $profileSaved = false;
+        DB::transaction(function () use ($account, $data, $signature, &$profileSaved) {
+            $template = ShopYandexMarketAttributeTemplate::query()
+                ->where('account_id', $account->id)
+                ->where('market_parameter_id', (int) $data['market_parameter_id'])
+                ->where('source_signature', $signature)
+                ->first();
+            if ($template) {
+                $mapping = $template->mapping ?? [];
+                unset($mapping['dictionary_map'][$data['local_value']], $mapping['dictionary_labels'][$data['local_value']]);
+                $template->update(['mapping' => $mapping]);
+            }
+
+            if (! empty($data['profile_id'])) {
+                $profile = ShopYandexMarketCategoryMapping::query()->where('account_id', $account->id)->findOrFail((int) $data['profile_id']);
+                $mappings = collect($profile->attribute_mappings ?? [])->map(function ($mapping) use ($data) {
+                    $sameParameter = (int) ($mapping['id'] ?? 0) === (int) $data['market_parameter_id'];
+                    $sameSource = ($mapping['source'] ?? '') === $data['source']
+                        && (string) ($mapping['source_key'] ?? '') === (string) ($data['source_key'] ?? '');
+                    if (! $sameParameter || ! $sameSource) return $mapping;
+                    unset($mapping['dictionary_map'][$data['local_value']], $mapping['dictionary_labels'][$data['local_value']]);
+                    return $mapping;
+                })->values()->all();
+                $profile->update(['attribute_mappings' => $mappings]);
+                $profileSaved = true;
+            }
+        });
+
+        return response()->json(['success' => true, 'message' => $profileSaved ? 'Привязка удалена из профиля и общего шаблона.' : 'Привязка удалена из общего шаблона.']);
+    }
+
     public function deleteMapping(ShopYandexMarketCategoryMapping $mapping)
     {
         abort_unless($mapping->account_id === $this->account()->id, 404);
@@ -375,7 +422,7 @@ class ShopYandexMarketSellerController extends Controller
 
     public function preview(Request $request, YandexMarketPayloadBuilder $builder, YandexMarketProductResolver $resolver)
     {
-        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:50', 'search' => 'nullable|string|max:255', 'good_ids' => 'nullable|array|max:100', 'good_ids.*' => 'integer', 'mapping_id' => 'nullable|integer|min:1', 'errors_only' => 'nullable|boolean', 'stock_zero' => 'nullable|boolean', 'error_types' => 'nullable|array', 'error_types.*' => 'in:image,required,price,discount,category,market,other']);
+        $data = $request->validate(['page' => 'nullable|integer|min:1', 'per_page' => 'nullable|integer|min:10|max:50', 'search' => 'nullable|string|max:255', 'good_ids' => 'nullable|array|max:100', 'good_ids.*' => 'integer', 'mapping_id' => 'nullable|integer|min:1', 'errors_only' => 'nullable|boolean', 'stock_zero' => 'nullable|boolean', 'validation_filter' => 'nullable|in:valid_offers,valid_goods,valid_variations,valid_variation_goods,valid_simple_goods', 'error_types' => 'nullable|array', 'error_types.*' => 'in:image,required,price,discount,category,market,other']);
         $account = $this->account();
         if (! $this->hasUsableMappings($account)) return response()->json(['success' => false, 'message' => 'Создайте активный профиль с категорией и тегом отбора (или задайте тег по умолчанию в подключении).'], 422);
         $page = (int) ($data['page'] ?? 1); $perPage = (int) ($data['per_page'] ?? 10);
@@ -455,7 +502,22 @@ class ShopYandexMarketSellerController extends Controller
         $validSimpleGoods = $validGoods->filter(fn ($rows) => $rows->every(fn (array $row) => empty($row['variation_id'])));
         $errorTypes = array_values(array_unique($data['error_types'] ?? []));
         $stockZero = (bool) ($data['stock_zero'] ?? false);
-        $filteredGoodIds = collect($allRows)
+        $validationFilter = $data['validation_filter'] ?? null;
+        $allowedGoodIds = match ($validationFilter) {
+            'valid_goods' => $validGoods->keys()->map(fn ($id) => (int) $id)->all(),
+            'valid_variation_goods' => $validVariationGoods->keys()->map(fn ($id) => (int) $id)->all(),
+            'valid_simple_goods' => $validSimpleGoods->keys()->map(fn ($id) => (int) $id)->all(),
+            default => null,
+        };
+        $candidateRows = collect($allRows)->filter(function (array $row) use ($validationFilter, $allowedGoodIds) {
+            return match ($validationFilter) {
+                'valid_offers' => empty($row['errors']),
+                'valid_variations' => ! empty($row['variation_id']) && empty($row['errors']),
+                'valid_goods', 'valid_variation_goods', 'valid_simple_goods' => in_array((int) $row['good_id'], $allowedGoodIds, true),
+                default => true,
+            };
+        });
+        $filteredRows = $candidateRows
             ->filter(function (array $row) use ($stockZero, $data, $errorTypes) {
                 if ($stockZero && (int) $row['stock'] !== 0) {
                     return false;
@@ -467,16 +529,17 @@ class ShopYandexMarketSellerController extends Controller
                     return false;
                 }
                 return ! $errorTypes || ! empty(array_intersect($row['error_types'], $errorTypes));
-            })
-            ->pluck('good_id')->map(fn ($id) => (int) $id)->unique()->all();
-        $displayGoods = (($data['errors_only'] ?? false) || $errorTypes || $stockZero)
+            });
+        $filteredGoodIds = $filteredRows->pluck('good_id')->map(fn ($id) => (int) $id)->unique()->all();
+        $displayGoods = (($data['errors_only'] ?? false) || $errorTypes || $stockZero || $validationFilter)
             ? $goods->filter(fn (ShopGood $good) => in_array((int) $good->id, $filteredGoodIds, true))->values()
             : $goods;
         $displayTotal = $displayGoods->count();
         $displayLastPage = max(1, (int) ceil($displayTotal / $perPage));
         $page = min($page, $displayLastPage);
         $pageGoodIds = $displayGoods->forPage($page, $perPage)->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $rows = array_values(array_filter($allRows, fn (array $row) => in_array((int) $row['good_id'], $pageGoodIds, true) && (! $stockZero || (int) $row['stock'] === 0)));
+        $visibleOfferIds = $filteredRows->pluck('offer_id')->all();
+        $rows = array_values(array_filter($allRows, fn (array $row) => in_array((int) $row['good_id'], $pageGoodIds, true) && in_array($row['offer_id'], $visibleOfferIds, true)));
         return response()->json(['success' => true, 'data' => $rows, 'meta' => [
             'eligible_goods' => $total,
             'eligible_offers' => $offersTotal,
