@@ -513,13 +513,15 @@ class BikeproductsCatalogController extends Controller
             'search' => ['nullable', 'string', 'max:120'],
             'statuses' => ['nullable', 'array', 'max:4'],
             'statuses.*' => ['string', 'in:match,attention,not_found,missing_in_file,source_name_missing'],
+            'difference_types' => ['nullable', 'array', 'max:4'],
+            'difference_types.*' => ['string', 'in:name,short_description,description,brand'],
         ]);
 
         return response()->json(['success' => true, 'data' => $this->cachedAudit(
             $snapshot,
             'goods',
             $data,
-            fn () => $this->catalog->goodAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, null, $data['search'] ?? null, $data['statuses'] ?? []),
+            fn () => $this->catalog->goodAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, null, $data['search'] ?? null, $data['statuses'] ?? [], $data['difference_types'] ?? []),
         )]);
     }
 
@@ -558,10 +560,12 @@ class BikeproductsCatalogController extends Controller
         $data = $request->validate([
             'status' => ['required', 'in:attention,not_found,missing_in_file'],
             'search' => ['nullable', 'string', 'max:120'],
+            'difference_types' => ['nullable', 'array', 'max:4'],
+            'difference_types.*' => ['string', 'in:name,short_description,description,brand'],
         ]);
 
         return response()->json(['success' => true, 'data' => [
-            'ids' => $this->catalog->goodSelection($snapshot, $data['status'], $data['search'] ?? null),
+            'ids' => $this->catalog->goodSelection($snapshot, $data['status'], $data['search'] ?? null, $data['difference_types'] ?? []),
         ]]);
     }
 
@@ -575,6 +579,8 @@ class BikeproductsCatalogController extends Controller
             'item_ids' => ['required', 'array', 'min:1', 'max:10000'],
             'item_ids.*' => ['integer', 'distinct'],
             'image_mode' => ['nullable', 'in:append,replace,reconcile,prune,delete_broken'],
+            'targets' => ['nullable', 'array', 'max:4'],
+            'targets.*' => ['string', 'in:name,short_description,description,brand'],
         ]);
 
         $result = $this->runCatalogAction(
@@ -583,7 +589,7 @@ class BikeproductsCatalogController extends Controller
             $data['scope'],
             'update',
             $data['item_ids'],
-            fn () => $this->catalog->applyMappedUpdate($snapshot, $data['scope'], $data['item_ids'], $data['image_mode'] ?? 'append'),
+            fn () => $this->catalog->applyMappedUpdate($snapshot, $data['scope'], $data['item_ids'], $data['image_mode'] ?? 'append', $data['targets'] ?? []),
         );
         $imageMode = $data['image_mode'] ?? 'append';
         if (
@@ -768,7 +774,7 @@ class BikeproductsCatalogController extends Controller
         $version = $snapshot->updated_at?->format('Uu') ?? '0';
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v35:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v36:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.
