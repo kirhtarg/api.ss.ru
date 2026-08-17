@@ -156,7 +156,7 @@ class BikeproductsCatalogController extends Controller
 
         return response()->json(['success' => true, 'data' => $this->cachedAudit(
             $snapshot,
-            'overview',
+            'overview-v2',
             [],
             fn () => $this->catalog->overview($snapshot),
         )]);
@@ -317,7 +317,7 @@ class BikeproductsCatalogController extends Controller
         }
 
         $version = $snapshot->updated_at?->format('Uu') ?? '0';
-        $lockKey = 'supplier-catalog:variation-audit-warming:v2:'.$snapshot->id.':'.$version;
+        $lockKey = 'supplier-catalog:variation-audit-warming:v3:'.$snapshot->id.':'.$version;
         if (Cache::store('file')->add($lockKey, true, now()->addMinutes(30))) {
             WarmSupplierCatalogVariationAuditJob::dispatch($snapshot->id, $version);
         }

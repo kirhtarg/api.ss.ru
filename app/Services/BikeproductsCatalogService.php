@@ -38,6 +38,12 @@ class BikeproductsCatalogService
     /** @var array<string, int> */
     private array $variationAttributeIds = [];
 
+    /** @var array<string, array{threshold: ?float, mode: string, source_fields: array<int, string>}> */
+    private array $minParsePriceSettingsCache = [];
+
+    /** @var array<int, bool> */
+    private array $sourceVariationFlags = [];
+
     /** @param array<int, int> $itemIds @return array{created: int, updated: int, skipped: int, failed: int} */
     public function downloadAttachedImages(int $snapshotId, array $itemIds, string $mode = 'append'): array
     {
@@ -1449,7 +1455,14 @@ class BikeproductsCatalogService
         $this->assertReadySnapshot($snapshot);
         $this->ensureDefaultMappings($snapshot->supplier_code);
         $items = $snapshot->items()->get(['external_sku', 'external_group_key', 'name', 'clean_name', 'source_color', 'source_size', 'is_source_variation', 'source_axes', 'image_urls', 'raw_payload']);
-        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+        $sourceSkus = $items->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code));
+        $matches = $this->resolveSkuMatches($sourceSkus, $snapshot->supplier_code);
+        // resolveSkuMatches keeps both original and normalized lookup keys.
+        // Count source rows through their original list, otherwise the same
+        // match may be counted twice and produce a negative residual.
+        $sourceRowMatches = $sourceSkus
+            ->map(fn (string $sku) => $matches->get($sku) ?? $matches->get($this->normalizeSku($sku)))
+            ->filter();
         $mappings = $this->getMappings($snapshot->supplier_code);
         $sourceAxes = [];
         $sourceAxisValues = [];
@@ -1521,9 +1534,9 @@ class BikeproductsCatalogService
                 'database_unique_variation_axes' => count($databaseAxisValues),
                 'database_unique_variation_values' => array_sum(array_map('count', $databaseAxisValues)),
                 'database_unique_properties' => $databaseGoodIds->isEmpty() ? 0 : DB::table('shop_good_properties')->whereIn('good_id', $databaseGoodIds)->distinct('property_id')->count('property_id'),
-                'database_matching_goods' => $matches->where('type', 'good')->count(),
-                'database_matching_variations' => $matches->where('type', 'variation')->count(),
-                'database_unmatched_source_skus' => $items->count() - $matches->count(),
+                'database_matching_goods' => $sourceRowMatches->where('type', 'good')->count(),
+                'database_matching_variations' => $sourceRowMatches->where('type', 'variation')->count(),
+                'database_unmatched_source_skus' => $items->count() - $sourceRowMatches->count(),
             ],
             'source_axes' => $this->sortStats($sourceAxes),
             'database_axes' => $this->sortStats($databaseAxes),
@@ -1580,10 +1593,20 @@ class BikeproductsCatalogService
         } else {
         $mappings = $this->getMappings($snapshot->supplier_code);
         $priceMappings = $this->priceFieldMappings($snapshot->supplier_code);
-        $allSourceVariationItems = $this->sourceVariationItems($snapshot)
+        // The audit needs both kinds of source rows and their raw payloads.
+        // Read them once: each payload is a large JSON document, and loading it
+        // three times made the first background calculation unnecessarily slow.
+        $allSourceItems = $snapshot->items()->get([
+            'id', 'name', 'clean_name', 'source_color', 'source_size',
+            'source_year', 'is_source_variation', 'external_sku',
+            'source_axes', 'raw_payload',
+        ]);
+        [$allSourceVariationItems, $allSourceSingleItems] = $allSourceItems
+            ->partition(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item));
+        $allSourceVariationItems = $allSourceVariationItems
             ->filter(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code) !== '')
             ->values();
-        $allSourceSingleItems = $this->sourceSingleItems($snapshot)
+        $allSourceSingleItems = $allSourceSingleItems
             ->filter(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code) !== '')
             ->values();
         $sourceGroupKey = fn (SupplierCatalogItem $item): string => $item->clean_name
@@ -1600,8 +1623,7 @@ class BikeproductsCatalogService
                 fn (SupplierCatalogItem $item) => isset($sourceVariationGroupKeys[$sourceGroupKey($item)]),
             ))
             ->values();
-        $allSourcePayloadSkuItems = $snapshot->items()
-            ->get(['id', 'name', 'clean_name', 'source_color', 'source_size', 'source_year', 'is_source_variation', 'external_sku', 'source_axes', 'raw_payload'])
+        $allSourcePayloadSkuItems = $allSourceItems
             ->filter(fn (SupplierCatalogItem $item) => $this->nullableString($item->raw_payload[self::SOURCE_COLUMNS['sku']] ?? null) !== null)
             ->values();
         $priceExcludedSourceItems = $allSourceVariationItems
@@ -3732,12 +3754,16 @@ class BikeproductsCatalogService
     /** @return array{threshold: ?float, mode: string, source_fields: array<int, string>} */
     private function minParsePriceSettings(string $supplierCode): array
     {
+        if (isset($this->minParsePriceSettingsCache[$supplierCode])) {
+            return $this->minParsePriceSettingsCache[$supplierCode];
+        }
+
         $settings = SupplierCatalogProfile::query()
             ->where('code', $supplierCode)
             ->value('settings') ?? [];
         $threshold = $this->nullableDecimal($settings['min_parse_price'] ?? null);
 
-        return [
+        return $this->minParsePriceSettingsCache[$supplierCode] = [
             'threshold' => $threshold !== null && $threshold > 0 ? $threshold : null,
             'mode' => ($settings['min_parse_price_mode'] ?? 'any') === 'all' ? 'all' : 'any',
             'source_fields' => $this->normalizeStringList($settings['min_parse_price_source_fields'] ?? []),
@@ -3747,11 +3773,7 @@ class BikeproductsCatalogService
     /** @return array<int, string> */
     private function minParsePriceSourceFields(string $supplierCode): array
     {
-        $settings = SupplierCatalogProfile::query()
-            ->where('code', $supplierCode)
-            ->value('settings') ?? [];
-
-        return $this->normalizeStringList($settings['min_parse_price_source_fields'] ?? []);
+        return $this->minParsePriceSettings($supplierCode)['source_fields'];
     }
 
     private function mappedPriceDecimal(SupplierCatalogItem $item, SupplierCatalogFieldMapping $mapping): ?float
@@ -4359,11 +4381,22 @@ class BikeproductsCatalogService
 
     private function isSourceVariationItem(SupplierCatalogItem $item): bool
     {
-        if (! empty($item->raw_payload['NAME'])) {
-            return $this->normalizeSourceVariation($item->raw_payload, 'bikeproducts', $item->external_sku)['is_variation'];
+        $itemId = (int) ($item->id ?? 0);
+        if ($itemId > 0 && array_key_exists($itemId, $this->sourceVariationFlags)) {
+            return $this->sourceVariationFlags[$itemId];
         }
 
-        return (bool) $item->is_source_variation;
+        if (! empty($item->raw_payload['NAME'])) {
+            $isVariation = $this->normalizeSourceVariation($item->raw_payload, 'bikeproducts', $item->external_sku)['is_variation'];
+        } else {
+            $isVariation = (bool) $item->is_source_variation;
+        }
+
+        if ($itemId > 0) {
+            $this->sourceVariationFlags[$itemId] = $isVariation;
+        }
+
+        return $isVariation;
     }
 
     private function hasUsableSourceName(SupplierCatalogItem $item, string $supplierCode): bool
@@ -4681,12 +4714,12 @@ class BikeproductsCatalogService
 
     private function variationAuditBaseCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        return 'supplier-catalog:variation-audit-base:v39:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        return 'supplier-catalog:variation-audit-base:v40:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
     }
 
     private function variationAuditStatsCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        return 'supplier-catalog:variation-audit-stats:v1:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        return 'supplier-catalog:variation-audit-stats:v2:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
     }
 
     /** @return array<int, string> */
