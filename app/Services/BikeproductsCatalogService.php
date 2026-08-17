@@ -1530,6 +1530,23 @@ class BikeproductsCatalogService
         ];
     }
 
+    /** @return array<string, mixed>|null */
+    public function cachedVariationAuditStats(SupplierCatalogSnapshot $snapshot): ?array
+    {
+        $this->assertReadySnapshot($snapshot);
+        $cached = Cache::store('file')->get($this->variationAuditBaseCacheKey($snapshot));
+
+        return is_array($cached) && isset($cached['stats'], $cached['rows'])
+            ? $cached['stats']
+            : null;
+    }
+
+    public function warmVariationAudit(SupplierCatalogSnapshot $snapshot): void
+    {
+        $this->assertReadySnapshot($snapshot);
+        $this->variationAudit($snapshot, 1, 1);
+    }
+
     /** @return array{data: array<int, array<string, mixed>>, meta: array<string, int>} */
     public function variationAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?string $search = null, array $filters = [], string $variationCount = 'all', ?int $goodId = null, string $mainStockFilter = 'all', string $remoteStockFilter = 'all', array $axisIssues = []): array
     {
@@ -1537,7 +1554,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v36:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = $this->variationAuditBaseCacheKey($snapshot);
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'], $cachedBase['duplicate_sku_groups'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1800,18 +1817,23 @@ class BikeproductsCatalogService
             $isExactSingleProductMatch = ! $isSourceVariation
                 && $databaseProduct !== null
                 && $databaseGoodVariationCount === 0;
+            $isSingleProductMatchedByName = ! $isSourceVariation
+                && $matchedDatabaseGood !== null
+                && $databaseGoodVariationCount === 0;
             $sourceNameMissing = ! $this->hasUsableSourceName($source, $snapshot->supplier_code);
             $status = $sourceNameMissing
                 ? 'source_name_missing'
                 : ($isExactSingleProductMatch
                     ? 'match'
+                    : ($isSingleProductMatchedByName
+                        ? 'source_single_product_sku_mismatch'
                     : ($sameAxesVariation
-                    ? 'source_variation_sku_mismatch'
-                    : ($groupDatabaseGood || $hasDatabaseProduct
-                        ? 'source_variation_missing'
-                        : ($otherSupplierVariation || $otherSupplierGood
-                            ? 'source_sku_other_supplier'
-                            : 'source_good_missing'))));
+                        ? 'source_variation_sku_mismatch'
+                        : ($groupDatabaseGood || $hasDatabaseProduct
+                            ? 'source_variation_missing'
+                            : ($otherSupplierVariation || $otherSupplierGood
+                                ? 'source_sku_other_supplier'
+                                : 'source_good_missing')))));
             // A sole source variation matched to an existing product without
             // variations is stored on that product. Creating a technical
             // variation here would duplicate the same SKU unnecessarily.
@@ -1843,6 +1865,15 @@ class BikeproductsCatalogService
                         $otherSupplierGood ? 'Товар #'.$otherSupplierGood->id : null,
                         $otherSupplier ? 'Поставщик: '.$otherSupplier : 'поставщик не указан',
                     ])))],
+                ]);
+            }
+            if ($status === 'source_single_product_sku_mismatch') {
+                array_unshift($comparisons, [
+                    'status' => $status,
+                    'attribute' => 'Артикул',
+                    'source_value' => $sourceSku,
+                    'database_values' => [$matchedDatabaseGood?->sku],
+                    'message' => 'Товар без вариаций найден в базе по названию, но артикул не совпадает. Вариация не будет создана автоматически.',
                 ]);
             }
             $rows->push([
@@ -1990,6 +2021,7 @@ class BikeproductsCatalogService
             'source_variation_missing' => $allRows->where('status', 'source_variation_missing')->pluck('item_id')->unique()->count(),
             'source_variation_missing_groups' => $countBaseGroups($allRows->where('status', 'source_variation_missing')),
             'source_single_product_update' => $allRows->where('status', 'source_single_product_update')->pluck('item_id')->unique()->count(),
+            'source_single_product_sku_mismatch' => $allRows->where('status', 'source_single_product_sku_mismatch')->pluck('item_id')->unique()->count(),
             'source_variation_sku_mismatch' => $allRows->where('status', 'source_variation_sku_mismatch')->pluck('item_id')->unique()->count(),
             'source_variation_sku_mismatch_groups' => $countBaseGroups($allRows->where('status', 'source_variation_sku_mismatch')),
             'source_sku_other_supplier' => $countBaseGroups($allRows->where('status', 'source_sku_other_supplier')),
@@ -2038,6 +2070,7 @@ class BikeproductsCatalogService
             'source_good_missing',
             'source_variation_missing',
             'source_single_product_update',
+            'source_single_product_sku_mismatch',
             'source_variation_sku_mismatch',
             'source_sku_other_supplier',
             'source_price_excluded',
@@ -2165,6 +2198,7 @@ class BikeproductsCatalogService
                 'source_variation_missing' => $baseStats['source_variation_missing'] ?? 0,
                 'source_variation_missing_groups' => $baseStats['source_variation_missing_groups'] ?? 0,
                 'source_single_product_update' => $baseStats['source_single_product_update'] ?? 0,
+                'source_single_product_sku_mismatch' => $baseStats['source_single_product_sku_mismatch'] ?? 0,
                 'source_variation_sku_mismatch' => $baseStats['source_variation_sku_mismatch'] ?? 0,
                 'source_variation_sku_mismatch_groups' => $baseStats['source_variation_sku_mismatch_groups'] ?? 0,
                 'source_sku_other_supplier' => $baseStats['source_sku_other_supplier'] ?? 0,
@@ -4616,6 +4650,11 @@ class BikeproductsCatalogService
         $sku = preg_replace('/[\x{2010}-\x{2015}\x{2212}]/u', '-', $sku) ?? $sku;
 
         return mb_strtoupper(trim($sku));
+    }
+
+    private function variationAuditBaseCacheKey(SupplierCatalogSnapshot $snapshot): string
+    {
+        return 'supplier-catalog:variation-audit-base:v37:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
     }
 
     /** @return array<int, string> */

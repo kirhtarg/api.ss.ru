@@ -13,6 +13,7 @@ use App\Models\SupplierFeedPriceStockRun;
 use App\Jobs\ProcessSupplierCatalogExcelJob;
 use App\Jobs\AuditSupplierCatalogImagesJob;
 use App\Jobs\SyncSupplierCatalogImagesJob;
+use App\Jobs\WarmSupplierCatalogVariationAuditJob;
 use App\Services\BikeproductsCatalogService;
 use App\Services\SupplierFeedPriceStockService;
 use Closure;
@@ -287,18 +288,44 @@ class BikeproductsCatalogController extends Controller
             'axis_issues.*' => ['string', 'in:different,missing,extra'],
             'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
-            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_single_product_update,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,source_name_missing,database_duplicate_sku'],
+            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_single_product_update,source_single_product_sku_mismatch,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,source_name_missing,database_duplicate_sku'],
         ]);
 
         return response()->json([
             'success' => true,
             'data' => $this->cachedAudit(
                 $snapshot,
-                'variations-v28',
+                'variations-v29',
                 $data,
                 fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null, $data['main_stock'] ?? 'all', $data['remote_stock'] ?? 'all', $data['axis_issues'] ?? []),
             ),
         ]);
+    }
+
+    public function variationAuditStats(SupplierCatalogSnapshot $snapshot): JsonResponse
+    {
+        if ($response = $this->notReadyResponse($snapshot)) {
+            return $response;
+        }
+
+        $stats = $this->catalog->cachedVariationAuditStats($snapshot);
+        if ($stats !== null) {
+            return response()->json(['success' => true, 'data' => [
+                'status' => 'ready',
+                'stats' => $stats,
+            ]]);
+        }
+
+        $version = $snapshot->updated_at?->format('Uu') ?? '0';
+        $lockKey = 'supplier-catalog:variation-audit-warming:'.$snapshot->id.':'.$version;
+        if (Cache::store('file')->add($lockKey, true, now()->addMinutes(30))) {
+            WarmSupplierCatalogVariationAuditJob::dispatch($snapshot->id, $version);
+        }
+
+        return response()->json(['success' => true, 'data' => [
+            'status' => 'processing',
+            'stats' => [],
+        ]]);
     }
 
     public function applyVariationAction(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
@@ -377,7 +404,7 @@ class BikeproductsCatalogController extends Controller
             'axis_issues.*' => ['string', 'in:different,missing,extra'],
             'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
-            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_single_product_update,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,source_name_missing,database_duplicate_sku'],
+            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_single_product_update,source_single_product_sku_mismatch,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,source_name_missing,database_duplicate_sku'],
         ]);
 
         return response()->json([

@@ -8,6 +8,8 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\Cache;
+use App\Models\SupplierCatalogSnapshot;
 
 class ProcessSupplierCatalogExcelJob implements ShouldQueue
 {
@@ -24,5 +26,16 @@ class ProcessSupplierCatalogExcelJob implements ShouldQueue
     public function handle(BikeproductsCatalogService $catalog): void
     {
         $catalog->processExcelSnapshot($this->snapshotId);
+
+        $snapshot = SupplierCatalogSnapshot::find($this->snapshotId);
+        if ($snapshot?->status !== 'ready') {
+            return;
+        }
+
+        $version = $snapshot->updated_at?->format('Uu') ?? '0';
+        $lockKey = 'supplier-catalog:variation-audit-warming:'.$snapshot->id.':'.$version;
+        if (Cache::store('file')->add($lockKey, true, now()->addMinutes(30))) {
+            WarmSupplierCatalogVariationAuditJob::dispatch($snapshot->id, $version);
+        }
     }
 }
