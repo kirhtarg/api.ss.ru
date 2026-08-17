@@ -781,6 +781,7 @@ class BikeproductsCatalogController extends Controller
                 'executed_at' => now(),
             ]);
             $snapshot->touch();
+            $this->invalidateSnapshotAuditCache($snapshot->id);
             $result['action_run_id'] = $run->id;
 
             return $result;
@@ -798,10 +799,17 @@ class BikeproductsCatalogController extends Controller
     private function cachedAudit(SupplierCatalogSnapshot $snapshot, string $section, array $parameters, Closure $callback): array
     {
         ksort($parameters);
-        $version = $snapshot->updated_at?->format('Uu') ?? '0';
+        // MySQL installations restored from older backups may store timestamps
+        // with second precision. A touch performed in the same second then
+        // leaves this value unchanged and serves stale audit data for 15 min.
+        // Keep a separate cache version which is bumped after every action.
+        $version = Cache::store('file')->get(
+            $this->snapshotAuditVersionKey($snapshot->id),
+            $snapshot->updated_at?->format('Uu') ?? '0',
+        );
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v41:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v42:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.
@@ -810,10 +818,30 @@ class BikeproductsCatalogController extends Controller
 
     private function touchSupplierSnapshots(string $supplierCode): void
     {
-        SupplierCatalogSnapshot::query()
+        $snapshotIds = SupplierCatalogSnapshot::query()
             ->where('supplier_code', $supplierCode)
             ->where('status', 'ready')
+            ->pluck('id');
+        SupplierCatalogSnapshot::query()
+            ->whereIn('id', $snapshotIds)
             ->update(['updated_at' => now()]);
+        foreach ($snapshotIds as $snapshotId) {
+            $this->invalidateSnapshotAuditCache((int) $snapshotId);
+        }
+    }
+
+    private function snapshotAuditVersionKey(int $snapshotId): string
+    {
+        return 'supplier-catalog:audit-version:'.$snapshotId;
+    }
+
+    private function invalidateSnapshotAuditCache(int $snapshotId): void
+    {
+        Cache::store('file')->put(
+            $this->snapshotAuditVersionKey($snapshotId),
+            bin2hex(random_bytes(12)),
+            now()->addDays(30),
+        );
     }
 
     private function notReadyResponse(SupplierCatalogSnapshot $snapshot): ?JsonResponse
