@@ -287,14 +287,14 @@ class BikeproductsCatalogController extends Controller
             'axis_issues.*' => ['string', 'in:different,missing,extra'],
             'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
-            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_single_product_update,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,database_duplicate_sku'],
+            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_single_product_update,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,source_name_missing,database_duplicate_sku'],
         ]);
 
         return response()->json([
             'success' => true,
             'data' => $this->cachedAudit(
                 $snapshot,
-                'variations-v24',
+                'variations-v27',
                 $data,
                 fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null, $data['main_stock'] ?? 'all', $data['remote_stock'] ?? 'all', $data['axis_issues'] ?? []),
             ),
@@ -377,7 +377,7 @@ class BikeproductsCatalogController extends Controller
             'axis_issues.*' => ['string', 'in:different,missing,extra'],
             'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
-            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_single_product_update,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,database_duplicate_sku'],
+            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_single_product_update,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,source_name_missing,database_duplicate_sku'],
         ]);
 
         return response()->json([
