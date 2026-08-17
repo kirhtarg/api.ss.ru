@@ -1683,8 +1683,9 @@ class BikeproductsCatalogService
         // the visible SKU looks identical to the one stored in the database.
         // Build both sides through normalizeSku() so a single product is not
         // incorrectly offered for creation instead of update.
-        $sourceOnlySkuKeys = $sourceOnlyItems->keys()
-            ->map(fn (string $sku) => $this->normalizeSku($sku))
+        $sourceOnlySkuKeys = $sourceOnlyItems
+            ->unique('id')
+            ->map(fn (SupplierCatalogItem $item) => $this->normalizeSku($this->sourceSkuForItem($item, $snapshot->supplier_code)))
             ->filter()
             ->flip();
         $databaseSupplierGoods = ShopGood::query()
@@ -1815,15 +1816,16 @@ class BikeproductsCatalogService
         });
 
         $processedSourceOnlyItemIds = [];
-        foreach ($sourceOnlyItems as $sourceSku => $source) {
+        foreach ($sourceOnlyItems as $_lookupSku => $source) {
             if (isset($processedSourceOnlyItemIds[$source->id])) {
                 continue;
             }
             $processedSourceOnlyItemIds[$source->id] = true;
-            $sourceHasDatabaseSku = collect($this->skuLookupKeys($this->sourceSkuForItem($source, $snapshot->supplier_code), $snapshot->supplier_code))
+            $actualSourceSku = $this->sourceSkuForItem($source, $snapshot->supplier_code);
+            $sourceHasDatabaseSku = collect($this->skuLookupKeys($actualSourceSku, $snapshot->supplier_code))
                 ->contains(fn (string $sku) => $databaseSkus->has($sku));
             if ($sourceHasDatabaseSku) continue;
-            $sourceSkuKey = $this->normalizeSku($sourceSku);
+            $sourceSkuKey = $this->normalizeSku($actualSourceSku);
             $hasDatabaseProduct = $sourceDirectGoods->has($sourceSkuKey);
             $databaseProduct = $sourceDirectGoods->get($sourceSkuKey);
             $groupKey = $sourceGroupKey($source);
@@ -1908,7 +1910,7 @@ class BikeproductsCatalogService
                 array_unshift($comparisons, [
                     'status' => $status,
                     'attribute' => 'Артикул',
-                    'source_value' => $sourceSku,
+                    'source_value' => $actualSourceSku,
                     'database_values' => [$matchedDatabaseGood?->sku],
                     'message' => 'Товар без вариаций найден в базе по названию, но артикул не совпадает. Вариация не будет создана автоматически.',
                 ]);
@@ -4714,12 +4716,12 @@ class BikeproductsCatalogService
 
     private function variationAuditBaseCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        return 'supplier-catalog:variation-audit-base:v40:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        return 'supplier-catalog:variation-audit-base:v42:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
     }
 
     private function variationAuditStatsCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        return 'supplier-catalog:variation-audit-stats:v2:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        return 'supplier-catalog:variation-audit-stats:v4:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
     }
 
     /** @return array<int, string> */

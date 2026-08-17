@@ -49,6 +49,6 @@ class WarmSupplierCatalogVariationAuditJob implements ShouldQueue
 
     private function lockKey(): string
     {
-        return 'supplier-catalog:variation-audit-warming:v3:'.$this->snapshotId.':'.$this->cacheVersion;
+        return 'supplier-catalog:variation-audit-warming:v5:'.$this->snapshotId.':'.$this->cacheVersion;
     }
 }
