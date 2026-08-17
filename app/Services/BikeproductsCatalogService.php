@@ -1537,7 +1537,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v35:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v36:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'], $cachedBase['duplicate_sku_groups'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1789,25 +1789,34 @@ class BikeproductsCatalogService
             $otherSupplier = $otherSupplierVariation?->supplier
                 ?: $otherSupplierVariation?->good?->supplier
                 ?: $otherSupplierGood?->supplier;
-            $sourceNameMissing = ! $this->hasUsableSourceName($source, $snapshot->supplier_code);
-            $status = $sourceNameMissing
-                ? 'source_name_missing'
-                : ($sameAxesVariation
-                    ? 'source_variation_sku_mismatch'
-                    : ($groupDatabaseGood || $hasDatabaseProduct
-                        ? 'source_variation_missing'
-                        : ($otherSupplierVariation || $otherSupplierGood
-                            ? 'source_sku_other_supplier'
-                            : 'source_good_missing')));
             $matchedDatabaseGood = $sameAxesVariation?->good ?? $groupDatabaseGood ?? $databaseProduct;
             $sourceGroupVariationCount = (int) ($sourceGroupCounts[$groupKey] ?? 0);
             $databaseGoodVariationCount = $matchedDatabaseGood
                 ? (int) ($variationCountByGood->get($matchedDatabaseGood->id) ?? 0)
                 : 0;
+            // A source row without variation axes that has the exact SKU of a
+            // single database product is already matched. It belongs to the
+            // product-fields audit, not to the "create/update variation" flow.
+            $isExactSingleProductMatch = ! $isSourceVariation
+                && $databaseProduct !== null
+                && $databaseGoodVariationCount === 0;
+            $sourceNameMissing = ! $this->hasUsableSourceName($source, $snapshot->supplier_code);
+            $status = $sourceNameMissing
+                ? 'source_name_missing'
+                : ($isExactSingleProductMatch
+                    ? 'match'
+                    : ($sameAxesVariation
+                    ? 'source_variation_sku_mismatch'
+                    : ($groupDatabaseGood || $hasDatabaseProduct
+                        ? 'source_variation_missing'
+                        : ($otherSupplierVariation || $otherSupplierGood
+                            ? 'source_sku_other_supplier'
+                            : 'source_good_missing'))));
             // A sole source variation matched to an existing product without
             // variations is stored on that product. Creating a technical
             // variation here would duplicate the same SKU unnecessarily.
             $willUpdateSingleProduct = $status === 'source_variation_missing'
+                && $isSourceVariation
                 && ($sourceGroupVariationCount <= 1)
                 && $matchedDatabaseGood !== null
                 && $databaseGoodVariationCount === 0;
