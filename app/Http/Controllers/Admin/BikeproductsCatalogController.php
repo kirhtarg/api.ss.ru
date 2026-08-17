@@ -317,7 +317,7 @@ class BikeproductsCatalogController extends Controller
         }
 
         $version = $snapshot->updated_at?->format('Uu') ?? '0';
-        $lockKey = 'supplier-catalog:variation-audit-warming:'.$snapshot->id.':'.$version;
+        $lockKey = 'supplier-catalog:variation-audit-warming:v2:'.$snapshot->id.':'.$version;
         if (Cache::store('file')->add($lockKey, true, now()->addMinutes(30))) {
             WarmSupplierCatalogVariationAuditJob::dispatch($snapshot->id, $version);
         }

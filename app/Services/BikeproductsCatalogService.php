@@ -1534,11 +1534,26 @@ class BikeproductsCatalogService
     public function cachedVariationAuditStats(SupplierCatalogSnapshot $snapshot): ?array
     {
         $this->assertReadySnapshot($snapshot);
-        $cached = Cache::store('file')->get($this->variationAuditBaseCacheKey($snapshot));
+        $stats = Cache::store('file')->get($this->variationAuditStatsCacheKey($snapshot));
+        if (is_array($stats)) {
+            return $stats;
+        }
 
-        return is_array($cached) && isset($cached['stats'], $cached['rows'])
-            ? $cached['stats']
-            : null;
+        // Compatibility with a cache built before statistics were stored
+        // separately. This path is used only once and immediately upgrades the
+        // small statistics cache for subsequent overview requests.
+        $cached = Cache::store('file')->get($this->variationAuditBaseCacheKey($snapshot));
+        if (is_array($cached) && isset($cached['stats'], $cached['rows'])) {
+            Cache::store('file')->put(
+                $this->variationAuditStatsCacheKey($snapshot),
+                $cached['stats'],
+                now()->addMinutes(15),
+            );
+
+            return $cached['stats'];
+        }
+
+        return null;
     }
 
     public function warmVariationAudit(SupplierCatalogSnapshot $snapshot): void
@@ -2058,6 +2073,11 @@ class BikeproductsCatalogService
                 ->map(fn (Collection $group) => $this->databaseVariationDuplicatePayload($group))
                 ->all(),
         ], now()->addMinutes(15));
+        Cache::store('file')->put(
+            $this->variationAuditStatsCacheKey($snapshot),
+            $baseStats,
+            now()->addMinutes(15),
+        );
         }
 
         $rows = $allRows;
@@ -4661,7 +4681,12 @@ class BikeproductsCatalogService
 
     private function variationAuditBaseCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        return 'supplier-catalog:variation-audit-base:v38:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        return 'supplier-catalog:variation-audit-base:v39:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+    }
+
+    private function variationAuditStatsCacheKey(SupplierCatalogSnapshot $snapshot): string
+    {
+        return 'supplier-catalog:variation-audit-stats:v1:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
     }
 
     /** @return array<int, string> */
