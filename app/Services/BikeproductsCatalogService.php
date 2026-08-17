@@ -2002,14 +2002,21 @@ class BikeproductsCatalogService
             ? 'good-'.$row['database_good_id']
             : 'source-'.($row['source_group_name'] ?: $row['external_sku']);
         $countBaseGroups = fn (Collection $items): int => $items->groupBy($baseGroupKey)->count();
+        $deleteCandidateRows = $allRows->whereIn('status', [
+            'delete_candidate_good',
+            'delete_candidate_variation',
+        ]);
         $baseStats = [
             'database_goods_with_variations' => $databaseVariations->pluck('good_id')->unique()->count(),
             'database_variations' => $databaseVariations->count(),
             'delete_candidate_goods' => $allRows->where('status', 'delete_candidate_good')->pluck('database_good_id')->filter()->unique()->count(),
             'delete_candidate_variations' => $allRows->where('status', 'delete_candidate_variation')->count(),
             'delete_candidate_variation_goods' => $countBaseGroups($allRows->where('status', 'delete_candidate_variation')),
-            'delete_candidate_main_stock_variations' => $allRows->where('status', 'delete_candidate_variation')->where('has_main_stock', true)->count(),
-            'delete_candidate_remote_stock_variations' => $allRows->where('status', 'delete_candidate_variation')->where('has_remote_stock', true)->count(),
+            // Clearing stock is applicable to every database variation which is
+            // absent from the current source file, including whole goods that
+            // are absent from the file (delete_candidate_good).
+            'delete_candidate_main_stock' => $deleteCandidateRows->where('has_main_stock', true)->count(),
+            'delete_candidate_remote_stock' => $deleteCandidateRows->where('has_remote_stock', true)->count(),
             'source_good_missing' => $allRows->where('status', 'source_good_missing')->pluck('item_id')->unique()->count(),
             'source_good_missing_groups' => $countBaseGroups($allRows->where('status', 'source_good_missing')),
             'source_good_missing_single_products' => $allRows
@@ -2190,8 +2197,8 @@ class BikeproductsCatalogService
                 'delete_candidate_goods' => $baseStats['delete_candidate_goods'] ?? 0,
                 'delete_candidate_variations' => $baseStats['delete_candidate_variations'] ?? 0,
                 'delete_candidate_variation_goods' => $baseStats['delete_candidate_variation_goods'] ?? 0,
-                'delete_candidate_main_stock_variations' => $baseStats['delete_candidate_main_stock_variations'] ?? 0,
-                'delete_candidate_remote_stock_variations' => $baseStats['delete_candidate_remote_stock_variations'] ?? 0,
+                'delete_candidate_main_stock' => $baseStats['delete_candidate_main_stock'] ?? 0,
+                'delete_candidate_remote_stock' => $baseStats['delete_candidate_remote_stock'] ?? 0,
                 'source_good_missing' => $baseStats['source_good_missing'] ?? 0,
                 'source_good_missing_groups' => $baseStats['source_good_missing_groups'] ?? 0,
                 'source_good_missing_single_products' => $baseStats['source_good_missing_single_products'] ?? 0,
@@ -4654,7 +4661,7 @@ class BikeproductsCatalogService
 
     private function variationAuditBaseCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        return 'supplier-catalog:variation-audit-base:v37:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        return 'supplier-catalog:variation-audit-base:v38:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
     }
 
     /** @return array<int, string> */

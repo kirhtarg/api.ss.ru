@@ -295,7 +295,7 @@ class BikeproductsCatalogController extends Controller
             'success' => true,
             'data' => $this->cachedAudit(
                 $snapshot,
-                'variations-v29',
+                'variations-v30',
                 $data,
                 fn () => $this->catalog->variationAudit($snapshot, $data['page'] ?? 1, $data['per_page'] ?? 50, $data['search'] ?? null, $data['filters'] ?? [], $data['variation_count'] ?? 'all', $data['good_id'] ?? null, $data['main_stock'] ?? 'all', $data['remote_stock'] ?? 'all', $data['axis_issues'] ?? []),
             ),
@@ -801,7 +801,7 @@ class BikeproductsCatalogController extends Controller
         $version = $snapshot->updated_at?->format('Uu') ?? '0';
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v40:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v41:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.
