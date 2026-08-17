@@ -3580,14 +3580,17 @@ class BikeproductsCatalogService
         $groupKey = fn (array $row): string => $row['database_good_id']
             ? 'good-'.$row['database_good_id']
             : 'source-'.$row['external_sku'];
-        $countDifferenceGroups = function (array $fields) use ($statsRows, $groupKey): int {
-            return $statsRows
+        // Goods audit actions operate on source rows (item_id), not grouped
+        // parent goods. Counting by good_id made the tile disagree with the
+        // table and the selectable action rows even for single variations.
+        $countDifferences = function (array $fields) use ($statsRows, $groupKey, $paginateByGood): int {
+            $differentRows = $statsRows
                 ->filter(fn (array $row) => collect($row['differences'])->contains(
                     fn (array $difference) => in_array($difference['field'], $fields, true)
                         && ! in_array($difference['status'], ['match', 'not_mapped', 'empty_both'], true),
-                ))
-                ->groupBy($groupKey)
-                ->count();
+                ));
+
+            return $paginateByGood ? $differentRows->groupBy($groupKey)->count() : $differentRows->count();
         };
         $countStockStateGroups = function (array $statuses) use ($statsRows, $groupKey, $stockFields): int {
             return $statsRows
@@ -3611,8 +3614,8 @@ class BikeproductsCatalogService
         return [
             'data' => $paginator->items(),
             'stats' => [
-                'price_differences' => $countDifferenceGroups($priceFields),
-                'stock_differences' => $countDifferenceGroups($stockFields),
+                'price_differences' => $countDifferences($priceFields),
+                'stock_differences' => $countDifferences($stockFields),
                 'source_empty_stocks' => $countStockStateGroups(['source_empty', 'empty_both']),
                 'database_empty_stocks' => $countStockStateGroups(['database_empty', 'empty_both']),
                 'goods_with_differences' => $statsRows
@@ -3631,10 +3634,10 @@ class BikeproductsCatalogService
                 'source_orphans' => $sourceOrphans,
                 'database_orphans' => $databaseOrphans,
                 'attention' => $statsRows->where('status', 'attention')->count(),
-                'name_differences' => $countDifferenceGroups(['name']),
-                'short_description_differences' => $countDifferenceGroups(['short_description']),
-                'description_differences' => $countDifferenceGroups(['description']),
-                'brand_differences' => $countDifferenceGroups(['brand']),
+                'name_differences' => $countDifferences(['name']),
+                'short_description_differences' => $countDifferences(['short_description']),
+                'description_differences' => $countDifferences(['description']),
+                'brand_differences' => $countDifferences(['brand']),
                 'not_found' => $allAuditRows->where('status', 'not_found')->count(),
                 'missing_in_file' => $allAuditRows->where('status', 'missing_in_file')->count(),
                 'source_name_missing' => collect($sourceItems)

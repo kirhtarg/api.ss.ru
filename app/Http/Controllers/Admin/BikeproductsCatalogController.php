@@ -538,6 +538,7 @@ class BikeproductsCatalogController extends Controller
             'page' => ['nullable', 'integer', 'min:1'],
             'per_page' => ['nullable', 'integer', 'min:10', 'max:200'],
             'search' => ['nullable', 'string', 'max:120'],
+            'refresh' => ['nullable', 'string', 'max:40'],
             'statuses' => ['nullable', 'array', 'max:4'],
             'statuses.*' => ['string', 'in:match,attention,not_found,missing_in_file,source_name_missing'],
             'difference_types' => ['nullable', 'array', 'max:4'],
