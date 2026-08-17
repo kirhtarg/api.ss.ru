@@ -21,10 +21,6 @@ class YandexMarketStockService
                 'yandex_market_auth_type',
                 'yandex_market_stocks_last_sync_at',
                 'yandex_market_stocks_last_sync_result',
-                'yandex_market_weight_multiplier',
-                'yandex_market_length_multiplier',
-                'yandex_market_width_multiplier',
-                'yandex_market_height_multiplier',
             ])
             ->get()
             ->pluck('value', 'key')
@@ -36,12 +32,6 @@ class YandexMarketStockService
             'auth_type' => (string) ($settings['yandex_market_auth_type'] ?? 'api_key'),
             'last_sync_at' => $settings['yandex_market_stocks_last_sync_at'] ?? null,
             'last_sync_result' => $settings['yandex_market_stocks_last_sync_result'] ?? null,
-            'dimension_multipliers' => [
-                'weight' => $this->normalizeMultiplier($settings['yandex_market_weight_multiplier'] ?? 1),
-                'length' => $this->normalizeMultiplier($settings['yandex_market_length_multiplier'] ?? 1),
-                'width' => $this->normalizeMultiplier($settings['yandex_market_width_multiplier'] ?? 1),
-                'height' => $this->normalizeMultiplier($settings['yandex_market_height_multiplier'] ?? 1),
-            ],
         ];
     }
 
@@ -50,15 +40,6 @@ class YandexMarketStockService
         $this->saveSetting('yandex_market_campaign_id', 'Campaign ID Яндекс Маркета', $data['campaign_id'] ?? '', 'string');
         $this->saveSetting('yandex_market_auth_token', 'Токен API Яндекс Маркета', $data['auth_token'] ?? '', 'password');
         $this->saveSetting('yandex_market_auth_type', 'Тип авторизации API Яндекс Маркета', $data['auth_type'] ?? 'api_key', 'string');
-        $dimensionMultipliers = (array) ($data['dimension_multipliers'] ?? []);
-        foreach (['weight', 'length', 'width', 'height'] as $field) {
-            $this->saveSetting(
-                "yandex_market_{$field}_multiplier",
-                "Множитель {$field} для Яндекс Маркета",
-                $this->normalizeMultiplier($dimensionMultipliers[$field] ?? 1),
-                'number'
-            );
-        }
 
         return $this->getSettings();
     }
@@ -388,12 +369,6 @@ class YandexMarketStockService
         );
     }
 
-    private function normalizeMultiplier($value): float
-    {
-        $number = (float) str_replace(',', '.', (string) $value);
-
-        return $number > 0 ? $number : 1.0;
-    }
 
     private function apiHeaders(array $settings): array
     {

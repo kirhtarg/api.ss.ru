@@ -465,12 +465,6 @@ class YmlFeedService
         $height = $this->positiveDimensionValue($good->shipping_height ?? null)
             ?? $this->positiveDimensionValue($good->height ?? null);
 
-        $multipliers = $this->getMarketSettings()['dimension_multipliers'];
-        $weight = $weight !== null ? $weight * $multipliers['weight'] : null;
-        $length = $length !== null ? $length * $multipliers['length'] : null;
-        $width = $width !== null ? $width * $multipliers['width'] : null;
-        $height = $height !== null ? $height * $multipliers['height'] : null;
-
         $dimensions = null;
         if ($length !== null && $width !== null && $height !== null) {
             $dimensions = implode('/', [

@@ -131,16 +131,22 @@ class ShopImportExportController extends Controller
                 $data['exists'] = true;
                 $data['download_url'] = $url;
                 $data['generated_at'] = date('Y-m-d H:i:s', $lastModified);
+                $data['build_at'] = $this->readYmlBuildTimestamp(Storage::disk('public')->path($filepath));
+                $data['checksum'] = hash_file('sha256', Storage::disk('public')->path($filepath));
                 $data['size'] = round($size / 1024, 2) . ' KB';
 
                 // Проверяем наличие на фронтенде
                 $frontendPathRelative = config('frontend.path');
                 if ($frontendPathRelative) {
-                    $frontendBasePath = base_path($frontendPathRelative);
-                    $frontendPublicPath = $frontendBasePath . '/public';
+                    $frontendPublicPath = frontend_public_path();
 
                     if (is_dir($frontendPublicPath) && file_exists($frontendPublicPath . '/' . $filename)) {
+                        $frontendFile = $frontendPublicPath . '/' . $filename;
                         $data['frontend_url'] = config('app.frontend_url') . '/' . $filename;
+                        $data['frontend_generated_at'] = date('Y-m-d H:i:s', filemtime($frontendFile));
+                        $data['frontend_build_at'] = $this->readYmlBuildTimestamp($frontendFile);
+                        $data['frontend_checksum'] = hash_file('sha256', $frontendFile);
+                        $data['frontend_matches_api'] = hash_equals($data['checksum'], $data['frontend_checksum']);
                     }
                 }
             }
@@ -155,6 +161,24 @@ class ShopImportExportController extends Controller
                 'message' => 'Ошибка получения статуса YML: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    private function readYmlBuildTimestamp(string $path): ?string
+    {
+        $handle = @fopen($path, 'rb');
+        if (! $handle) return null;
+
+        try {
+            for ($line = 0; $line < 10 && ($content = fgets($handle)) !== false; $line++) {
+                if (preg_match('/<!--\s*build:([^\s>]+).*-->/', $content, $matches)) {
+                    return $matches[1];
+                }
+            }
+        } finally {
+            fclose($handle);
+        }
+
+        return null;
     }
 
     /**
@@ -210,11 +234,6 @@ class ShopImportExportController extends Controller
             'campaign_id' => 'nullable|string|max:50',
             'auth_token' => 'nullable|string|max:500',
             'auth_type' => 'nullable|string|in:api_key,oauth',
-            'dimension_multipliers' => 'nullable|array',
-            'dimension_multipliers.weight' => 'nullable|numeric|gt:0|max:1000000',
-            'dimension_multipliers.length' => 'nullable|numeric|gt:0|max:1000000',
-            'dimension_multipliers.width' => 'nullable|numeric|gt:0|max:1000000',
-            'dimension_multipliers.height' => 'nullable|numeric|gt:0|max:1000000',
         ]);
 
         $current = $stockService->getSettings();
