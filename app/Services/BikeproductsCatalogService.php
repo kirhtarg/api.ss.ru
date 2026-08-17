@@ -1526,7 +1526,7 @@ class BikeproductsCatalogService
         $this->ensureDefaultMappings($snapshot->supplier_code);
         // Построение сверки проходит по всему снимку и всем вариациям поставщика.
         // Сохраняем эту неизменяемую часть отдельно от поиска, фильтров и пагинации.
-        $baseCacheKey = 'supplier-catalog:variation-audit-base:v27:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        $baseCacheKey = 'supplier-catalog:variation-audit-base:v29:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
         $cachedBase = Cache::store('file')->get($baseCacheKey);
         if (is_array($cachedBase) && isset($cachedBase['rows'], $cachedBase['variation_counts'], $cachedBase['stats'], $cachedBase['duplicate_sku_groups'])) {
             $allRows = collect($cachedBase['rows']);
@@ -1760,6 +1760,21 @@ class BikeproductsCatalogService
                 : ($otherSupplierVariation || $otherSupplierGood
                     ? 'source_sku_other_supplier'
                     : 'source_good_missing'));
+            $matchedDatabaseGood = $sameAxesVariation?->good ?? $groupDatabaseGood ?? $databaseProduct;
+            $sourceGroupVariationCount = (int) ($sourceGroupCounts[$groupKey] ?? 0);
+            $databaseGoodVariationCount = $matchedDatabaseGood
+                ? (int) ($variationCountByGood->get($matchedDatabaseGood->id) ?? 0)
+                : 0;
+            // A sole source variation matched to an existing product without
+            // variations is stored on that product. Creating a technical
+            // variation here would duplicate the same SKU unnecessarily.
+            $willUpdateSingleProduct = $status === 'source_variation_missing'
+                && $sourceGroupVariationCount === 1
+                && $matchedDatabaseGood !== null
+                && $databaseGoodVariationCount === 0;
+            if ($willUpdateSingleProduct) {
+                $status = 'source_single_product_update';
+            }
             $comparisons = $this->sourceOnlyVariationComparisons($source, $mappings, $snapshot->supplier_code, $status);
             if ($sameAxesVariation) {
                 array_unshift($comparisons, [
@@ -1797,6 +1812,9 @@ class BikeproductsCatalogService
                 'database_good_id' => $sameAxesVariation?->good_id ?? ($groupDatabaseGood ?? $databaseProduct)?->id,
                 'database_name' => $sameAxesVariation?->good?->name ?? ($groupDatabaseGood ?? $databaseProduct)?->name,
                 'database_slug' => $sameAxesVariation?->good?->slug ?? ($groupDatabaseGood ?? $databaseProduct)?->slug,
+                'source_group_variation_count' => $sourceGroupVariationCount,
+                'database_good_variation_count' => $databaseGoodVariationCount,
+                'will_update_single_product' => $willUpdateSingleProduct,
                 'database_axes' => [],
                 'stock_quantity' => null,
                 'remote_stock_quantity' => null,
@@ -1878,6 +1896,7 @@ class BikeproductsCatalogService
             'delete_candidate_variation',
             'source_good_missing',
             'source_variation_missing',
+            'source_single_product_update',
             'source_variation_sku_mismatch',
             'source_sku_other_supplier',
             'source_price_excluded',
@@ -1903,6 +1922,7 @@ class BikeproductsCatalogService
                 ->whereIn('status', [
                     'delete_candidate_variation',
                     'source_variation_missing',
+                    'source_single_product_update',
                     'source_variation_sku_mismatch',
                     'attention',
                 ])
@@ -1999,8 +2019,15 @@ class BikeproductsCatalogService
                 'delete_candidate_remote_stock_variations' => $allRows->where('status', 'delete_candidate_variation')->where('has_remote_stock', true)->count(),
                 'source_good_missing' => $allRows->where('status', 'source_good_missing')->pluck('item_id')->unique()->count(),
                 'source_good_missing_groups' => $countGroups($allRows->where('status', 'source_good_missing')),
+                'source_good_missing_single_products' => $allRows
+                    ->where('status', 'source_good_missing')
+                    ->filter(fn (array $row) => (int) ($row['source_group_variation_count'] ?? 0) === 0)
+                    ->pluck('item_id')
+                    ->unique()
+                    ->count(),
                 'source_variation_missing' => $allRows->where('status', 'source_variation_missing')->pluck('item_id')->unique()->count(),
                 'source_variation_missing_groups' => $countGroups($allRows->where('status', 'source_variation_missing')),
+                'source_single_product_update' => $allRows->where('status', 'source_single_product_update')->pluck('item_id')->unique()->count(),
                 'source_variation_sku_mismatch' => $allRows->where('status', 'source_variation_sku_mismatch')->pluck('item_id')->unique()->count(),
                 'source_variation_sku_mismatch_groups' => $countGroups($allRows->where('status', 'source_variation_sku_mismatch')),
                 'source_sku_other_supplier' => $countGroups($allRows->where('status', 'source_sku_other_supplier')),
@@ -2051,7 +2078,7 @@ class BikeproductsCatalogService
                 ->all(),
             'database_good_ids' => $selectedRows->where('status', 'delete_candidate_good')->pluck('database_good_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all(),
             'source_item_ids' => $selectedRows
-                ->whereIn('status', ['source_good_missing', 'source_variation_missing', 'source_variation_sku_mismatch'])
+                ->whereIn('status', ['source_good_missing', 'source_variation_missing', 'source_single_product_update', 'source_variation_sku_mismatch'])
                 ->pluck('source_item_id', 'item_id')
                 ->filter(fn ($id) => is_numeric($id))
                 ->map(fn ($id) => (int) $id)
@@ -3036,6 +3063,19 @@ class BikeproductsCatalogService
     {
         $this->assertReadySnapshot($snapshot);
         $sourceItems = $this->bindingParticipatingItems($this->snapshotItemsQuery($snapshot, $search)->get(), $snapshot->supplier_code);
+        $sourceVariationGroupKeys = $sourceItems
+            ->filter(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))
+            ->mapWithKeys(fn (SupplierCatalogItem $item) => [
+                ($item->clean_name ?: $this->sourceGroupName($item->name, $item->external_sku)) => true,
+            ])
+            ->all();
+        // Supplier exports may contain a parent row next to the actual
+        // variation rows. The parent is not an actionable standalone product
+        // and must not inflate the Goods audit compared with Variations.
+        $sourceItems = $sourceItems
+            ->reject(fn (SupplierCatalogItem $item) => ! $this->isSourceVariationItem($item)
+                && isset($sourceVariationGroupKeys[$item->clean_name ?: $this->sourceGroupName($item->name, $item->external_sku)]))
+            ->values();
         $matches = $this->resolveSkuMatches(
             $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
             $snapshot->supplier_code,

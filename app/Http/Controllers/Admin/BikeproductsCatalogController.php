@@ -287,7 +287,7 @@ class BikeproductsCatalogController extends Controller
             'axis_issues.*' => ['string', 'in:different,missing,extra'],
             'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
-            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,database_duplicate_sku'],
+            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_single_product_update,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,database_duplicate_sku'],
         ]);
 
         return response()->json([
@@ -377,7 +377,7 @@ class BikeproductsCatalogController extends Controller
             'axis_issues.*' => ['string', 'in:different,missing,extra'],
             'good_id' => ['nullable', 'integer', 'min:1'],
             'filters' => ['nullable', 'array', 'max:10'],
-            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,database_duplicate_sku'],
+            'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_single_product_update,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,database_duplicate_sku'],
         ]);
 
         return response()->json([
@@ -774,7 +774,7 @@ class BikeproductsCatalogController extends Controller
         $version = $snapshot->updated_at?->format('Uu') ?? '0';
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v36:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v38:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.
