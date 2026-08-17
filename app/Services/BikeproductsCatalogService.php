@@ -579,7 +579,27 @@ class BikeproductsCatalogService
         $this->assertReadySnapshot($snapshot);
         $this->ensureDefaultMappings($snapshot->supplier_code);
         $items = $this->bindingParticipatingItems($snapshot->items()->whereIn('id', $itemIds)->get(), $snapshot->supplier_code);
-        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+        // The audit resolves a supplier SKU from raw_payload first. Reuse that
+        // exact rule here: external_sku can be a technical import value and
+        // differs from the actual supplier SKU in some Bikeproducts rows.
+        $matches = $this->resolveSkuMatches(
+            $items->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
+            $snapshot->supplier_code,
+        );
+        // resolveSkuMatches intentionally loads a compact parent relation for
+        // audit rendering. Updates need the complete ShopGood model instead:
+        // otherwise an unloaded short_description is logged as null and may
+        // obscure which parent record was actually changed.
+        $matchedGoods = ShopGood::query()
+            ->whereIn('id', $matches
+                ->map(fn (array $match) => $match['type'] === 'variation'
+                    ? $match['model']->good_id
+                    : $match['model']->id)
+                ->filter()
+                ->unique()
+                ->values())
+            ->get()
+            ->keyBy('id');
         $affected = 0;
         $skipped = 0;
         $actionLog = [];
@@ -591,11 +611,15 @@ class BikeproductsCatalogService
             if ($targets !== []) {
                 $mappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => in_array((string) data_get($mapping->conditions, 'target'), $targets, true));
             }
-            DB::transaction(function () use ($items, $matches, $mappings, $targets, &$affected, &$skipped, &$actionLog): void {
+            DB::transaction(function () use ($items, $matches, $matchedGoods, $mappings, $targets, $snapshot, &$affected, &$skipped, &$actionLog): void {
                 foreach ($items as $item) {
-                    $match = $matches->get($item->external_sku);
-                    if (! $match) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_match_not_found', ['scope' => 'goods']); continue; }
-                    $good = $match['type'] === 'variation' ? $match['model']->good : $match['model'];
+                    $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
+                    $match = $matches->get($sourceSku) ?? $matches->get($this->normalizeSku($sourceSku));
+                    if (! $match) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_match_not_found', ['scope' => 'goods', 'source_sku' => $sourceSku]); continue; }
+                    $goodId = $match['type'] === 'variation'
+                        ? $match['model']->good_id
+                        : $match['model']->id;
+                    $good = $matchedGoods->get($goodId);
                     if (! $good) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'matched_good_missing', ['scope' => 'goods']); continue; }
                     $mappedValues = $this->mappedGoodAttributes($item, $mappings);
                     $values = collect($mappedValues)->only(['name', 'short_description', 'description', 'weight', 'depth', 'width', 'height', 'price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all();
@@ -604,10 +628,21 @@ class BikeproductsCatalogService
                     $fieldChanges = $this->modelFieldChanges($good, $values);
                     if ($values !== []) {
                         $good->update($values);
+                        $good->refresh();
                     }
                     if ($brand !== null) $good->brands()->sync([ShopBrand::firstOrCreate(['name' => $brand], ['is_active' => true])->id]);
                     $affected++;
-                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'mapped_goods_updated', ['scope' => 'goods', 'good_id' => $good->id, 'match_type' => $match['type'], 'targets' => $targets, 'fields' => $fieldChanges]);
+                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'mapped_goods_updated', [
+                        'scope' => 'goods',
+                        'good_id' => $good->id,
+                        'match_type' => $match['type'],
+                        'source_sku' => $sourceSku,
+                        'targets' => $targets,
+                        'fields' => $fieldChanges,
+                        'saved_values' => collect(array_keys($values))
+                            ->mapWithKeys(fn (string $field) => [$field => $good->{$field}])
+                            ->all(),
+                    ]);
                 }
             });
             return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Поля товаров обновлены', 'log' => $actionLog];
@@ -2398,7 +2433,10 @@ class BikeproductsCatalogService
         }
 
         $items = $this->bindingParticipatingItems($snapshot->items()->whereIn('id', $ids)->get(), $snapshot->supplier_code);
-        $matches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code);
+        $matches = $this->resolveSkuMatches(
+            $items->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
+            $snapshot->supplier_code,
+        );
         $goodIds = $matches->map(fn (array $match) => $match['type'] === 'variation' ? $match['model']->good_id : $match['model']->id)->filter()->unique()->values();
         $variationIds = $matches->where('type', 'variation')->pluck('model.id')->filter()->values();
         $backup['source_items'] = $items->map(fn (SupplierCatalogItem $item) => $item->getAttributes())->all();
