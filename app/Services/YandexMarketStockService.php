@@ -21,9 +21,6 @@ class YandexMarketStockService
                 'yandex_market_auth_type',
                 'yandex_market_stocks_last_sync_at',
                 'yandex_market_stocks_last_sync_result',
-                'yandex_market_price_adjustment_operation',
-                'yandex_market_price_adjustment_mode',
-                'yandex_market_price_adjustment_value',
                 'yandex_market_weight_multiplier',
                 'yandex_market_length_multiplier',
                 'yandex_market_width_multiplier',
@@ -39,11 +36,6 @@ class YandexMarketStockService
             'auth_type' => (string) ($settings['yandex_market_auth_type'] ?? 'api_key'),
             'last_sync_at' => $settings['yandex_market_stocks_last_sync_at'] ?? null,
             'last_sync_result' => $settings['yandex_market_stocks_last_sync_result'] ?? null,
-            'price_adjustment' => [
-                'operation' => ($settings['yandex_market_price_adjustment_operation'] ?? 'add') === 'subtract' ? 'subtract' : 'add',
-                'mode' => ($settings['yandex_market_price_adjustment_mode'] ?? 'percent') === 'absolute' ? 'absolute' : 'percent',
-                'value' => max(0, (float) ($settings['yandex_market_price_adjustment_value'] ?? 0)),
-            ],
             'dimension_multipliers' => [
                 'weight' => $this->normalizeMultiplier($settings['yandex_market_weight_multiplier'] ?? 1),
                 'length' => $this->normalizeMultiplier($settings['yandex_market_length_multiplier'] ?? 1),
@@ -58,11 +50,7 @@ class YandexMarketStockService
         $this->saveSetting('yandex_market_campaign_id', 'Campaign ID Яндекс Маркета', $data['campaign_id'] ?? '', 'string');
         $this->saveSetting('yandex_market_auth_token', 'Токен API Яндекс Маркета', $data['auth_token'] ?? '', 'password');
         $this->saveSetting('yandex_market_auth_type', 'Тип авторизации API Яндекс Маркета', $data['auth_type'] ?? 'api_key', 'string');
-        $priceAdjustment = (array) ($data['price_adjustment'] ?? []);
         $dimensionMultipliers = (array) ($data['dimension_multipliers'] ?? []);
-        $this->saveSetting('yandex_market_price_adjustment_operation', 'Операция корректировки цены Яндекс Маркета', ($priceAdjustment['operation'] ?? 'add') === 'subtract' ? 'subtract' : 'add', 'string');
-        $this->saveSetting('yandex_market_price_adjustment_mode', 'Тип корректировки цены Яндекс Маркета', ($priceAdjustment['mode'] ?? 'percent') === 'absolute' ? 'absolute' : 'percent', 'string');
-        $this->saveSetting('yandex_market_price_adjustment_value', 'Значение корректировки цены Яндекс Маркета', max(0, (float) ($priceAdjustment['value'] ?? 0)), 'number');
         foreach (['weight', 'length', 'width', 'height'] as $field) {
             $this->saveSetting(
                 "yandex_market_{$field}_multiplier",

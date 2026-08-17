@@ -210,10 +210,6 @@ class ShopImportExportController extends Controller
             'campaign_id' => 'nullable|string|max:50',
             'auth_token' => 'nullable|string|max:500',
             'auth_type' => 'nullable|string|in:api_key,oauth',
-            'price_adjustment' => 'nullable|array',
-            'price_adjustment.operation' => 'nullable|string|in:add,subtract',
-            'price_adjustment.mode' => 'nullable|string|in:percent,absolute',
-            'price_adjustment.value' => 'nullable|numeric|min:0|max:10000000',
             'dimension_multipliers' => 'nullable|array',
             'dimension_multipliers.weight' => 'nullable|numeric|gt:0|max:1000000',
             'dimension_multipliers.length' => 'nullable|numeric|gt:0|max:1000000',
@@ -296,6 +292,36 @@ class ShopImportExportController extends Controller
         }
 
         return response()->json(['success' => true, 'data' => $auditService->audit($path, $filters)]);
+    }
+
+    public function startYmlPublicPreflight(Request $request, \App\Services\YmlPublicPreflightService $preflightService): JsonResponse
+    {
+        try {
+            $run = $preflightService->start($request->user()?->id);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Предпроверка витрины запущена в фоне.',
+                'data' => app(\App\Services\YandexMarketStockService::class)->serializeRun($run),
+            ], 202);
+        } catch (\Throwable $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+    }
+
+    public function cancelYmlPublicPreflight(int $run, \App\Services\YmlPublicPreflightService $preflightService): JsonResponse
+    {
+        try {
+            $result = $preflightService->cancel($run);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Предпроверка остановлена.',
+                'data' => app(\App\Services\YandexMarketStockService::class)->serializeRun($result),
+            ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            return response()->json(['success' => false, 'message' => 'Запуск предпроверки не найден.'], 404);
+        }
     }
 
     /**

@@ -2150,6 +2150,8 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/export/yml/yandex-market/stocks/verify', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'verifyYandexMarketStocks']);
                     Route::get('/export/yml/yandex-market/stocks/runs/{run}', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYandexMarketStockRun']);
                     Route::get('/export/yml/yandex-market/audit', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'auditYandexMarketFeed']);
+                    Route::post('/export/yml/yandex-market/preflight', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'startYmlPublicPreflight']);
+                    Route::post('/export/yml/yandex-market/preflight/{run}/cancel', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'cancelYmlPublicPreflight']);
                     Route::post('/import/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'importCsv']);
                     Route::get('/template', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getTemplate']);
                 });

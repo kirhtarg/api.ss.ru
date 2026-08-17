@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Helpers\PriceHelper;
 use App\Models\ShopCategory;
 use App\Models\ShopGood;
 use Illuminate\Support\Facades\DB;
@@ -10,8 +11,6 @@ use Illuminate\Support\Facades\Log;
 
 class YmlFeedService
 {
-    private ?array $marketSettings = null;
-
     /**
      * Генерация YML фида
      * 
@@ -213,9 +212,16 @@ class YmlFeedService
             return false;
         }
 
-        // Определяем доступность и остаток. Для товаров с вариациями остаток хранится в вариациях.
+        // В поисковый YML передаем только доступные к продаже позиции. Нулевой
+        // итоговый остаток означает, что карточка не должна участвовать в
+        // товарных предложениях Яндекса и создавать проверку "нет в наличии".
+        // Для товаров с вариациями остаток хранится в вариациях.
         $stock = $this->getOfferStockValue($good);
-        $available = ($stock > 0) ? 'true' : 'false';
+        if ($stock <= 0) {
+            return false;
+        }
+
+        $available = 'true';
         $logisticsData = $this->getOfferLogisticsData($good, $priceData['item'] ?? null);
 
         fwrite($handle, '            <offer id="' . $good->id . '" available="' . $available . '">' . PHP_EOL);
@@ -376,16 +382,19 @@ class YmlFeedService
             return null;
         }
 
-        $adjustedCurrentPrice = $this->adjustMarketPrice($currentPrice);
-        if ($adjustedCurrentPrice <= 0) {
+        // Публичный YML обязан повторять цену витрины. Настройка изменения
+        // цены в Яндекс Seller относится к API Seller и не должна влиять на
+        // каталог, который Яндекс сверяет с публичной карточкой.
+        $feedCurrentPrice = PriceHelper::roundPrice($currentPrice);
+        if ($feedCurrentPrice <= 0) {
             return null;
         }
-        $adjustedBasePrice = $basePrice !== null ? $this->adjustMarketPrice($basePrice) : null;
-        $oldPrice = ($adjustedBasePrice !== null && $adjustedBasePrice > $adjustedCurrentPrice) ? $adjustedBasePrice : null;
+        $feedBasePrice = $basePrice !== null ? PriceHelper::roundPrice($basePrice) : null;
+        $oldPrice = ($feedBasePrice !== null && $feedBasePrice > $feedCurrentPrice) ? $feedBasePrice : null;
 
         return [
-            'numeric_price' => $adjustedCurrentPrice,
-            'price' => $this->formatYmlPrice($adjustedCurrentPrice),
+            'numeric_price' => $feedCurrentPrice,
+            'price' => $this->formatYmlPrice($feedCurrentPrice),
             'oldprice' => $oldPrice !== null ? $this->formatYmlPrice($oldPrice) : null,
             'item' => $item,
         ];
@@ -496,30 +505,34 @@ class YmlFeedService
     private function copyToFrontend($filename)
     {
         $frontendPathRelative = config('frontend.path');
-        if ($frontendPathRelative) {
-            $frontendBasePath = base_path($frontendPathRelative);
-            $frontendPublicPath = $frontendBasePath . '/public';
+        if (! $frontendPathRelative) {
+            return;
+        }
 
-            if (is_dir($frontendPublicPath)) {
-                $sourcePath = Storage::disk('public')->path('exports/' . $filename);
-                $destPath = $frontendPublicPath . '/' . $filename;
-                @copy($sourcePath, $destPath);
-            }
+        $sourcePath = Storage::disk('public')->path('exports/' . $filename);
+        $destinationPath = frontend_public_path($filename);
+        $destinationDirectory = dirname($destinationPath);
+
+        if (! is_dir($destinationDirectory)) {
+            throw new \RuntimeException('Не найдена public-директория фронтенда для публикации YML: ' . $destinationDirectory);
+        }
+
+        // Сначала пишем временный файл в той же директории, затем атомарно
+        // заменяем опубликованный. Робот Яндекса не получит частичный XML.
+        $temporaryPath = $destinationPath . '.tmp';
+        if (! copy($sourcePath, $temporaryPath)) {
+            throw new \RuntimeException('Не удалось скопировать YML на витрину: ' . $temporaryPath);
+        }
+
+        if (! rename($temporaryPath, $destinationPath)) {
+            @unlink($temporaryPath);
+            throw new \RuntimeException('Не удалось опубликовать YML на витрине: ' . $destinationPath);
+        }
+
+        clearstatcache(true, $destinationPath);
+        if (! is_file($destinationPath) || filesize($destinationPath) !== filesize($sourcePath)) {
+            throw new \RuntimeException('Проверка опубликованной копии YML не пройдена: ' . $destinationPath);
         }
     }
 
-    private function adjustMarketPrice(float $price): float
-    {
-        $adjustment = $this->getMarketSettings()['price_adjustment'];
-        $value = max(0, (float) ($adjustment['value'] ?? 0));
-        $delta = ($adjustment['mode'] ?? 'percent') === 'absolute' ? $value : $price * $value / 100;
-        $result = ($adjustment['operation'] ?? 'add') === 'subtract' ? $price - $delta : $price + $delta;
-
-        return round(max(0, $result), 2);
-    }
-
-    private function getMarketSettings(): array
-    {
-        return $this->marketSettings ??= app(YandexMarketStockService::class)->getSettings();
-    }
 }
