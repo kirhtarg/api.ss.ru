@@ -65,7 +65,9 @@ class BikeproductsCatalogController extends Controller
         ]);
         $this->touchSupplierSnapshots($profile->code);
 
-        return response()->json(['success' => true, 'data' => $profile->fresh(['id', 'name', 'code', 'supplier_names', 'settings'])]);
+        // fresh() accepts relationship names, not a column list. Passing
+        // columns here made Eloquent try to load a relation named "id".
+        return response()->json(['success' => true, 'data' => $profile->fresh()]);
     }
 
     public function queueFeedPriceStockSync(Request $request, SupplierCatalogProfile $profile): JsonResponse
