@@ -9,7 +9,7 @@ class SupplierFeedPriceStockChange extends Model
 {
     protected $fillable = [
         'run_id', 'sku', 'entity_type', 'good_id', 'variation_id', 'good_name',
-        'field', 'before_value', 'after_value', 'is_applied',
+        'field', 'status', 'before_value', 'after_value', 'is_applied',
     ];
 
     protected function casts(): array

@@ -100,17 +100,39 @@ class BikeproductsCatalogController extends Controller
     {
         abort_unless($run->profile_id === $profile->id, 404);
         $perPage = min(100, max(10, (int) $request->query('per_page', 25)));
-        $paginator = SupplierFeedPriceStockChange::query()
-            ->where('run_id', $run->id)
+        $filter = (string) $request->query('filter', 'all');
+        $query = SupplierFeedPriceStockChange::query()->where('run_id', $run->id);
+        match ($filter) {
+            'not_found' => $query->where('status', 'not_found'),
+            'price_different' => $query->where('field', $this->feedPriceField($profile))->where('status', 'different'),
+            'price_match' => $query->where('field', $this->feedPriceField($profile))->where('status', 'match'),
+            'stock_different' => $query->where('field', $this->feedStockField($profile))->where('status', 'different'),
+            'stock_match' => $query->where('field', $this->feedStockField($profile))->where('status', 'match'),
+            default => null,
+        };
+        $paginator = $query
             ->orderBy('id')
             ->paginate($perPage);
 
-        return response()->json(['success' => true, 'data' => $paginator->items(), 'meta' => [
-            'current_page' => $paginator->currentPage(),
-            'last_page' => $paginator->lastPage(),
-            'per_page' => $paginator->perPage(),
-            'total' => $paginator->total(),
+        return response()->json(['success' => true, 'data' => [
+            'items' => $paginator->items(),
+            'meta' => [
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
+            ],
         ]]);
+    }
+
+    private function feedPriceField(SupplierCatalogProfile $profile): string
+    {
+        return (string) data_get($profile->settings, 'feed_price_target', 'price');
+    }
+
+    private function feedStockField(SupplierCatalogProfile $profile): string
+    {
+        return (string) data_get($profile->settings, 'feed_stock_target', 'stock_quantity');
     }
 
     public function snapshots(Request $request): JsonResponse

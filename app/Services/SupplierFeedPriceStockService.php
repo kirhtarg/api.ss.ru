@@ -83,14 +83,16 @@ class SupplierFeedPriceStockService
         try {
             $this->validateSettings($profile);
             $run->update(['status' => 'running', 'started_at' => now(), 'error_message' => null]);
-            $offers = $this->offers($profile);
+            $feed = $this->offers($profile);
+            $offers = $feed['items'];
             if ($offers === []) {
                 throw new \RuntimeException('В фиде не найдено ни одного предложения offer. Рабочая база не изменена.');
             }
             $result = $this->synchronize($profile, $offers, $run->id, $run->mode !== 'preview');
             $run->update([
                 'status' => 'completed',
-                'offers_total' => count($offers),
+                'offers_total' => $feed['total'],
+                'offers_without_sku' => $feed['without_sku'],
                 ...$result,
                 'finished_at' => now(),
             ]);
@@ -108,7 +110,7 @@ class SupplierFeedPriceStockService
         }
     }
 
-    /** @return array<int, array{sku: string, price: ?string, available: ?bool}> */
+    /** @return array{items: array<int, array{sku: string, price: ?string, available: ?bool}>, total: int, without_sku: int} */
     private function offers(SupplierCatalogProfile $profile): array
     {
         $url = trim((string) data_get($profile->settings, 'yml_url'));
@@ -123,12 +125,19 @@ class SupplierFeedPriceStockService
             throw new \RuntimeException('Фид не является корректным XML/YML.');
         }
         $skuSource = data_get($profile->settings, 'feed_sku_source', 'offer_id');
-        $skuParam = trim((string) data_get($profile->settings, 'feed_sku_param', 'Артикул'));
+        $skuParams = collect(explode(',', (string) data_get($profile->settings, 'feed_sku_param', 'Артикул')))
+            ->map(fn (string $value) => mb_strtolower(trim($value)))
+            ->filter()
+            ->values()
+            ->all();
         $offers = [];
+        $total = 0;
+        $withoutSku = 0;
         while ($reader->read()) {
             if ($reader->nodeType !== XMLReader::ELEMENT || $reader->localName !== 'offer') {
                 continue;
             }
+            $total++;
             $xml = @simplexml_load_string($reader->readOuterXml());
             if (! $xml) {
                 continue;
@@ -137,9 +146,17 @@ class SupplierFeedPriceStockService
             $vendorCode = trim((string) ($xml->vendorCode ?? ''));
             $paramSku = null;
             if ($skuSource === 'param') {
+                $paramValues = [];
                 foreach ($xml->param as $param) {
-                    if (mb_strtolower(trim((string) ($param['name'] ?? ''))) === mb_strtolower($skuParam)) {
-                        $paramSku = trim((string) $param);
+                    $paramName = mb_strtolower(trim((string) ($param['name'] ?? '')));
+                    $paramValue = trim((string) $param);
+                    if ($paramName !== '' && $paramValue !== '') {
+                        $paramValues[$paramName] = $paramValue;
+                    }
+                }
+                foreach ($skuParams as $skuParam) {
+                    if (isset($paramValues[$skuParam])) {
+                        $paramSku = $paramValues[$skuParam];
                         break;
                     }
                 }
@@ -150,6 +167,7 @@ class SupplierFeedPriceStockService
                 default => $id,
             };
             if ($sku === '') {
+                $withoutSku++;
                 continue;
             }
             $availableValue = mb_strtolower(trim((string) ($xml['available'] ?? '')));
@@ -159,7 +177,7 @@ class SupplierFeedPriceStockService
         }
         $reader->close();
 
-        return $offers;
+        return ['items' => $offers, 'total' => $total, 'without_sku' => $withoutSku];
     }
 
     /** @param array<int, array{sku: string, price: ?string, available: ?bool}> $offers */
@@ -189,6 +207,17 @@ class SupplierFeedPriceStockService
                 if (! $model) {
                     $counters['not_found']++;
                     if (count($summary['not_found_skus']) < 100) $summary['not_found_skus'][] = $sku;
+                    $changeRows[] = [
+                        'run_id' => $runId, 'sku' => $sku, 'entity_type' => 'none',
+                        'good_id' => null, 'variation_id' => null, 'good_name' => null,
+                        'field' => 'match', 'status' => 'not_found',
+                        'before_value' => null, 'after_value' => null, 'is_applied' => false,
+                        'created_at' => now(), 'updated_at' => now(),
+                    ];
+                    if (count($changeRows) >= 500) {
+                        SupplierFeedPriceStockChange::query()->insert($changeRows);
+                        $changeRows = [];
+                    }
                     continue;
                 }
                 $counters['matched']++;
@@ -196,39 +225,27 @@ class SupplierFeedPriceStockService
                 $changes = [];
                 if ($offer['price'] !== null) {
                     $price = $this->decimal($offer['price']);
-                    if ($price !== null && (string) $model->{$priceField} !== $price) {
-                        $changes[$priceField] = $price;
-                        $counters['updated_prices']++;
+                    if ($price !== null) {
+                        $isDifferent = (string) $model->{$priceField} !== $price;
+                        if ($isDifferent) {
+                            $changes[$priceField] = $price;
+                            $counters['updated_prices']++;
+                        }
+                        $changeRows[] = $this->feedReportRow($runId, $sku, $model, $priceField, $price, $isDifferent ? 'different' : 'match', $apply && $isDifferent);
                     }
                 }
                 if ($offer['available'] !== null) {
                     $stock = $offer['available'] ? $availableQuantity : 0;
-                    if ((string) $model->{$stockField} !== (string) $stock) {
+                    $isDifferent = (string) $model->{$stockField} !== (string) $stock;
+                    if ($isDifferent) {
                         $changes[$stockField] = $stock;
                         $counters['updated_stocks']++;
                     }
+                    $changeRows[] = $this->feedReportRow($runId, $sku, $model, $stockField, $stock, $isDifferent ? 'different' : 'match', $apply && $isDifferent);
                 }
                 if ($changes === []) {
                     $counters['unchanged']++;
-                    continue;
-                }
-                foreach ($changes as $field => $after) {
-                    $changeRows[] = [
-                        'run_id' => $runId,
-                        'sku' => $sku,
-                        'entity_type' => $model instanceof ShopGoodVariation ? 'variation' : 'good',
-                        'good_id' => $model instanceof ShopGoodVariation ? $model->good_id : $model->id,
-                        'variation_id' => $model instanceof ShopGoodVariation ? $model->id : null,
-                        'good_name' => $model instanceof ShopGoodVariation ? $model->good?->name : $model->name,
-                        'field' => $field,
-                        'before_value' => (string) ($model->{$field} ?? ''),
-                        'after_value' => (string) $after,
-                        'is_applied' => $apply,
-                        'created_at' => now(),
-                        'updated_at' => now(),
-                    ];
-                }
-                if ($apply) {
+                } elseif ($apply) {
                     $model->update($changes);
                 }
                 if (count($changeRows) >= 500) {
@@ -242,6 +259,26 @@ class SupplierFeedPriceStockService
         });
 
         return [...$counters, 'summary' => $summary];
+    }
+
+    /** @return array<string, mixed> */
+    private function feedReportRow(int $runId, string $sku, ShopGood|ShopGoodVariation $model, string $field, mixed $after, string $status, bool $isApplied): array
+    {
+        return [
+            'run_id' => $runId,
+            'sku' => $sku,
+            'entity_type' => $model instanceof ShopGoodVariation ? 'variation' : 'good',
+            'good_id' => $model instanceof ShopGoodVariation ? $model->good_id : $model->id,
+            'variation_id' => $model instanceof ShopGoodVariation ? $model->id : null,
+            'good_name' => $model instanceof ShopGoodVariation ? $model->good?->name : $model->name,
+            'field' => $field,
+            'status' => $status,
+            'before_value' => (string) ($model->{$field} ?? ''),
+            'after_value' => (string) $after,
+            'is_applied' => $isApplied,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
     }
 
     private function decimal(string $value): ?string
