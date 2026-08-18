@@ -111,7 +111,7 @@ class ShopNotificationController extends Controller
                 'description' => 'nullable|string',
                 'skip_bot_check' => 'sometimes|boolean', // Флаг для пропуска проверки бота
                 'events' => 'nullable|array',
-                'events.*.event_type' => 'required|in:order_created,cancellation_request,order_cancelled,preorder_created,site_message,backup',
+                'events.*.event_type' => 'required|in:order_created,cancellation_request,order_cancelled,preorder_created,site_message,backup,supplier_feed_sync',
                 'events.*.is_enabled' => 'sometimes|boolean',
             ]);
 
@@ -153,6 +153,7 @@ class ShopNotificationController extends Controller
                     'preorder_created',
                     'site_message',
                     'backup',
+                    'supplier_feed_sync',
                 ];
                 foreach ($defaultEvents as $eventType) {
                     ShopNotificationEvent::create([
@@ -209,7 +210,7 @@ class ShopNotificationController extends Controller
                 'is_active' => 'sometimes|boolean',
                 'description' => 'nullable|string',
                 'events' => 'nullable|array',
-                'events.*.event_type' => 'required|in:order_created,cancellation_request,order_cancelled,preorder_created,site_message,backup',
+                'events.*.event_type' => 'required|in:order_created,cancellation_request,order_cancelled,preorder_created,site_message,backup,supplier_feed_sync',
                 'events.*.is_enabled' => 'sometimes|boolean',
             ]);
 
