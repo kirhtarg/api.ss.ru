@@ -202,14 +202,24 @@ class SupplierFeedPriceStockService
         $stockField = (string) ($settings['feed_stock_target'] ?? 'stock_quantity');
         $availableQuantity = max(1, (int) ($settings['feed_available_quantity'] ?? 1));
         $supplierNames = array_values(array_filter((array) $profile->supplier_names));
-        $skus = collect($offers)->pluck('sku')->map(fn ($sku) => trim((string) $sku))->unique()->values();
+        $skuRules = $this->skuReplacementRules($settings);
+        $offers = array_map(function (array $offer) use ($skuRules): array {
+            $offer['lookup_skus'] = $this->skuLookupKeys($offer['sku'], $skuRules);
+
+            return $offer;
+        }, $offers);
+        $skus = collect($offers)->flatMap(fn (array $offer) => $offer['lookup_skus'])->unique()->values();
         $variations = ShopGoodVariation::query()
             ->whereIn('supplier', $supplierNames)
             ->whereIn('sku', $skus)
             ->with('good:id,name')
             ->get()
-            ->keyBy(fn (ShopGoodVariation $item) => trim((string) $item->sku));
-        $goods = ShopGood::query()->whereIn('supplier', $supplierNames)->whereIn('sku', $skus)->get()->keyBy(fn (ShopGood $item) => trim((string) $item->sku));
+            ->keyBy(fn (ShopGoodVariation $item) => $this->normalizeSku($item->sku));
+        $goods = ShopGood::query()
+            ->whereIn('supplier', $supplierNames)
+            ->whereIn('sku', $skus)
+            ->get()
+            ->keyBy(fn (ShopGood $item) => $this->normalizeSku($item->sku));
         $summary = ['matched_skus' => [], 'not_found_skus' => []];
         $counters = ['matched' => 0, 'updated_prices' => 0, 'updated_stocks' => 0, 'unchanged' => 0, 'not_found' => 0];
 
@@ -217,7 +227,13 @@ class SupplierFeedPriceStockService
             $changeRows = [];
             foreach ($offers as $offer) {
                 $sku = trim($offer['sku']);
-                $model = $variations->get($sku) ?? $goods->get($sku);
+                $model = null;
+                foreach ($offer['lookup_skus'] as $lookupSku) {
+                    $model = $variations->get($lookupSku) ?? $goods->get($lookupSku);
+                    if ($model) {
+                        break;
+                    }
+                }
                 if (! $model) {
                     $counters['not_found']++;
                     if (count($summary['not_found_skus']) < 100) $summary['not_found_skus'][] = $sku;
@@ -307,6 +323,48 @@ class SupplierFeedPriceStockService
         $decimal = $this->decimal($value);
 
         return $decimal === null ? null : (string) ((int) floor((float) $decimal));
+    }
+
+    /** @return array<int, array{from: string, to: string}> */
+    private function skuReplacementRules(array $settings): array
+    {
+        return collect($settings['sku_replace_rules'] ?? [])
+            ->filter(fn ($rule) => is_array($rule) && ($rule['enabled'] ?? true) !== false)
+            ->map(fn (array $rule) => [
+                'from' => $this->normalizeSku($rule['from'] ?? ''),
+                'to' => $this->normalizeSku($rule['to'] ?? ''),
+            ])
+            ->filter(fn (array $rule) => $rule['from'] !== '')
+            ->values()
+            ->all();
+    }
+
+    /** @param array<int, array{from: string, to: string}> $rules @return array<int, string> */
+    private function skuLookupKeys(string $sku, array $rules): array
+    {
+        $normalized = $this->normalizeSku($sku);
+        if ($normalized === '') {
+            return [];
+        }
+
+        $keys = [$normalized];
+        foreach ($rules as $rule) {
+            $candidate = $this->normalizeSku(str_replace($rule['from'], $rule['to'], $normalized));
+            if ($candidate !== '') {
+                $keys[] = $candidate;
+            }
+        }
+
+        return array_values(array_unique($keys));
+    }
+
+    private function normalizeSku(mixed $sku): string
+    {
+        $sku = trim((string) $sku);
+        $sku = str_replace(["\u{00A0}", "\u{2007}", "\u{202F}"], ' ', $sku);
+        $sku = preg_replace('/[\x{2010}-\x{2015}\x{2212}]/u', '-', $sku) ?? $sku;
+
+        return mb_strtoupper(trim($sku));
     }
 
     private function validateSettings(SupplierCatalogProfile $profile): void
