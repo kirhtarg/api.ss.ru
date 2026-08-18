@@ -173,12 +173,25 @@ class SupplierFeedPriceStockService
             $availableValue = mb_strtolower(trim((string) ($xml['available'] ?? '')));
             $available = $availableValue === '' ? null : in_array($availableValue, ['true', '1', 'yes', 'y', 'да'], true);
             $price = trim((string) ($xml->price ?? ''));
-            $name = trim((string) ($xml->name ?? ''));
+            $name = $this->offerName($xml);
             $offers[] = ['sku' => $sku, 'name' => $name === '' ? null : $name, 'price' => $price === '' ? null : $price, 'available' => $available];
         }
         $reader->close();
 
         return ['items' => $offers, 'total' => $total, 'without_sku' => $withoutSku];
+    }
+
+    private function offerName(\SimpleXMLElement $offer): string
+    {
+        $name = trim((string) ($offer->name ?? ''));
+        if ($name !== '') {
+            return $name;
+        }
+
+        $model = trim((string) ($offer->model ?? ''));
+        $vendor = trim((string) ($offer->vendor ?? ''));
+
+        return trim(implode(' ', array_filter([$vendor, $model])));
     }
 
     /** @param array<int, array{sku: string, name: ?string, price: ?string, available: ?bool}> $offers */
