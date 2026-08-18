@@ -224,9 +224,9 @@ class SupplierFeedPriceStockService
                 if (count($summary['matched_skus']) < 100) $summary['matched_skus'][] = $sku;
                 $changes = [];
                 if ($offer['price'] !== null) {
-                    $price = $this->decimal($offer['price']);
+                    $price = $this->integerPrice($offer['price']);
                     if ($price !== null) {
-                        $isDifferent = (string) $model->{$priceField} !== $price;
+                        $isDifferent = $this->integerPrice((string) ($model->{$priceField} ?? '')) !== $price;
                         if ($isDifferent) {
                             $changes[$priceField] = $price;
                             $counters['updated_prices']++;
@@ -286,6 +286,13 @@ class SupplierFeedPriceStockService
         $value = str_replace(',', '.', trim($value));
         if (! is_numeric($value)) return null;
         return rtrim(rtrim(number_format((float) $value, 2, '.', ''), '0'), '.');
+    }
+
+    private function integerPrice(string $value): ?string
+    {
+        $decimal = $this->decimal($value);
+
+        return $decimal === null ? null : (string) ((int) floor((float) $decimal));
     }
 
     private function validateSettings(SupplierCatalogProfile $profile): void

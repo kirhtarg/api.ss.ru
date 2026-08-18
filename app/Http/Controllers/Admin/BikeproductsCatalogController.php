@@ -19,6 +19,7 @@ use App\Services\BikeproductsCatalogService;
 use App\Services\SupplierFeedPriceStockService;
 use Closure;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use Illuminate\Support\Facades\Cache;
@@ -110,9 +111,49 @@ class BikeproductsCatalogController extends Controller
             'stock_match' => $query->where('field', $this->feedStockField($profile))->where('status', 'match'),
             default => null,
         };
-        $paginator = $query
-            ->orderBy('id')
-            ->paginate($perPage);
+        $rows = $query->orderBy('id')->get()
+            ->groupBy(fn (SupplierFeedPriceStockChange $change) => implode(':', [
+                $change->entity_type,
+                $change->good_id ?: 0,
+                $change->variation_id ?: 0,
+                $change->sku,
+            ]))
+            ->map(function ($changes) use ($profile): array {
+                /** @var SupplierFeedPriceStockChange $first */
+                $first = $changes->first();
+                $price = $changes->firstWhere('field', $this->feedPriceField($profile));
+                $stock = $changes->firstWhere('field', $this->feedStockField($profile));
+
+                return [
+                    'id' => $first->id,
+                    'sku' => $first->sku,
+                    'entity_type' => $first->entity_type,
+                    'good_id' => $first->good_id,
+                    'variation_id' => $first->variation_id,
+                    'good_name' => $first->good_name,
+                    'status' => $changes->contains('status', 'not_found')
+                        ? 'not_found'
+                        : ($changes->contains('status', 'different') ? 'different' : 'match'),
+                    'price' => $price ? [
+                        'status' => $price->status,
+                        'before_value' => $price->before_value,
+                        'after_value' => $price->after_value,
+                    ] : null,
+                    'stock' => $stock ? [
+                        'status' => $stock->status,
+                        'before_value' => $stock->before_value,
+                        'after_value' => $stock->after_value,
+                    ] : null,
+                ];
+            })
+            ->values();
+        $total = $rows->count();
+        $paginator = new LengthAwarePaginator(
+            $rows->slice(($request->integer('page', 1) - 1) * $perPage, $perPage)->values(),
+            $total,
+            $perPage,
+            $request->integer('page', 1),
+        );
 
         return response()->json(['success' => true, 'data' => [
             'items' => $paginator->items(),
