@@ -103,6 +103,13 @@ class BikeproductsCatalogController extends Controller
         $perPage = min(100, max(10, (int) $request->query('per_page', 25)));
         $filter = (string) $request->query('filter', 'all');
         $query = SupplierFeedPriceStockChange::query()->where('run_id', $run->id);
+        $search = trim((string) $request->query('search', ''));
+        if ($search !== '') {
+            $term = '%'.addcslashes($search, '%_\\').'%';
+            $query->where(fn ($nested) => $nested
+                ->where('sku', 'like', $term)
+                ->orWhere('good_name', 'like', $term));
+        }
         match ($filter) {
             'not_found' => $query->where('status', 'not_found'),
             'price_different' => $query->where('field', $this->feedPriceField($profile))->where('status', 'different'),
@@ -164,6 +171,17 @@ class BikeproductsCatalogController extends Controller
                 'total' => $paginator->total(),
             ],
         ]]);
+    }
+
+    public function deleteFeedPriceStockRun(SupplierCatalogProfile $profile, SupplierFeedPriceStockRun $run): JsonResponse
+    {
+        abort_unless($run->profile_id === $profile->id, 404);
+        if (in_array($run->status, ['queued', 'running'], true)) {
+            return response()->json(['success' => false, 'message' => 'Нельзя удалить выполняющийся запуск.'], 422);
+        }
+        $run->delete();
+
+        return response()->json(['success' => true, 'message' => 'Отчёт проверки фида удалён.']);
     }
 
     private function feedPriceField(SupplierCatalogProfile $profile): string

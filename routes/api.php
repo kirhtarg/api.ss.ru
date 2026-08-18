@@ -2070,6 +2070,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/profiles/{profile}/feed-price-stock/sync', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'queueFeedPriceStockSync']);
                 Route::get('/profiles/{profile}/feed-price-stock/runs', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'feedPriceStockRuns']);
                 Route::get('/profiles/{profile}/feed-price-stock/runs/{run}/changes', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'feedPriceStockChanges']);
+                Route::delete('/profiles/{profile}/feed-price-stock/runs/{run}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'deleteFeedPriceStockRun']);
                     Route::get('/snapshots', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'snapshots']);
                     Route::post('/snapshots/excel', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'uploadExcel']);
                     Route::delete('/snapshots/{snapshot}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'destroySnapshot']);

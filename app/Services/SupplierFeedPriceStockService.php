@@ -110,7 +110,7 @@ class SupplierFeedPriceStockService
         }
     }
 
-    /** @return array{items: array<int, array{sku: string, price: ?string, available: ?bool}>, total: int, without_sku: int} */
+    /** @return array{items: array<int, array{sku: string, name: ?string, price: ?string, available: ?bool}>, total: int, without_sku: int} */
     private function offers(SupplierCatalogProfile $profile): array
     {
         $url = trim((string) data_get($profile->settings, 'yml_url'));
@@ -173,14 +173,15 @@ class SupplierFeedPriceStockService
             $availableValue = mb_strtolower(trim((string) ($xml['available'] ?? '')));
             $available = $availableValue === '' ? null : in_array($availableValue, ['true', '1', 'yes', 'y', 'да'], true);
             $price = trim((string) ($xml->price ?? ''));
-            $offers[] = ['sku' => $sku, 'price' => $price === '' ? null : $price, 'available' => $available];
+            $name = trim((string) ($xml->name ?? ''));
+            $offers[] = ['sku' => $sku, 'name' => $name === '' ? null : $name, 'price' => $price === '' ? null : $price, 'available' => $available];
         }
         $reader->close();
 
         return ['items' => $offers, 'total' => $total, 'without_sku' => $withoutSku];
     }
 
-    /** @param array<int, array{sku: string, price: ?string, available: ?bool}> $offers */
+    /** @param array<int, array{sku: string, name: ?string, price: ?string, available: ?bool}> $offers */
     private function synchronize(SupplierCatalogProfile $profile, array $offers, int $runId, bool $apply): array
     {
         $settings = $profile->settings ?? [];
@@ -209,7 +210,7 @@ class SupplierFeedPriceStockService
                     if (count($summary['not_found_skus']) < 100) $summary['not_found_skus'][] = $sku;
                     $changeRows[] = [
                         'run_id' => $runId, 'sku' => $sku, 'entity_type' => 'none',
-                        'good_id' => null, 'variation_id' => null, 'good_name' => null,
+                        'good_id' => null, 'variation_id' => null, 'good_name' => $offer['name'],
                         'field' => 'match', 'status' => 'not_found',
                         'before_value' => null, 'after_value' => null, 'is_applied' => false,
                         'created_at' => now(), 'updated_at' => now(),
