@@ -3343,7 +3343,7 @@ class BikeproductsCatalogService
             $mappedTargets = $cachedBase['mapped_targets'];
             $sourceNameMissing = (int) $cachedBase['source_name_missing'];
         } else {
-        $sourceItems = $this->bindingParticipatingItems($this->snapshotItemsQuery($snapshot)->get(), $snapshot->supplier_code);
+        $sourceItems = $this->bindingParticipatingItems($this->snapshotItemsQuery($snapshot, null)->get(), $snapshot->supplier_code);
         $sourceVariationGroupKeys = $sourceItems
             ->filter(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))
             ->mapWithKeys(fn (SupplierCatalogItem $item) => [
