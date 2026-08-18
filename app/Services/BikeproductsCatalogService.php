@@ -3551,6 +3551,9 @@ class BikeproductsCatalogService
                 'database_good_id' => $good?->id,
                 'database_name' => $good?->name,
                 'database_slug' => $good?->slug,
+                'database_sku' => $match
+                    ? (string) ($match['model']->sku ?? '')
+                    : (string) ($good?->sku ?? ''),
                 'database_variation_id' => $match && $match['type'] === 'variation' ? $match['model']->id : null,
                 'database_variation_axes' => $onlyTargets !== null && $match && $match['type'] === 'variation'
                     ? $this->variationAxesFlatPayload($match['model'])
@@ -3611,6 +3614,7 @@ class BikeproductsCatalogService
                 'database_good_id' => $good->id,
                 'database_name' => $good->name,
                 'database_slug' => $good->slug,
+                'database_sku' => $good->sku,
                 'database_variation_id' => null,
                 'source_is_variation' => false,
                 'source_name_missing' => false,
@@ -4953,7 +4957,7 @@ class BikeproductsCatalogService
     {
         $targets = $onlyTargets === null ? 'goods' : implode(',', $onlyTargets);
 
-        return 'supplier-catalog:good-audit-base:v44:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
+        return 'supplier-catalog:good-audit-base:v45:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
     }
 
     private function snapshotAuditCacheVersion(SupplierCatalogSnapshot $snapshot): string
