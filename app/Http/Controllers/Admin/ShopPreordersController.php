@@ -52,6 +52,31 @@ class ShopPreordersController extends Controller
             });
         }
 
+        if ($request->boolean('in_stock')) {
+            $hasAvailableStock = function ($stockQuery): void {
+                $stockQuery->where('stock_quantity', '>', 0)
+                    ->orWhere(function ($remoteStock) {
+                        $remoteStock->whereNotNull('remote_stock_quantity')
+                            ->whereNotIn('remote_stock_quantity', ['', '0']);
+                    })
+                    ->orWhere(function ($fastRemoteStock) {
+                        $fastRemoteStock->whereNotNull('fast_remote_stock_quantity')
+                            ->whereNotIn('fast_remote_stock_quantity', ['', '0']);
+                    });
+            };
+            $query->where(function ($availablePreorder) use ($hasAvailableStock) {
+                $availablePreorder
+                    ->where(function ($variationPreorder) use ($hasAvailableStock) {
+                        $variationPreorder->whereNotNull('variation_id')
+                            ->whereHas('variation', $hasAvailableStock);
+                    })
+                    ->orWhere(function ($goodPreorder) use ($hasAvailableStock) {
+                        $goodPreorder->whereNull('variation_id')
+                            ->whereHas('good', $hasAvailableStock);
+                    });
+            });
+        }
+
         // Сортировка
         $query->orderBy('created_at', 'desc');
 

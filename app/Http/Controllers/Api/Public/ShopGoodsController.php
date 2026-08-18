@@ -630,7 +630,7 @@ class ShopGoodsController extends Controller
                 'variations' => function ($query) {
                     $query->with([
                         'images' => function ($q) {
-                            $q->orderBy('sort_order');
+                            $q->orderByDesc('is_main')->orderBy('sort_order')->orderBy('id');
                         },
                         'attributeValues.attribute'
                     ]);
@@ -1404,7 +1404,7 @@ class ShopGoodsController extends Controller
                 'variations' => function ($query) {
                     $query->with([
                         'images' => function ($q) {
-                            $q->orderBy('sort_order');
+                            $q->orderByDesc('is_main')->orderBy('sort_order')->orderBy('id');
                         },
                         'videos' => function ($q) {
                             $q->orderBy('sort_order');
@@ -1674,7 +1674,7 @@ class ShopGoodsController extends Controller
                 'variations' => function ($query) {
                     $query->with([
                         'images' => function ($q) {
-                            $q->orderBy('sort_order');
+                            $q->orderByDesc('is_main')->orderBy('sort_order')->orderBy('id');
                         },
                         'videos' => function ($q) {
                             $q->orderBy('sort_order');
@@ -2184,7 +2184,7 @@ class ShopGoodsController extends Controller
     {
         try {
             $variation = \App\Models\ShopGoodVariation::with(['images' => function ($query) {
-                $query->orderBy('sort_order');
+                $query->orderByDesc('is_main')->orderBy('sort_order')->orderBy('id');
             }])
                 ->where('id', $variationId)
                 ->where('is_active', true)
@@ -2272,7 +2272,7 @@ class ShopGoodsController extends Controller
 
             $variations = \App\Models\ShopGoodVariation::with([
                 'images' => function ($query) {
-                    $query->orderBy('sort_order');
+                    $query->orderByDesc('is_main')->orderBy('sort_order')->orderBy('id');
                 },
                 'videos' => function ($query) {
                     $query->orderBy('sort_order');
@@ -2619,7 +2619,6 @@ class ShopGoodsController extends Controller
         ];
     }
 }
-
 
 
 

@@ -39,7 +39,12 @@ class ShopGoodsController extends Controller
             'width', 'height', 'depth', 'weight',
             'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'is_show', 'sort_order',
             'created_at', 'updated_at',
-        ])->with([
+        ])->selectSub(
+            DB::table('shop_orders as order_counts')
+                ->selectRaw('COUNT(*)')
+                ->whereRaw("JSON_CONTAINS(order_counts.items, JSON_OBJECT('good_id', shop_goods.id), '$')"),
+            'orders_count',
+        )->with([
             'categories:id,name',
             'brands:id,name',
             'tags:id,name,color',
@@ -1171,7 +1176,7 @@ class ShopGoodsController extends Controller
 
         $allowedSortFields = [
             'id', 'name', 'sku', 'price', 'rating', 'stock_quantity', 'remote_stock_quantity',
-            'fast_remote_stock_quantity', 'created_at', 'updated_at', 'sort_order', 'supplier', 'slug',
+            'fast_remote_stock_quantity', 'created_at', 'updated_at', 'sort_order', 'supplier', 'slug', 'orders_count',
             'categories', 'brands',
         ];
 
