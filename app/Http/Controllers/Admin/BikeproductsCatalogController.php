@@ -7,6 +7,7 @@ use App\Models\Shop\Property;
 use App\Models\ShopVariationAttribute;
 use App\Models\SupplierCatalogActionRun;
 use App\Models\SupplierCatalogFieldMapping;
+use App\Models\SupplierCatalogItem;
 use App\Models\SupplierCatalogProfile;
 use App\Models\SupplierCatalogSnapshot;
 use App\Models\SupplierFeedPriceStockRun;
@@ -104,12 +105,6 @@ class BikeproductsCatalogController extends Controller
         $filter = (string) $request->query('filter', 'all');
         $query = SupplierFeedPriceStockChange::query()->where('run_id', $run->id);
         $search = trim((string) $request->query('search', ''));
-        if ($search !== '') {
-            $term = '%'.addcslashes($search, '%_\\').'%';
-            $query->where(fn ($nested) => $nested
-                ->where('sku', 'like', $term)
-                ->orWhere('good_name', 'like', $term));
-        }
         match ($filter) {
             'not_found' => $query->where('status', 'not_found'),
             'price_different' => $query->where('field', $this->feedPriceField($profile))->where('status', 'different'),
@@ -118,18 +113,43 @@ class BikeproductsCatalogController extends Controller
             'stock_match' => $query->where('field', $this->feedStockField($profile))->where('status', 'match'),
             default => null,
         };
-        $rows = $query->orderBy('id')->get()
+        $rows = $query->orderBy('id')->get();
+        $missingNameSkus = $rows
+            ->filter(fn (SupplierFeedPriceStockChange $change) => $change->entity_type === 'none' && blank($change->good_name))
+            ->pluck('sku')
+            ->filter()
+            ->unique()
+            ->values();
+        $sourceNamesBySku = collect();
+        if ($missingNameSkus->isNotEmpty()) {
+            $snapshotId = SupplierCatalogSnapshot::query()
+                ->where('supplier_code', $profile->code)
+                ->where('status', 'ready')
+                ->latest('id')
+                ->value('id');
+            if ($snapshotId) {
+                $sourceNamesBySku = SupplierCatalogItem::query()
+                    ->where('snapshot_id', $snapshotId)
+                    ->whereIn('external_sku', $missingNameSkus)
+                    ->whereNotNull('name')
+                    ->pluck('name', 'external_sku');
+            }
+        }
+
+        $rows = $rows
             ->groupBy(fn (SupplierFeedPriceStockChange $change) => implode(':', [
                 $change->entity_type,
                 $change->good_id ?: 0,
                 $change->variation_id ?: 0,
                 $change->sku,
             ]))
-            ->map(function ($changes) use ($profile): array {
+            ->map(function ($changes) use ($profile, $sourceNamesBySku): array {
                 /** @var SupplierFeedPriceStockChange $first */
                 $first = $changes->first();
                 $price = $changes->firstWhere('field', $this->feedPriceField($profile));
                 $stock = $changes->firstWhere('field', $this->feedStockField($profile));
+
+                $goodName = $first->good_name ?: $sourceNamesBySku->get($first->sku);
 
                 return [
                     'id' => $first->id,
@@ -137,7 +157,7 @@ class BikeproductsCatalogController extends Controller
                     'entity_type' => $first->entity_type,
                     'good_id' => $first->good_id,
                     'variation_id' => $first->variation_id,
-                    'good_name' => $first->good_name,
+                    'good_name' => $goodName,
                     'status' => $changes->contains('status', 'not_found')
                         ? 'not_found'
                         : ($changes->contains('status', 'different') ? 'different' : 'match'),
@@ -154,6 +174,13 @@ class BikeproductsCatalogController extends Controller
                 ];
             })
             ->values();
+        if ($search !== '') {
+            $needle = mb_strtolower($search);
+            $rows = $rows->filter(fn (array $row) => str_contains(
+                mb_strtolower(implode(' ', [$row['sku'], $row['good_name'] ?? ''])),
+                $needle,
+            ))->values();
+        }
         $total = $rows->count();
         $paginator = new LengthAwarePaginator(
             $rows->slice(($request->integer('page', 1) - 1) * $perPage, $perPage)->values(),
