@@ -210,8 +210,14 @@ class SupplierFeedPriceStockService
         }, $offers);
         $skus = collect($offers)->flatMap(fn (array $offer) => $offer['lookup_skus'])->unique()->values();
         $variations = ShopGoodVariation::query()
-            ->whereIn('supplier', $supplierNames)
             ->whereIn('sku', $skus)
+            ->where(function ($query) use ($supplierNames) {
+                $query->whereIn('supplier', $supplierNames)
+                    ->orWhere(function ($query) use ($supplierNames) {
+                        $query->where(fn ($supplier) => $supplier->whereNull('supplier')->orWhere('supplier', ''))
+                            ->whereHas('good', fn ($good) => $good->whereIn('supplier', $supplierNames));
+                    });
+            })
             ->with('good:id,name')
             ->get()
             ->keyBy(fn (ShopGoodVariation $item) => $this->normalizeSku($item->sku));

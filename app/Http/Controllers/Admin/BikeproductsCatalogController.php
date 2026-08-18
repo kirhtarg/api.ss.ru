@@ -105,14 +105,6 @@ class BikeproductsCatalogController extends Controller
         $filter = (string) $request->query('filter', 'all');
         $query = SupplierFeedPriceStockChange::query()->where('run_id', $run->id);
         $search = trim((string) $request->query('search', ''));
-        match ($filter) {
-            'not_found' => $query->where('status', 'not_found'),
-            'price_different' => $query->where('field', $this->feedPriceField($profile))->where('status', 'different'),
-            'price_match' => $query->where('field', $this->feedPriceField($profile))->where('status', 'match'),
-            'stock_different' => $query->where('field', $this->feedStockField($profile))->where('status', 'different'),
-            'stock_match' => $query->where('field', $this->feedStockField($profile))->where('status', 'match'),
-            default => null,
-        };
         $rows = $query->orderBy('id')->get();
         $missingNameSkus = $rows
             ->filter(fn (SupplierFeedPriceStockChange $change) => $change->entity_type === 'none' && blank($change->good_name))
@@ -174,6 +166,14 @@ class BikeproductsCatalogController extends Controller
                 ];
             })
             ->values();
+        $rows = (match ($filter) {
+            'not_found' => $rows->filter(fn (array $row) => $row['status'] === 'not_found'),
+            'price_different' => $rows->filter(fn (array $row) => data_get($row, 'price.status') === 'different'),
+            'price_match' => $rows->filter(fn (array $row) => data_get($row, 'price.status') === 'match'),
+            'stock_different' => $rows->filter(fn (array $row) => data_get($row, 'stock.status') === 'different'),
+            'stock_match' => $rows->filter(fn (array $row) => data_get($row, 'stock.status') === 'match'),
+            default => $rows,
+        })->values();
         if ($search !== '') {
             $needle = mb_strtolower($search);
             $rows = $rows->filter(fn (array $row) => str_contains(
