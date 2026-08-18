@@ -587,20 +587,17 @@ class BikeproductsCatalogService
             $snapshot->supplier_code,
         );
         if ($scope === 'goods') {
-            // The canonical parent row in the file may have its own technical
-            // SKU. Resolve it through child rows of the same source group so
-            // it still updates the one parent good in our database.
-            $allSourceItems = $this->bindingParticipatingItems($snapshot->items()->get(), $snapshot->supplier_code);
-            $allMatches = $this->resolveSkuMatches(
-                $allSourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
-                $snapshot->supplier_code,
-            );
-            $matches = $this->sourceItemMatchesWithGroupFallback(
-                $items,
-                $allMatches,
-                $this->sourceGoodGroupMatches($allSourceItems, $allMatches, $snapshot->supplier_code),
-                $snapshot->supplier_code,
-            );
+            // Parent fields can be changed only by the exact SKU of the
+            // parent product. A variation SKU must never resolve to its
+            // parent here: it belongs to the variation/price/stock audits.
+            $matches = $matches->filter(fn (array $match) => $match['type'] === 'good');
+            $items = $items
+                ->filter(function (SupplierCatalogItem $item) use ($matches, $snapshot): bool {
+                    $sku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
+
+                    return $matches->has($sku) || $matches->has($this->normalizeSku($sku));
+                })
+                ->values();
         }
         // resolveSkuMatches intentionally loads a compact parent relation for
         // audit rendering. Updates need the complete ShopGood model instead:
@@ -3402,17 +3399,26 @@ class BikeproductsCatalogService
             ->filter(fn (SupplierCatalogItem $item) => $this->nullableString($item->name) === null)
             ->count();
         if ($onlyTargets === null) {
-            // A parent field (name, descriptions, brand) is one value per
-            // good, never one value per variation. Prefer a non-variation row
-            // from the supplier file; only fall back to one child row where
-            // the export has no parent row at all.
+            // A parent field (name, descriptions, brand) is compared only by
+            // the exact SKU of shop_goods. Variation rows never take part in
+            // this tab and cannot become a fallback for a parent product.
             $allMatches = $this->resolveSkuMatches(
                 $allSourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
                 $snapshot->supplier_code,
             );
-            $groupMatches = $this->sourceGoodGroupMatches($allSourceItems, $allMatches, $snapshot->supplier_code);
-            $sourceItems = $this->canonicalGoodSourceItems($allSourceItems, $snapshot->supplier_code);
-            $matches = $this->sourceItemMatchesWithGroupFallback($sourceItems, $allMatches, $groupMatches, $snapshot->supplier_code);
+            $sourceItems = $allSourceItems
+                ->reject(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))
+                ->filter(function (SupplierCatalogItem $item) use ($allMatches, $snapshot): bool {
+                    $sku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
+                    $match = $allMatches->get($sku) ?? $allMatches->get($this->normalizeSku($sku));
+
+                    return $match === null || $match['type'] === 'good';
+                })
+                ->values();
+            $matches = $this->resolveSkuMatches(
+                $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
+                $snapshot->supplier_code,
+            )->filter(fn (array $match) => $match['type'] === 'good');
         } else {
             $sourceVariationGroupKeys = $allSourceItems
                 ->filter(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))
@@ -4957,7 +4963,7 @@ class BikeproductsCatalogService
     {
         $targets = $onlyTargets === null ? 'goods' : implode(',', $onlyTargets);
 
-        return 'supplier-catalog:good-audit-base:v45:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
+        return 'supplier-catalog:good-audit-base:v46:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
     }
 
     private function snapshotAuditCacheVersion(SupplierCatalogSnapshot $snapshot): string
