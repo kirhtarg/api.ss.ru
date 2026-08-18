@@ -877,7 +877,6 @@ class AvitoFeedService
     protected function getImages($good)
     {
         $urls = [];
-        $base = rtrim($this->baseUrl, '/');
 
         // Если есть вариации, собираем картинки
         if ($good->variations->count() > 0) {
@@ -906,9 +905,8 @@ class AvitoFeedService
                     foreach ($variations as $v) {
                         if ($v->images->count() > 0) {
                             $img = $v->images->first();
-                            $path = ltrim($img->file_path ?? $img->url, '/');
-                            if ($path) {
-                                $url = $base . '/' . $path;
+                            $url = $this->imagePublicUrl($img);
+                            if ($url !== null) {
                                 if (!in_array($url, $urls)) {
                                     $urls[] = $url;
                                 }
@@ -923,9 +921,8 @@ class AvitoFeedService
                 foreach ($activeVariations as $v) {
                     if ($v->images) {
                         foreach ($v->images as $img) {
-                            $path = ltrim($img->file_path ?? $img->url, '/');
-                            if ($path) {
-                                $url = $base . '/' . $path;
+                            $url = $this->imagePublicUrl($img);
+                            if ($url !== null) {
                                 if (!in_array($url, $urls)) {
                                     $urls[] = $url;
                                 }
@@ -940,9 +937,8 @@ class AvitoFeedService
         // Если картинок из вариаций нет или их меньше 10, добавляем из основного товара
         if (count($urls) < 10) {
             foreach ($good->images as $img) {
-                $path = ltrim($img->file_path ?? $img->url, '/');
-                if ($path) {
-                    $url = $base . '/' . $path;
+                $url = $this->imagePublicUrl($img);
+                if ($url !== null) {
                     if (!in_array($url, $urls)) {
                         $urls[] = $url;
                     }
@@ -954,12 +950,34 @@ class AvitoFeedService
         // Если всё ещё нет изображений, берем логотип сайта как заглушку
         if (empty($urls)) {
             $logo = Setting::where('key', 'site_logo')->value('value');
-            if ($logo) {
-                $urls[] = $base . '/' . ltrim($logo, '/');
+            if ($logo && ($url = $this->imagePublicUrl((object) ['file_path' => $logo])) !== null) {
+                $urls[] = $url;
             }
         }
 
         return $urls;
+    }
+
+    private function imagePublicUrl(object $image): ?string
+    {
+        $filePath = trim((string) ($image->file_path ?? ''));
+        if ($filePath === '') {
+            return null;
+        }
+
+        if (preg_match('#^https?://#i', $filePath)) {
+            return $filePath;
+        }
+
+        // Use the model accessor for relative files: it adds the public
+        // `/images/` prefix used by the storefront.
+        $path = trim((string) ($image->url ?? $filePath));
+        if (preg_match('#^https?://#i', $path)) {
+            return $path;
+        }
+        $base = rtrim((string) $this->baseUrl, '/');
+
+        return $base === '' ? null : $base.'/'.ltrim($path, '/');
     }
 
     /**

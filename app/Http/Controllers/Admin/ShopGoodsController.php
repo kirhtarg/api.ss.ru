@@ -763,6 +763,11 @@ class ShopGoodsController extends Controller
             }
         }
 
+        // Товары, у которых есть хотя бы одна отключенная вариация.
+        if ($request->boolean('has_inactive_variations')) {
+            $query->whereHas('variations', fn ($variationQuery) => $variationQuery->where('is_active', false));
+        }
+
         // Фильтр по категориям
         if ($request->filled('has_categories')) {
             $hasCategories = $request->get('has_categories');
@@ -2812,6 +2817,18 @@ class ShopGoodsController extends Controller
             $jsonData = json_decode($request->getContent(), true);
             $data = $jsonData['data'] ?? [];
 
+            // Статус товара и его вариаций не может расходиться после массового
+            // изменения: иначе активный товар остаётся без доступных офферов.
+            $updatedVariationsCount = 0;
+            if (in_array($action, ['activate', 'deactivate'], true) && ! empty($ids)) {
+                $updatedVariationsCount = ShopGoodVariation::whereIn('good_id', $ids)
+                    ->where(function ($variationQuery) use ($action) {
+                        $variationQuery->where('is_active', '!=', $action === 'activate')
+                            ->orWhereNull('is_active');
+                    })
+                    ->update(['is_active' => $action === 'activate']);
+            }
+
             // Для массового удаления по меткам/поставщикам делаем прямые запросы
             if (in_array($action, ['clear_by_tags', 'clear_by_suppliers'])) {
                 $query = ShopGood::query();
@@ -3822,6 +3839,13 @@ class ShopGoodsController extends Controller
             $message = 'Массовое обновление выполнено успешно';
             $responseData = ['success' => true, 'message' => $message, 'updated_count' => count($ids)];
 
+            if (in_array($action, ['activate', 'deactivate'], true)) {
+                $responseData['updated_variations_count'] = $updatedVariationsCount;
+                $responseData['message'] = $action === 'activate'
+                    ? "Активировано товаров: ".count($ids)."; вариаций: {$updatedVariationsCount}"
+                    : "Деактивировано товаров: ".count($ids)."; вариаций: {$updatedVariationsCount}";
+            }
+
             if ($action === 'delete_without_supplier') {
                 $message = "Удалено вариаций без поставщика: {$deletedVariationsCount}";
                 $responseData['message'] = $message;
@@ -4190,6 +4214,10 @@ class ShopGoodsController extends Controller
             } else {
                 $query->doesntHave('variations');
             }
+        }
+
+        if ($request->boolean('has_inactive_variations')) {
+            $query->whereHas('variations', fn ($variationQuery) => $variationQuery->where('is_active', false));
         }
 
         // Фильтр по наличию категорий
