@@ -603,6 +603,7 @@ class BikeproductsCatalogService
         $affected = 0;
         $skipped = 0;
         $actionLog = [];
+        $postCommitGoodUpdates = [];
 
         if ($scope === 'goods') {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'good')->where('is_check_enabled', true)->get();
@@ -611,7 +612,7 @@ class BikeproductsCatalogService
             if ($targets !== []) {
                 $mappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => in_array((string) data_get($mapping->conditions, 'target'), $targets, true));
             }
-            DB::transaction(function () use ($items, $matches, $matchedGoods, $mappings, $targets, $snapshot, &$affected, &$skipped, &$actionLog): void {
+            DB::transaction(function () use ($items, $matches, $matchedGoods, $mappings, $targets, $snapshot, &$affected, &$skipped, &$actionLog, &$postCommitGoodUpdates): void {
                 foreach ($items as $item) {
                     $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
                     $match = $matches->get($sourceSku) ?? $matches->get($this->normalizeSku($sourceSku));
@@ -629,6 +630,7 @@ class BikeproductsCatalogService
                     if ($values !== []) {
                         $good->update($values);
                         $good->refresh();
+                        $postCommitGoodUpdates[$good->id] = $values;
                     }
                     if ($brand !== null) $good->brands()->sync([ShopBrand::firstOrCreate(['name' => $brand], ['is_active' => true])->id]);
                     $affected++;
@@ -645,6 +647,37 @@ class BikeproductsCatalogService
                     ]);
                 }
             });
+
+            // saved_values above is read inside the transaction. Verify after
+            // commit as well: an old restored schema may contain a trigger or
+            // another connection that undoes a model-level change afterwards.
+            foreach ($postCommitGoodUpdates as $goodId => $expectedValues) {
+                $actualValues = DB::table('shop_goods')
+                    ->where('id', $goodId)
+                    ->first(array_keys($expectedValues));
+                $needsRepair = collect($expectedValues)->contains(
+                    fn ($value, string $field) => (string) ($actualValues->{$field} ?? '') !== (string) $value,
+                );
+                if ($needsRepair) {
+                    DB::table('shop_goods')
+                        ->where('id', $goodId)
+                        ->update([...$expectedValues, 'updated_at' => now()]);
+                    $actualValues = DB::table('shop_goods')
+                        ->where('id', $goodId)
+                        ->first(array_keys($expectedValues));
+                }
+                foreach ($actionLog as &$log) {
+                    if (($log['context']['good_id'] ?? null) !== $goodId) {
+                        continue;
+                    }
+                    $log['context']['persisted_values'] = collect(array_keys($expectedValues))
+                        ->mapWithKeys(fn (string $field) => [$field => $actualValues->{$field} ?? null])
+                        ->all();
+                    $log['context']['post_commit_repaired'] = $needsRepair;
+                }
+                unset($log);
+            }
+
             return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Поля товаров обновлены', 'log' => $actionLog];
         }
 
