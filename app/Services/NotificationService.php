@@ -6,6 +6,7 @@ use App\Models\ShopNotificationChannel;
 use App\Models\ShopOrder;
 use App\Models\ShopPreorder;
 use App\Models\SiteMessage;
+use App\Models\SupplierFeedPriceStockRun;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
@@ -217,6 +218,11 @@ class NotificationService
         ]));
     }
 
+    public function notifySupplierFeedSync(SupplierFeedPriceStockRun $run): void
+    {
+        $this->sendNotification('supplier_feed_sync', ['run' => $run->loadMissing('profile:id,name,code')]);
+    }
+
     /**
      * Отправить уведомление через все активные каналы для события
      */
@@ -333,6 +339,7 @@ class NotificationService
             'order_cancelled' => "Заказ #{$data['order']->order_number} отменен",
             'preorder_created' => 'Новый предзаказ товара',
             'backup' => $this->getBackupEmailSubject($data),
+            'supplier_feed_sync' => $this->getSupplierFeedSyncSubject($data),
             'site_message' => match ($data['message']->type) {
                 'callback' => "Запрос обратного звонка от {$data['message']->name}",
                 'found_cheaper' => "Нашел дешевле от {$data['message']->name}",
@@ -356,6 +363,7 @@ class NotificationService
             'preorder_created' => $this->formatPreorderCreatedEmail($data['preorder']),
             'site_message' => $this->formatSiteMessageEmail($data['message']),
             'backup' => $this->formatBackupNotificationEmail($data),
+            'supplier_feed_sync' => $this->formatSupplierFeedSyncNotification($data),
             default => "Уведомление о событии: {$eventType}"
         };
     }
@@ -374,6 +382,7 @@ class NotificationService
             'payment_received' => $this->formatPaymentReceivedTelegram($data['order'], $data['transaction'] ?? null, $data['payment_object'] ?? []),
             'payment_failed' => $this->formatPaymentFailedTelegram($data['order'], $data['transaction'] ?? null, $data['payment_object'] ?? []),
             'backup' => $this->formatBackupNotificationTelegram($data),
+            'supplier_feed_sync' => $this->formatSupplierFeedSyncNotification($data),
             default => "Уведомление о событии: {$eventType}"
         };
     }
@@ -1244,6 +1253,45 @@ class NotificationService
             }
             $message .= "\n🕐 <b>Время:</b> ".$siteMessage->created_at->format('d.m.Y H:i');
         }
+
+        return $message;
+    }
+
+    protected function getSupplierFeedSyncSubject(array $data): string
+    {
+        /** @var SupplierFeedPriceStockRun|null $run */
+        $run = $data['run'] ?? null;
+        $profile = $run?->profile?->name ?? 'поставщика';
+        $operation = $run?->mode === 'preview' ? 'Проверка фида' : 'Синхронизация фида';
+
+        return $run?->status === 'completed'
+            ? $operation.' завершена: '.$profile
+            : 'Ошибка: '.$operation.' '.$profile;
+    }
+
+    protected function formatSupplierFeedSyncNotification(array $data): string
+    {
+        /** @var SupplierFeedPriceStockRun|null $run */
+        $run = $data['run'] ?? null;
+        if (! $run) {
+            return 'Нет данных о проверке фида.';
+        }
+
+        $operation = $run->mode === 'preview' ? 'Проверка фида без изменений' : 'Проверка и обновление фида';
+        $message = $operation.'\n\n';
+        $message .= 'Поставщик: '.($run->profile?->name ?? '-').'\n';
+        $message .= 'Источник: '.($run->trigger === 'scheduled' ? 'по расписанию' : 'вручную').'\n';
+        if ($run->status === 'completed') {
+            $message .= 'Предложений в фиде: '.(int) $run->offers_total."\n";
+            $message .= 'Сопоставлено по SKU: '.(int) $run->matched."\n";
+            $message .= ($run->mode === 'preview' ? 'Изменится' : 'Обновлено').' цен: '.(int) $run->updated_prices."\n";
+            $message .= ($run->mode === 'preview' ? 'Изменится' : 'Обновлено').' остатков: '.(int) $run->updated_stocks."\n";
+            $message .= 'Без изменений: '.(int) $run->unchanged."\n";
+            $message .= 'SKU не найдены: '.(int) $run->not_found."\n";
+        } else {
+            $message .= 'Ошибка: '.($run->error_message ?: 'неизвестная ошибка')."\n";
+        }
+        $message .= 'Время: '.now()->format('d.m.Y H:i:s');
 
         return $message;
     }

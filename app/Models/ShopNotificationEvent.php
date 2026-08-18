@@ -57,6 +57,7 @@ class ShopNotificationEvent extends Model
             'order_cancelled' => 'Заказ отменен пользователем',
             'preorder_created' => 'Предзаказ товара',
             'site_message' => 'Сообщение на сайте',
+            'supplier_feed_sync' => 'Проверка фида поставщика',
             default => $this->event_type
         };
     }

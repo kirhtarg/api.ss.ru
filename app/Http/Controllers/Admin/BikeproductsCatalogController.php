@@ -10,6 +10,7 @@ use App\Models\SupplierCatalogFieldMapping;
 use App\Models\SupplierCatalogProfile;
 use App\Models\SupplierCatalogSnapshot;
 use App\Models\SupplierFeedPriceStockRun;
+use App\Models\SupplierFeedPriceStockChange;
 use App\Jobs\ProcessSupplierCatalogExcelJob;
 use App\Jobs\AuditSupplierCatalogImagesJob;
 use App\Jobs\SyncSupplierCatalogImagesJob;
@@ -67,13 +68,17 @@ class BikeproductsCatalogController extends Controller
         return response()->json(['success' => true, 'data' => $profile->fresh(['id', 'name', 'code', 'supplier_names', 'settings'])]);
     }
 
-    public function queueFeedPriceStockSync(SupplierCatalogProfile $profile): JsonResponse
+    public function queueFeedPriceStockSync(Request $request, SupplierCatalogProfile $profile): JsonResponse
     {
-        $run = $this->feedPriceStock->queue($profile);
+        $data = $request->validate(['mode' => ['nullable', 'in:preview,sync']]);
+        $mode = $data['mode'] ?? 'sync';
+        $run = $this->feedPriceStock->queue($profile, 'manual', $mode);
 
         return response()->json([
             'success' => true,
-            'message' => 'Синхронизация цены и остатка по фиду поставлена в очередь.',
+            'message' => $mode === 'preview'
+                ? 'Проверка фида поставлена в очередь. База не будет изменена.'
+                : 'Проверка и обновление цены и остатка по фиду поставлены в очередь.',
             'data' => $run,
         ], 202);
     }
@@ -86,6 +91,23 @@ class BikeproductsCatalogController extends Controller
             ->limit(10)
             ->get(),
         ]);
+    }
+
+    public function feedPriceStockChanges(Request $request, SupplierCatalogProfile $profile, SupplierFeedPriceStockRun $run): JsonResponse
+    {
+        abort_unless($run->profile_id === $profile->id, 404);
+        $perPage = min(100, max(10, (int) $request->query('per_page', 25)));
+        $paginator = SupplierFeedPriceStockChange::query()
+            ->where('run_id', $run->id)
+            ->orderBy('id')
+            ->paginate($perPage);
+
+        return response()->json(['success' => true, 'data' => $paginator->items(), 'meta' => [
+            'current_page' => $paginator->currentPage(),
+            'last_page' => $paginator->lastPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+        ]]);
     }
 
     public function snapshots(Request $request): JsonResponse

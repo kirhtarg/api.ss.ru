@@ -6,6 +6,7 @@ use App\Jobs\SyncSupplierFeedPriceStockJob;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\SupplierCatalogProfile;
+use App\Models\SupplierFeedPriceStockChange;
 use App\Models\SupplierFeedPriceStockRun;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Cache;
@@ -18,13 +19,21 @@ class SupplierFeedPriceStockService
     private const PRICE_FIELDS = ['price', 'sale_price', 'demping_price'];
     private const STOCK_FIELDS = ['stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'];
 
-    public function queue(SupplierCatalogProfile $profile, string $trigger = 'manual'): SupplierFeedPriceStockRun
+    public function __construct(private readonly NotificationService $notifications)
+    {
+    }
+
+    public function queue(SupplierCatalogProfile $profile, string $trigger = 'manual', string $mode = 'sync'): SupplierFeedPriceStockRun
     {
         $this->validateSettings($profile);
+        if (! in_array($mode, ['preview', 'sync'], true)) {
+            throw new \InvalidArgumentException('Некорректный режим проверки фида.');
+        }
         $run = SupplierFeedPriceStockRun::create([
             'profile_id' => $profile->id,
             'status' => 'queued',
             'trigger' => $trigger,
+            'mode' => $mode,
         ]);
         SyncSupplierFeedPriceStockJob::dispatch($run->id);
 
@@ -78,19 +87,21 @@ class SupplierFeedPriceStockService
             if ($offers === []) {
                 throw new \RuntimeException('В фиде не найдено ни одного предложения offer. Рабочая база не изменена.');
             }
-            $result = $this->synchronize($profile, $offers);
+            $result = $this->synchronize($profile, $offers, $run->id, $run->mode !== 'preview');
             $run->update([
                 'status' => 'completed',
                 'offers_total' => count($offers),
                 ...$result,
                 'finished_at' => now(),
             ]);
+            $this->notifications->notifySupplierFeedSync($run->fresh());
         } catch (\Throwable $exception) {
             $run->update([
                 'status' => 'failed',
                 'error_message' => mb_substr($exception->getMessage(), 0, 4000),
                 'finished_at' => now(),
             ]);
+            $this->notifications->notifySupplierFeedSync($run->fresh());
             throw $exception;
         } finally {
             optional($lock)->release();
@@ -138,7 +149,7 @@ class SupplierFeedPriceStockService
     }
 
     /** @param array<int, array{sku: string, price: ?string, available: ?bool}> $offers */
-    private function synchronize(SupplierCatalogProfile $profile, array $offers): array
+    private function synchronize(SupplierCatalogProfile $profile, array $offers, int $runId, bool $apply): array
     {
         $settings = $profile->settings ?? [];
         $priceField = (string) ($settings['feed_price_target'] ?? 'price');
@@ -146,12 +157,18 @@ class SupplierFeedPriceStockService
         $availableQuantity = max(1, (int) ($settings['feed_available_quantity'] ?? 1));
         $supplierNames = array_values(array_filter((array) $profile->supplier_names));
         $skus = collect($offers)->pluck('sku')->map(fn ($sku) => trim((string) $sku))->unique()->values();
-        $variations = ShopGoodVariation::query()->whereIn('supplier', $supplierNames)->whereIn('sku', $skus)->get()->keyBy(fn (ShopGoodVariation $item) => trim((string) $item->sku));
+        $variations = ShopGoodVariation::query()
+            ->whereIn('supplier', $supplierNames)
+            ->whereIn('sku', $skus)
+            ->with('good:id,name')
+            ->get()
+            ->keyBy(fn (ShopGoodVariation $item) => trim((string) $item->sku));
         $goods = ShopGood::query()->whereIn('supplier', $supplierNames)->whereIn('sku', $skus)->get()->keyBy(fn (ShopGood $item) => trim((string) $item->sku));
         $summary = ['matched_skus' => [], 'not_found_skus' => []];
         $counters = ['matched' => 0, 'updated_prices' => 0, 'updated_stocks' => 0, 'unchanged' => 0, 'not_found' => 0];
 
-        DB::transaction(function () use ($offers, $variations, $goods, $priceField, $stockField, $availableQuantity, &$summary, &$counters): void {
+        DB::transaction(function () use ($offers, $variations, $goods, $priceField, $stockField, $availableQuantity, $runId, $apply, &$summary, &$counters): void {
+            $changeRows = [];
             foreach ($offers as $offer) {
                 $sku = trim($offer['sku']);
                 $model = $variations->get($sku) ?? $goods->get($sku);
@@ -181,7 +198,32 @@ class SupplierFeedPriceStockService
                     $counters['unchanged']++;
                     continue;
                 }
-                $model->update($changes);
+                foreach ($changes as $field => $after) {
+                    $changeRows[] = [
+                        'run_id' => $runId,
+                        'sku' => $sku,
+                        'entity_type' => $model instanceof ShopGoodVariation ? 'variation' : 'good',
+                        'good_id' => $model instanceof ShopGoodVariation ? $model->good_id : $model->id,
+                        'variation_id' => $model instanceof ShopGoodVariation ? $model->id : null,
+                        'good_name' => $model instanceof ShopGoodVariation ? $model->good?->name : $model->name,
+                        'field' => $field,
+                        'before_value' => (string) ($model->{$field} ?? ''),
+                        'after_value' => (string) $after,
+                        'is_applied' => $apply,
+                        'created_at' => now(),
+                        'updated_at' => now(),
+                    ];
+                }
+                if ($apply) {
+                    $model->update($changes);
+                }
+                if (count($changeRows) >= 500) {
+                    SupplierFeedPriceStockChange::query()->insert($changeRows);
+                    $changeRows = [];
+                }
+            }
+            if ($changeRows !== []) {
+                SupplierFeedPriceStockChange::query()->insert($changeRows);
             }
         });
 

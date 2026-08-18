@@ -9,6 +9,7 @@ class SupplierFeedPriceStockRun extends Model
 {
     protected $fillable = [
         'profile_id', 'status', 'trigger', 'offers_total', 'matched',
+        'mode',
         'updated_prices', 'updated_stocks', 'unchanged', 'not_found',
         'summary', 'error_message', 'started_at', 'finished_at',
     ];
