@@ -3564,6 +3564,13 @@ class BikeproductsCatalogService
                 'database_variation_axes' => $onlyTargets !== null && $match && $match['type'] === 'variation'
                     ? $this->variationAxesFlatPayload($match['model'])
                     : [],
+                // Show the complete database stock state in the price/stock audit,
+                // independently of which stock fields were mapped from the file.
+                'database_stocks' => $comparisonModel ? [
+                    'stock_quantity' => $comparisonModel->stock_quantity,
+                    'fast_remote_stock_quantity' => $comparisonModel->fast_remote_stock_quantity,
+                    'remote_stock_quantity' => $comparisonModel->remote_stock_quantity,
+                ] : null,
                 'database_duplicate_sku_variations' => $duplicateSkuVariations
                     ? $this->databaseVariationDuplicatePayload($duplicateSkuVariations)
                     : [],
@@ -3622,6 +3629,11 @@ class BikeproductsCatalogService
                 'database_slug' => $good->slug,
                 'database_sku' => $good->sku,
                 'database_variation_id' => null,
+                'database_stocks' => [
+                    'stock_quantity' => $good->stock_quantity,
+                    'fast_remote_stock_quantity' => $good->fast_remote_stock_quantity,
+                    'remote_stock_quantity' => $good->remote_stock_quantity,
+                ],
                 'source_is_variation' => false,
                 'source_name_missing' => false,
                 'differences' => $databaseDifferences,
@@ -4963,7 +4975,7 @@ class BikeproductsCatalogService
     {
         $targets = $onlyTargets === null ? 'goods' : implode(',', $onlyTargets);
 
-        return 'supplier-catalog:good-audit-base:v46:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
+        return 'supplier-catalog:good-audit-base:v47:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
     }
 
     private function snapshotAuditCacheVersion(SupplierCatalogSnapshot $snapshot): string
