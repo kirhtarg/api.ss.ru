@@ -603,6 +603,7 @@ class BikeproductsCatalogService
         $affected = 0;
         $skipped = 0;
         $actionLog = [];
+        $committedGoodUpdates = [];
 
         if ($scope === 'goods') {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'good')->where('is_check_enabled', true)->get();
@@ -611,7 +612,7 @@ class BikeproductsCatalogService
             if ($targets !== []) {
                 $mappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => in_array((string) data_get($mapping->conditions, 'target'), $targets, true));
             }
-            DB::transaction(function () use ($items, $matches, $matchedGoods, $mappings, $targets, $snapshot, &$affected, &$skipped, &$actionLog): void {
+            DB::transaction(function () use ($items, $matches, $matchedGoods, $mappings, $targets, $snapshot, &$affected, &$skipped, &$actionLog, &$committedGoodUpdates): void {
                 foreach ($items as $item) {
                     $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
                     $match = $matches->get($sourceSku) ?? $matches->get($this->normalizeSku($sourceSku));
@@ -646,6 +647,7 @@ class BikeproductsCatalogService
                         if ($writeFailed) {
                             throw new \RuntimeException('База данных не сохранила обновлённые поля товара #'.$good->id.'.');
                         }
+                        $committedGoodUpdates[$good->id] = $values;
                         $good->forceFill($persistedValues);
                     }
                     if ($brand !== null) $good->brands()->sync([ShopBrand::firstOrCreate(['name' => $brand], ['is_active' => true])->id]);
@@ -661,6 +663,32 @@ class BikeproductsCatalogService
                     ]);
                 }
             });
+
+            // A response must describe committed database state, not merely a
+            // successful statement inside the transaction.
+            foreach ($committedGoodUpdates as $goodId => $values) {
+                $persisted = DB::table('shop_goods')->where('id', $goodId)->first(array_keys($values));
+                $persistedValues = collect(array_keys($values))
+                    ->mapWithKeys(fn (string $field) => [$field => $persisted->{$field} ?? null])
+                    ->all();
+                if (collect($values)->contains(
+                    fn ($value, string $field) => (string) ($persistedValues[$field] ?? '') !== (string) $value,
+                )) {
+                    Log::error('[supplier-catalog] Goods update was reverted after commit', [
+                        'snapshot_id' => $snapshot->id,
+                        'good_id' => $goodId,
+                        'expected' => $values,
+                        'persisted' => $persistedValues,
+                    ]);
+                    throw new \RuntimeException('После сохранения база вернула старое значение товара #'.$goodId.'.');
+                }
+                foreach ($actionLog as &$log) {
+                    if (($log['context']['good_id'] ?? null) === $goodId) {
+                        $log['context']['persisted_after_commit'] = $persistedValues;
+                    }
+                }
+                unset($log);
+            }
 
             return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Поля товаров обновлены', 'log' => $actionLog];
         }
