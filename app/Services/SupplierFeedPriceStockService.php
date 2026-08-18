@@ -123,6 +123,7 @@ class SupplierFeedPriceStockService
             throw new \RuntimeException('Фид не является корректным XML/YML.');
         }
         $skuSource = data_get($profile->settings, 'feed_sku_source', 'offer_id');
+        $skuParam = trim((string) data_get($profile->settings, 'feed_sku_param', 'Артикул'));
         $offers = [];
         while ($reader->read()) {
             if ($reader->nodeType !== XMLReader::ELEMENT || $reader->localName !== 'offer') {
@@ -134,7 +135,20 @@ class SupplierFeedPriceStockService
             }
             $id = trim((string) ($xml['id'] ?? ''));
             $vendorCode = trim((string) ($xml->vendorCode ?? ''));
-            $sku = $skuSource === 'vendor_code' ? $vendorCode : $id;
+            $paramSku = null;
+            if ($skuSource === 'param') {
+                foreach ($xml->param as $param) {
+                    if (mb_strtolower(trim((string) ($param['name'] ?? ''))) === mb_strtolower($skuParam)) {
+                        $paramSku = trim((string) $param);
+                        break;
+                    }
+                }
+            }
+            $sku = match ($skuSource) {
+                'vendor_code' => $vendorCode,
+                'param' => $paramSku ?? '',
+                default => $id,
+            };
             if ($sku === '') {
                 continue;
             }
@@ -243,6 +257,7 @@ class SupplierFeedPriceStockService
         if (empty($settings['yml_url'])) throw new \InvalidArgumentException('Не указан URL фида.');
         if (! in_array($settings['feed_price_target'] ?? 'price', self::PRICE_FIELDS, true)) throw new \InvalidArgumentException('Некорректно назначено поле цены фида.');
         if (! in_array($settings['feed_stock_target'] ?? 'stock_quantity', self::STOCK_FIELDS, true)) throw new \InvalidArgumentException('Некорректно назначено поле остатка фида.');
-        if (! in_array($settings['feed_sku_source'] ?? 'offer_id', ['offer_id', 'vendor_code'], true)) throw new \InvalidArgumentException('Некорректно назначено поле SKU фида.');
+        if (! in_array($settings['feed_sku_source'] ?? 'offer_id', ['offer_id', 'vendor_code', 'param'], true)) throw new \InvalidArgumentException('Некорректно назначено поле SKU фида.');
+        if (($settings['feed_sku_source'] ?? 'offer_id') === 'param' && trim((string) ($settings['feed_sku_param'] ?? '')) === '') throw new \InvalidArgumentException('Укажите название параметра фида для SKU.');
     }
 }
