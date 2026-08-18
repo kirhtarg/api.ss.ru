@@ -32,6 +32,11 @@ class ShopGoodsController extends Controller
     public function index(Request $request): JsonResponse
     {
 
+        $ordersCountQuery = DB::table('shop_orders as orders')
+            ->crossJoin(DB::raw("JSON_TABLE(orders.items, '$[*]' COLUMNS (good_id BIGINT PATH '$.good_id')) as order_item"))
+            ->selectRaw('order_item.good_id, COUNT(DISTINCT orders.id) as orders_count')
+            ->groupBy('order_item.good_id');
+
         $query = ShopGood::select([
             'id', 'name', 'slug', 'sku', 'description', 'short_description',
             'price', 'sale_price', 'demping_price', 'show_demping', 'label_id', 'supplier',
@@ -39,12 +44,9 @@ class ShopGoodsController extends Controller
             'width', 'height', 'depth', 'weight',
             'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'is_show', 'sort_order',
             'created_at', 'updated_at',
-        ])->selectSub(
-            DB::table('shop_orders as order_counts')
-                ->selectRaw('COUNT(*)')
-                ->whereRaw("JSON_CONTAINS(order_counts.items, JSON_OBJECT('good_id', shop_goods.id), '$')"),
-            'orders_count',
-        )->with([
+        ])->leftJoinSub($ordersCountQuery, 'order_counts', function ($join) {
+            $join->on('order_counts.good_id', '=', 'shop_goods.id');
+        })->addSelect(DB::raw('COALESCE(order_counts.orders_count, 0) as orders_count'))->with([
             'categories:id,name',
             'brands:id,name',
             'tags:id,name,color',
@@ -88,7 +90,7 @@ class ShopGoodsController extends Controller
             }));
 
             if (! empty($selectedIds)) {
-                $query->whereIn('id', $selectedIds);
+                $query->whereIn('shop_goods.id', $selectedIds);
                 // Когда есть selected_ids, пропускаем все остальные фильтры
                 // (экспортируем только выбранные товары без дополнительных фильтров)
             }
@@ -115,7 +117,7 @@ class ShopGoodsController extends Controller
                     });
 
                     if (! empty($ids)) {
-                        $query->whereIn('id', $ids);
+                        $query->whereIn('shop_goods.id', $ids);
                     }
                 }
             }
@@ -1170,6 +1172,12 @@ class ShopGoodsController extends Controller
             });
         }
 
+        if ($request->get('orders_filter') === 'has') {
+            $query->where('order_counts.orders_count', '>', 0);
+        } elseif ($request->get('orders_filter') === 'none') {
+            $query->whereNull('order_counts.good_id');
+        }
+
         // Сортировка
         $sortBy = $request->get('sort_by', 'sort_order');
         $sortDirection = $request->get('sort_direction', 'asc');
@@ -1188,7 +1196,7 @@ class ShopGoodsController extends Controller
                     $query->leftJoin('shop_good_categories', 'shop_goods.id', '=', 'shop_good_categories.good_id')
                         ->leftJoin('shop_categories', 'shop_good_categories.category_id', '=', 'shop_categories.id')
                         ->orderByRaw('(SELECT MIN(sc.name) FROM shop_good_categories sgc INNER JOIN shop_categories sc ON sgc.category_id = sc.id WHERE sgc.good_id = shop_goods.id) '.$sortDirection)
-                        ->select('shop_goods.*')
+                        ->select('shop_goods.*', DB::raw('MAX(COALESCE(order_counts.orders_count, 0)) as orders_count'))
                         ->groupBy('shop_goods.id');
                     break;
                 case 'brands':
@@ -1196,13 +1204,13 @@ class ShopGoodsController extends Controller
                     $query->leftJoin('shop_good_brands', 'shop_goods.id', '=', 'shop_good_brands.good_id')
                         ->leftJoin('shop_brands', 'shop_good_brands.brand_id', '=', 'shop_brands.id')
                         ->orderByRaw('(SELECT MIN(sb.name) FROM shop_good_brands sgb INNER JOIN shop_brands sb ON sgb.brand_id = sb.id WHERE sgb.good_id = shop_goods.id) '.$sortDirection)
-                        ->select('shop_goods.*')
+                        ->select('shop_goods.*', DB::raw('MAX(COALESCE(order_counts.orders_count, 0)) as orders_count'))
                         ->groupBy('shop_goods.id');
                     break;
                 case 'label':
                     $query->leftJoin('shop_labels', 'shop_goods.label_id', '=', 'shop_labels.id')
                         ->orderBy('shop_labels.name', $sortDirection)
-                        ->select('shop_goods.*');
+                        ->select('shop_goods.*', DB::raw('COALESCE(order_counts.orders_count, 0) as orders_count'));
                     break;
                 case 'tags':
                     // Сортировка по количеству тегов
@@ -1817,6 +1825,50 @@ class ShopGoodsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Ошибка клонирования товара: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Заказы, в которых присутствует товар. Используется только для модального списка.
+     */
+    public function orders($id): JsonResponse
+    {
+        $good = ShopGood::select('id', 'name')->findOrFail($id);
+
+        try {
+            $orders = DB::table('shop_orders as orders')
+                ->crossJoin(DB::raw("JSON_TABLE(orders.items, '$[*]' COLUMNS (good_id BIGINT PATH '$.good_id')) as order_item"))
+                ->leftJoin('shop_order_statuses as statuses', 'statuses.id', '=', 'orders.status_id')
+                ->where('order_item.good_id', $good->id)
+                ->select([
+                    'orders.id',
+                    'orders.order_number',
+                    'orders.created_at',
+                    'statuses.display_name as status_display',
+                    'statuses.color as status_color',
+                ])
+                ->distinct()
+                ->orderByDesc('orders.created_at')
+                ->get();
+
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'good' => $good,
+                    'orders' => $orders,
+                    'total' => $orders->count(),
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Не удалось получить заказы товара в каталоге', [
+                'good_id' => $good->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Не удалось загрузить заказы товара',
             ], 500);
         }
     }

@@ -2101,6 +2101,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::put('/field-mappings/{mapping}', [\App\Http\Controllers\Admin\BikeproductsCatalogController::class, 'updateFieldMapping']);
                 });
 
+                Route::get('/{id}/orders', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'orders']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'update']);
