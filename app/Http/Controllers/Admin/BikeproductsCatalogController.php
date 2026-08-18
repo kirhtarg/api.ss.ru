@@ -106,25 +106,26 @@ class BikeproductsCatalogController extends Controller
         $query = SupplierFeedPriceStockChange::query()->where('run_id', $run->id);
         $search = trim((string) $request->query('search', ''));
         $rows = $query->orderBy('id')->get();
-        $missingNameSkus = $rows
-            ->filter(fn (SupplierFeedPriceStockChange $change) => $change->entity_type === 'none' && blank($change->good_name))
+        $reportSkus = $rows
             ->pluck('sku')
             ->filter()
             ->unique()
             ->values();
-        $sourceNamesBySku = collect();
-        if ($missingNameSkus->isNotEmpty()) {
+        $sourceItemsBySku = collect();
+        $hasSourceSnapshot = false;
+        if ($reportSkus->isNotEmpty()) {
             $snapshotId = SupplierCatalogSnapshot::query()
                 ->where('supplier_code', $profile->code)
                 ->where('status', 'ready')
                 ->latest('id')
                 ->value('id');
             if ($snapshotId) {
-                $sourceNamesBySku = SupplierCatalogItem::query()
+                $hasSourceSnapshot = true;
+                $sourceItemsBySku = SupplierCatalogItem::query()
                     ->where('snapshot_id', $snapshotId)
-                    ->whereIn('external_sku', $missingNameSkus)
-                    ->whereNotNull('name')
-                    ->pluck('name', 'external_sku');
+                    ->whereIn('external_sku', $reportSkus)
+                    ->get(['external_sku', 'name'])
+                    ->keyBy('external_sku');
             }
         }
 
@@ -135,13 +136,14 @@ class BikeproductsCatalogController extends Controller
                 $change->variation_id ?: 0,
                 $change->sku,
             ]))
-            ->map(function ($changes) use ($profile, $sourceNamesBySku): array {
+            ->map(function ($changes) use ($profile, $sourceItemsBySku, $hasSourceSnapshot): array {
                 /** @var SupplierFeedPriceStockChange $first */
                 $first = $changes->first();
                 $price = $changes->firstWhere('field', $this->feedPriceField($profile));
                 $stock = $changes->firstWhere('field', $this->feedStockField($profile));
 
-                $goodName = $first->good_name ?: $sourceNamesBySku->get($first->sku);
+                $sourceItem = $sourceItemsBySku->get($first->sku);
+                $goodName = $first->good_name ?: $sourceItem?->name;
 
                 return [
                     'id' => $first->id,
@@ -150,6 +152,7 @@ class BikeproductsCatalogController extends Controller
                     'good_id' => $first->good_id,
                     'variation_id' => $first->variation_id,
                     'good_name' => $goodName,
+                    'source_file_exists' => $hasSourceSnapshot ? $sourceItem !== null : null,
                     'status' => $changes->contains('status', 'not_found')
                         ? 'not_found'
                         : ($changes->contains('status', 'different') ? 'different' : 'match'),
