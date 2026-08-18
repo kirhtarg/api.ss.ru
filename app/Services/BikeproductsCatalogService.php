@@ -586,6 +586,22 @@ class BikeproductsCatalogService
             $items->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
             $snapshot->supplier_code,
         );
+        if ($scope === 'goods') {
+            // The canonical parent row in the file may have its own technical
+            // SKU. Resolve it through child rows of the same source group so
+            // it still updates the one parent good in our database.
+            $allSourceItems = $this->bindingParticipatingItems($snapshot->items()->get(), $snapshot->supplier_code);
+            $allMatches = $this->resolveSkuMatches(
+                $allSourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
+                $snapshot->supplier_code,
+            );
+            $matches = $this->sourceItemMatchesWithGroupFallback(
+                $items,
+                $allMatches,
+                $this->sourceGoodGroupMatches($allSourceItems, $allMatches, $snapshot->supplier_code),
+                $snapshot->supplier_code,
+            );
+        }
         // resolveSkuMatches intentionally loads a compact parent relation for
         // audit rendering. Updates need the complete ShopGood model instead:
         // otherwise an unloaded short_description is logged as null and may
@@ -607,7 +623,7 @@ class BikeproductsCatalogService
 
         if ($scope === 'goods') {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'good')->where('is_check_enabled', true)->get();
-            $allowedTargets = ['name', 'short_description', 'description', 'brand'];
+            $allowedTargets = ['name', 'short_description', 'description', 'brand', 'weight', 'depth', 'width', 'height'];
             $targets = array_values(array_intersect($allowedTargets, $targets));
             if ($targets !== []) {
                 $mappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => in_array((string) data_get($mapping->conditions, 'target'), $targets, true));
@@ -3381,28 +3397,38 @@ class BikeproductsCatalogService
             $mappedTargets = $cachedBase['mapped_targets'];
             $sourceNameMissing = (int) $cachedBase['source_name_missing'];
         } else {
-        $sourceItems = $this->bindingParticipatingItems($this->snapshotItemsQuery($snapshot, null)->get(), $snapshot->supplier_code);
-        $sourceVariationGroupKeys = $sourceItems
-            ->filter(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))
-            ->mapWithKeys(fn (SupplierCatalogItem $item) => [
-                ($item->clean_name ?: $this->sourceGroupName($item->name, $item->external_sku)) => true,
-            ])
-            ->all();
-        // Supplier exports may contain a parent row next to the actual
-        // variation rows. The parent is not an actionable standalone product
-        // and must not inflate the Goods audit compared with Variations.
-        $sourceItems = $sourceItems
-            ->reject(fn (SupplierCatalogItem $item) => ! $this->isSourceVariationItem($item)
-                && isset($sourceVariationGroupKeys[$item->clean_name ?: $this->sourceGroupName($item->name, $item->external_sku)]))
-            ->values();
-        $matches = $this->resolveSkuMatches(
-            $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
-            $snapshot->supplier_code,
-            $onlyTargets !== null,
-            // The Goods tab compares parent fields only. Loading every
-            // variation axis here creates thousands of needless relations.
-            $onlyTargets !== null,
-        );
+        $allSourceItems = $this->bindingParticipatingItems($this->snapshotItemsQuery($snapshot, null)->get(), $snapshot->supplier_code);
+        $sourceNameMissing = $allSourceItems
+            ->filter(fn (SupplierCatalogItem $item) => $this->nullableString($item->name) === null)
+            ->count();
+        if ($onlyTargets === null) {
+            // A parent field (name, descriptions, brand) is one value per
+            // good, never one value per variation. Prefer a non-variation row
+            // from the supplier file; only fall back to one child row where
+            // the export has no parent row at all.
+            $allMatches = $this->resolveSkuMatches(
+                $allSourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
+                $snapshot->supplier_code,
+            );
+            $groupMatches = $this->sourceGoodGroupMatches($allSourceItems, $allMatches, $snapshot->supplier_code);
+            $sourceItems = $this->canonicalGoodSourceItems($allSourceItems, $snapshot->supplier_code);
+            $matches = $this->sourceItemMatchesWithGroupFallback($sourceItems, $allMatches, $groupMatches, $snapshot->supplier_code);
+        } else {
+            $sourceVariationGroupKeys = $allSourceItems
+                ->filter(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))
+                ->mapWithKeys(fn (SupplierCatalogItem $item) => [$this->sourceGoodGroupKey($item) => true])
+                ->all();
+            $sourceItems = $allSourceItems
+                ->reject(fn (SupplierCatalogItem $item) => ! $this->isSourceVariationItem($item)
+                    && isset($sourceVariationGroupKeys[$this->sourceGoodGroupKey($item)]))
+                ->values();
+            $matches = $this->resolveSkuMatches(
+                $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
+                $snapshot->supplier_code,
+                true,
+                true,
+            );
+        }
         $databaseDuplicateSkuGroups = $onlyTargets !== null
             ? $this->findVariationGroupsBySku(
                 $sourceItems
@@ -3593,9 +3619,6 @@ class BikeproductsCatalogService
             ];
         }
 
-        $sourceNameMissing = $sourceItems
-            ->filter(fn (SupplierCatalogItem $item) => $this->nullableString($item->name) === null)
-            ->count();
         Cache::store('file')->put($baseCacheKey, [
             'rows' => $rows,
             'mapped_targets' => $mappedTargets,
@@ -4627,6 +4650,83 @@ class BikeproductsCatalogService
         return $baseName;
     }
 
+    private function sourceGoodGroupKey(SupplierCatalogItem $item): string
+    {
+        return $this->normalizeSourceGroupKey(
+            $item->clean_name ?: $this->sourceGroupName($item->name, $item->external_sku),
+        );
+    }
+
+    /** @return Collection<int, SupplierCatalogItem> */
+    private function canonicalGoodSourceItems(Collection $items, string $supplierCode): Collection
+    {
+        return $items
+            ->groupBy(fn (SupplierCatalogItem $item) => $this->sourceGoodGroupKey($item))
+            ->flatMap(function (Collection $group) use ($supplierCode): Collection {
+                $variationItems = $group
+                    ->filter(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item));
+                if ($variationItems->isEmpty()) {
+                    return $group;
+                }
+
+                $parentItem = $group
+                    ->reject(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))
+                    ->first(fn (SupplierCatalogItem $item) => $this->hasUsableSourceName($item, $supplierCode));
+
+                return collect([$parentItem ?? $variationItems->sortBy('id')->first()]);
+            })
+            ->filter()
+            ->values();
+    }
+
+    /**
+     * @param Collection<int, SupplierCatalogItem> $items
+     * @param Collection<string, array{type: string, model: ShopGood|ShopGoodVariation}> $matches
+     * @return array<string, array{type: string, model: ShopGood|ShopGoodVariation}>
+     */
+    private function sourceGoodGroupMatches(Collection $items, Collection $matches, string $supplierCode): array
+    {
+        $grouped = [];
+        foreach ($items as $item) {
+            $sourceSku = $this->sourceSkuForItem($item, $supplierCode);
+            $match = $matches->get($sourceSku) ?? $matches->get($this->normalizeSku($sourceSku));
+            if (! $match) {
+                continue;
+            }
+            $goodId = $match['type'] === 'variation' ? $match['model']->good_id : $match['model']->id;
+            $grouped[$this->sourceGoodGroupKey($item)][$goodId] = $match;
+        }
+
+        return collect($grouped)
+            ->filter(fn (array $matchesByGood) => count($matchesByGood) === 1)
+            ->map(fn (array $matchesByGood) => reset($matchesByGood))
+            ->all();
+    }
+
+    /**
+     * @param Collection<int, SupplierCatalogItem> $items
+     * @param Collection<string, array{type: string, model: ShopGood|ShopGoodVariation}> $matches
+     * @param array<string, array{type: string, model: ShopGood|ShopGoodVariation}> $groupMatches
+     * @return Collection<string, array{type: string, model: ShopGood|ShopGoodVariation}>
+     */
+    private function sourceItemMatchesWithGroupFallback(Collection $items, Collection $matches, array $groupMatches, string $supplierCode): Collection
+    {
+        $resolved = collect();
+        foreach ($items as $item) {
+            $sourceSku = $this->sourceSkuForItem($item, $supplierCode);
+            $match = $matches->get($sourceSku)
+                ?? $matches->get($this->normalizeSku($sourceSku))
+                ?? ($groupMatches[$this->sourceGoodGroupKey($item)] ?? null);
+            if (! $match) {
+                continue;
+            }
+            $resolved->put($sourceSku, $match);
+            $resolved->put($this->normalizeSku($sourceSku), $match);
+        }
+
+        return $resolved;
+    }
+
     /** @param Collection<int, string> $skus @return Collection<string, array{type: string, model: ShopGood|ShopGoodVariation, source_sku?: string, sku_matched_by_rule?: bool}> */
     private function resolveSkuMatches(Collection $skus, string $supplierCode, bool $preferVariations = false, bool $loadVariationDetails = false): Collection
     {
@@ -4853,7 +4953,7 @@ class BikeproductsCatalogService
     {
         $targets = $onlyTargets === null ? 'goods' : implode(',', $onlyTargets);
 
-        return 'supplier-catalog:good-audit-base:v43:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
+        return 'supplier-catalog:good-audit-base:v44:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
     }
 
     private function snapshotAuditCacheVersion(SupplierCatalogSnapshot $snapshot): string
