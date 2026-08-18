@@ -612,39 +612,7 @@ class BikeproductsCatalogService
             if ($targets !== []) {
                 $mappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => in_array((string) data_get($mapping->conditions, 'target'), $targets, true));
             }
-            // Parent fields are shared by all of a good's variations. Never
-            // let one variation overwrite another variation's different text
-            // (PREVIEW_TEXT frequently embeds the variation SKU).
-            $allItems = $this->bindingParticipatingItems($snapshot->items()->get(), $snapshot->supplier_code);
-            $allMatches = $this->resolveSkuMatches(
-                $allItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
-                $snapshot->supplier_code,
-            );
-            $sourceValuesByGood = [];
-            foreach ($allItems as $allItem) {
-                $allSourceSku = $this->sourceSkuForItem($allItem, $snapshot->supplier_code);
-                $allMatch = $allMatches->get($allSourceSku) ?? $allMatches->get($this->normalizeSku($allSourceSku));
-                if (! $allMatch) {
-                    continue;
-                }
-                $allGoodId = $allMatch['type'] === 'variation' ? $allMatch['model']->good_id : $allMatch['model']->id;
-                foreach ($this->mappedGoodAttributes($allItem, $mappings) as $field => $value) {
-                    if ($value === null || $value === '') {
-                        continue;
-                    }
-                    $sourceValuesByGood[$allGoodId][$field][$this->normalizeComparisonValue((string) $value)] = (string) $value;
-                }
-            }
-            $conflictingParentFields = [];
-            foreach ($sourceValuesByGood as $goodId => $fields) {
-                foreach ($fields as $field => $values) {
-                    if (count($values) > 1) {
-                        $conflictingParentFields[$goodId][$field] = array_values($values);
-                    }
-                }
-            }
-
-            DB::transaction(function () use ($items, $matches, $matchedGoods, $mappings, $targets, $snapshot, $conflictingParentFields, &$affected, &$skipped, &$actionLog, &$committedGoodUpdates): void {
+            DB::transaction(function () use ($items, $matches, $matchedGoods, $mappings, $targets, $snapshot, &$affected, &$skipped, &$actionLog, &$committedGoodUpdates): void {
                 foreach ($items as $item) {
                     $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
                     $match = $matches->get($sourceSku) ?? $matches->get($this->normalizeSku($sourceSku));
@@ -656,34 +624,24 @@ class BikeproductsCatalogService
                     if (! $good) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'matched_good_missing', ['scope' => 'goods']); continue; }
                     $mappedValues = $this->mappedGoodAttributes($item, $mappings);
                     $values = collect($mappedValues)->only(['name', 'short_description', 'description', 'weight', 'depth', 'width', 'height', 'price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all();
-                    $conflicts = array_intersect_key($conflictingParentFields[$goodId] ?? [], $values);
-                    if ($conflicts !== []) {
-                        foreach (array_keys($conflicts) as $field) {
-                            unset($values[$field]);
-                        }
-                    }
                     $brand = $this->nullableString($mappedValues['brand'] ?? null);
-                    if (isset($conflictingParentFields[$goodId]['brand'])) {
-                        $conflicts['brand'] = $conflictingParentFields[$goodId]['brand'];
-                        $brand = null;
-                    }
                     if ($values === [] && $brand === null) {
                         $skipped++;
-                        $actionLog[] = $this->catalogActionLogRow($item, 'skipped', $conflicts !== [] ? 'conflicting_source_values_for_parent_good' : 'no_mapped_values', [
+                        $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_mapped_values', [
                             'scope' => 'goods',
                             'good_id' => $good?->id,
                             'targets' => $targets,
-                            'conflicts' => $conflicts,
                         ]);
                         continue;
                     }
                     $fieldChanges = $this->modelFieldChanges($good, $values);
                     $persistedValues = [];
+                    $updatedRows = 0;
                     if ($values !== []) {
                         // Do not report the in-memory Eloquent state as a
                         // successful synchronization. This audit must confirm
                         // the exact value written to shop_goods.
-                        DB::table('shop_goods')
+                        $updatedRows = DB::table('shop_goods')
                             ->where('id', $good->id)
                             ->update([...$values, 'updated_at' => now()]);
                         $persisted = DB::table('shop_goods')
@@ -711,7 +669,7 @@ class BikeproductsCatalogService
                         'targets' => $targets,
                         'fields' => $fieldChanges,
                         'saved_values' => $persistedValues,
-                        'skipped_conflicting_fields' => $conflicts,
+                        'sql_affected_rows' => $updatedRows ?? 0,
                     ]);
                 }
             });
