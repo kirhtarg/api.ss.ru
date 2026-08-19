@@ -20,7 +20,7 @@ class CategoryController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
-            $withRelations = ['parent'];
+            $withRelations = ['parent:id,name,slug'];
             if (Schema::hasTable('shop_category_extra_menus')) {
                 $withRelations[] = 'extraMenu';
             }
@@ -53,6 +53,13 @@ class CategoryController extends Controller
                 }
             }
 
+            // Публичная плитка каталога запрашивает только явно отмеченные
+            // категории. Раньше параметр игнорировался, из-за чего API
+            // загружал весь справочник.
+            if ($request->has('in_catalog')) {
+                $query->where('in_catalog', $request->boolean('in_catalog'));
+            }
+
             // Сортировка
             $sortBy = $request->get('sort_by', 'sort_order');
             $sortDirection = $request->get('sort_direction', 'asc');
@@ -63,18 +70,9 @@ class CategoryController extends Controller
                 $query->ordered();
             }
 
-            $categories = $query->get();
-
-            // Добавляем счетчики характеристик для каждой категории
-            $categories = $categories->map(function ($category) {
-                $propertiesCount = DB::table('shop_category_property')
-                    ->where('category_id', $category->id)
-                    ->count();
-
-                $category->properties_count = $propertiesCount;
-
-                return $category;
-            });
+            // Один агрегированный запрос вместо отдельного count для каждой
+            // категории. На публичном каталоге это устраняет N+1-запросы.
+            $categories = $query->withCount('properties')->get();
 
             return response()->json([
                 'success' => true,
