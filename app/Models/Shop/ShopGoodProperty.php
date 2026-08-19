@@ -16,6 +16,7 @@ class ShopGoodProperty extends Model
         'good_id',
         'property_id',
         'shop_property_value_id',
+        'value',
     ];
 
     /**

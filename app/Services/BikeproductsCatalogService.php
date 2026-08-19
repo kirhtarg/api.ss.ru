@@ -495,6 +495,21 @@ class BikeproductsCatalogService
                         $propertySyncedGoodIds[$good->id] = true;
                     }
                     $parentGoodsBySourceGroup[$groupKey] = $good;
+                    $axes = $this->creationAxesForItem($item, $snapshot->supplier_code);
+                    if ($axes === []) {
+                        $values = collect($attributes)->except('brand')->all();
+                        if ($values !== []) {
+                            $good->update($values);
+                        }
+                        $imageResult = $this->attachSourceImages($good, null, $item, $imageBaseUrl, $imageSourceFields, $contentAudit, $sourceAudits);
+                        $createdImageIds = array_values(array_unique([...$createdImageIds, ...$imageResult['created_image_ids']]));
+                        $affected++;
+                        $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'source_row_without_axes_saved_as_good', [
+                            'good_id' => $good->id,
+                            'images' => $imageResult,
+                        ]);
+                        continue;
+                    }
                     $variation = ShopGoodVariation::create([
                         'good_id' => $good->id,
                         'supplier' => $supplierName,
@@ -503,7 +518,6 @@ class BikeproductsCatalogService
                         'is_active' => false,
                         ...collect($attributes)->only(['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all(),
                     ]);
-                    $axes = $this->creationAxesForItem($item, $snapshot->supplier_code);
                     $valueIds = collect($axes)->map(fn (array $axis) => ShopVariationAttributeValue::firstOrCreate([
                         'attribute_id' => $axis['attribute_id'],
                         'value' => $axis['value'],
@@ -527,6 +541,19 @@ class BikeproductsCatalogService
 
                 $good = $this->createMappedGood($name, (string) $sourceSku, $supplierName, $attributes, $payload, $propertyMappings);
                 $createdGoodIds[] = $good->id;
+                $axes = $this->creationAxesForItem($item, $snapshot->supplier_code);
+                if ($axes === []) {
+                    $imageResult = $this->attachSourceImages($good, null, $item, $imageBaseUrl, $imageSourceFields, $contentAudit, $sourceAudits);
+                    $createdImageIds = array_values(array_unique([...$createdImageIds, ...$imageResult['created_image_ids']]));
+                    $affected++;
+                    $actionLog[] = $this->catalogActionLogRow($item, 'created', 'single_product_created', [
+                        'good_id' => $good->id,
+                        'variation_id' => null,
+                        'axes' => [],
+                        'images' => $imageResult,
+                    ]);
+                    continue;
+                }
                 $variation = ShopGoodVariation::create([
                     'good_id' => $good->id,
                     'supplier' => $supplierName,
@@ -535,7 +562,6 @@ class BikeproductsCatalogService
                     'is_active' => false,
                     ...collect($attributes)->only(['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all(),
                 ]);
-                $axes = $this->creationAxesForItem($item, $snapshot->supplier_code);
                 $valueIds = collect($axes)->map(fn (array $axis) => ShopVariationAttributeValue::firstOrCreate([
                     'attribute_id' => $axis['attribute_id'],
                     'value' => $axis['value'],
@@ -778,10 +804,11 @@ class BikeproductsCatalogService
         if ($scope === 'properties') {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'product')->where('is_check_enabled', true)->whereNotNull('property_id')->get();
             $differentItemIds = array_flip($this->propertySelection($snapshot));
-            DB::transaction(function () use ($items, $matches, $mappings, $differentItemIds, &$affected, &$skipped, &$actionLog): void {
+            DB::transaction(function () use ($items, $matches, $mappings, $differentItemIds, $snapshot, &$affected, &$skipped, &$actionLog): void {
                 foreach ($items as $item) {
-                    $match = $matches->get($item->external_sku);
-                    if (! $match) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_match_not_found', ['scope' => 'properties']); continue; }
+                    $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
+                    $match = $matches->get($sourceSku) ?? $matches->get($this->normalizeSku($sourceSku));
+                    if (! $match) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_match_not_found', ['scope' => 'properties', 'source_sku' => $sourceSku]); continue; }
                     if (! isset($differentItemIds[$item->id])) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_actionable_property_difference', ['scope' => 'properties']); continue; }
                     $good = $match['type'] === 'variation' ? $match['model']->good : $match['model'];
                     $actionableMappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => $this->propertySourceValueFromPayload($item->raw_payload ?? [], $mapping) !== null);
@@ -789,8 +816,19 @@ class BikeproductsCatalogService
                     if ($actionableMappings->isEmpty()) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_source_property_values', ['scope' => 'properties', 'good_id' => $good->id]); continue; }
                     $propertyLog = $actionableMappings->map(fn (SupplierCatalogFieldMapping $mapping) => ['property_id' => $mapping->property_id, 'source_field' => $mapping->source_field, 'source_value' => $this->propertySourceValueFromPayload($item->raw_payload ?? [], $mapping)])->values()->all();
                     $this->syncMappedProperties($good, $item->raw_payload ?? [], $actionableMappings, true);
+                    $propertyIds = collect($propertyLog)->pluck('property_id')->map(fn ($id) => (int) $id)->unique()->values();
+                    $savedValues = DB::table('shop_good_properties as gp')
+                        ->leftJoin('shop_property_values as pv', 'pv.id', '=', 'gp.shop_property_value_id')
+                        ->where('gp.good_id', $good->id)
+                        ->whereIn('gp.property_id', $propertyIds)
+                        ->orderBy('gp.property_id')
+                        ->orderBy('pv.value')
+                        ->get(['gp.property_id', 'pv.value'])
+                        ->groupBy('property_id')
+                        ->map(fn (Collection $values) => $values->pluck('value')->filter()->values()->all())
+                        ->all();
                     $affected++;
-                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'mapped_properties_synced', ['scope' => 'properties', 'good_id' => $good->id, 'match_type' => $match['type'], 'properties' => $propertyLog]);
+                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'mapped_properties_synced', ['scope' => 'properties', 'good_id' => $good->id, 'match_type' => $match['type'], 'source_sku' => $sourceSku, 'properties' => $propertyLog, 'saved_values' => $savedValues]);
                 }
             });
             return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Характеристики обновлены', 'log' => $actionLog];
@@ -956,23 +994,42 @@ class BikeproductsCatalogService
                         ->orWhere(fn ($query) => $query->where(fn ($supplier) => $supplier->whereNull('supplier')->orWhere('supplier', ''))
                             ->whereHas('good', fn ($good) => $good->whereIn('supplier', $supplierNames)));
                 })
-                ->with(['good:id,sku,supplier', 'attributeValues.attribute'])
+                ->with(['good', 'attributeValues.attribute'])
             ->lockForUpdate()
             ->get();
             $actionLog = [];
             if ($action === 'delete') {
                 $parentGoods = $variations->pluck('good')->filter()->keyBy('id');
+                $variationCountByGood = ShopGoodVariation::query()
+                    ->whereIn('good_id', $parentGoods->keys())
+                    ->get(['good_id'])
+                    ->countBy('good_id');
+                $convertedGoods = [];
                 $sourceSkus = $snapshot->items()
                     ->get(['external_sku', 'raw_payload'])
                     ->map(fn (SupplierCatalogItem $item) => $this->normalizeSku($this->sourceSkuForItem($item, $snapshot->supplier_code)))
                     ->filter()
                     ->flip();
                 foreach ($variations as $variation) {
+                    if (($variationCountByGood->get($variation->good_id) ?? 0) === 1) {
+                        $result = $this->convertSoleVariationToStandalone($variation);
+                        $convertedGoods[$variation->good_id] = true;
+                        $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'updated', 'sole_variation_converted_to_good', [
+                            'scope' => 'variations',
+                            'action' => $action,
+                            'fields' => $result,
+                            'axes' => $this->variationAxesForLog($variation),
+                        ]);
+                        continue;
+                    }
                     $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'deleted', 'variation_deleted', ['scope' => 'variations', 'action' => $action, 'fields' => $variation->getAttributes(), 'axes' => $this->variationAxesForLog($variation)]);
                     $variation->delete();
                 }
                 $deletedGoods = 0;
                 foreach ($parentGoods as $good) {
+                    if (isset($convertedGoods[$good->id])) {
+                        continue;
+                    }
                     $hasVariations = ShopGoodVariation::query()->where('good_id', $good->id)->exists();
                     $isInSource = $good->sku && $sourceSkus->has($this->normalizeSku($good->sku));
                     if (! $hasVariations && ! $isInSource && in_array($good->supplier, $supplierNames, true)) {
@@ -980,9 +1037,13 @@ class BikeproductsCatalogService
                         $deletedGoods++;
                     }
                 }
-                return ['affected' => $variations->count(), 'message' => $deletedGoods
-                    ? "Вариации удалены, удалено пустых товаров: {$deletedGoods}"
-                    : 'Вариации удалены', 'log' => $actionLog];
+                $message = $convertedGoods
+                    ? 'Вариации удалены; товары с единственной вариацией преобразованы в одиночные: '.count($convertedGoods)
+                    : 'Вариации удалены';
+                if ($deletedGoods) {
+                    $message .= ", удалено пустых товаров: {$deletedGoods}";
+                }
+                return ['affected' => $variations->count(), 'message' => $message, 'log' => $actionLog];
             }
             if ($action === 'zero_remote_stocks') {
                 foreach ($variations as $variation) {
@@ -1037,17 +1098,33 @@ class BikeproductsCatalogService
                 $targetAxes = $isSingleProductSource
                     ? $this->creationAxesForItem($source, $snapshot->supplier_code)
                     : $this->sourceAxesForItem($source, $mappings, $snapshot->supplier_code);
-                // Год из одиночной строки поставщика не должен создавать новую ось
-                // у уже существующей вариации. Он участвует только если ось «Год»
-                // уже есть в базе у этой вариации.
-                $targetAxes = $this->withoutAbsentDatabaseYearAxis($variation, $targetAxes);
-                if ($targetAxes === []) {
+                if ($targetAxes === [] && $action !== 'remove_extra_axes') {
                     $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'skipped', 'source_axes_empty', ['scope' => 'variations', 'action' => $action]);
+                    continue;
+                }
+                if ($targetAxes === [] && ($variationCountByGood->get($variation->good_id) ?? 0) !== 1) {
+                    $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'skipped', 'empty_variation_requires_manual_review', [
+                        'scope' => 'variations',
+                        'action' => $action,
+                        'message' => 'После удаления осей вариация станет пустой, но у товара есть другие вариации.',
+                    ]);
                     continue;
                 }
                 $beforeAxes = $this->variationAxesForLog($variation);
                 $changed = $this->applyVariationAxisRepair($variation, $targetAxes, $action);
                 $variation->load('attributeValues.attribute');
+                if ($changed && $action === 'remove_extra_axes' && $variation->attributeValues->isEmpty()) {
+                    $result = $this->convertSoleVariationToStandalone($variation);
+                    $affected++;
+                    $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'updated', 'sole_variation_converted_to_good', [
+                        'scope' => 'variations',
+                        'action' => $action,
+                        'before_axes' => $beforeAxes,
+                        'after_axes' => [],
+                        'fields' => $result,
+                    ]);
+                    continue;
+                }
                 if ($changed) {
                     $affected++;
                     $actionLog[] = $this->catalogDatabaseActionLogRow($variation, 'updated', 'variation_axes_updated', ['scope' => 'variations', 'action' => $action, 'before_axes' => $beforeAxes, 'after_axes' => $this->variationAxesForLog($variation), 'source_axes' => $targetAxes]);
@@ -1446,7 +1523,6 @@ class BikeproductsCatalogService
             ['SKU_RAZMER_TORMOZNOGO_DISKA', 'RAZMER_TORMOZNOGO_DISKA', 'Размер'],
             ['SKU_RAZMER_TROSIKA', 'RAZMER_TROSIKA', 'Размер'],
             ['SKU_RAZMER_ROKRINGA', 'RAZMER_ROKRINGA', 'Размер'],
-            ['SKU_GOD', 'MODELNYY_GOD', 'Год'],
         ];
 
         foreach ($defaults as [$sourceField, $displayField, $attributeName]) {
@@ -1472,8 +1548,14 @@ class BikeproductsCatalogService
             SupplierCatalogFieldMapping::query()
                 ->where('supplier_code', $supplierCode)
                 ->where('scope', 'variation')
-                ->where('source_field', 'SKU_GOD')
-                ->update(['is_check_enabled' => false]);
+                ->where(function ($query) {
+                    $query->where('source_field', 'SKU_GOD')
+                        ->orWhereHas('variationAttribute', fn ($attribute) => $attribute->where('name', 'Год'));
+                })
+                ->update([
+                    'is_check_enabled' => false,
+                    'is_update_enabled' => false,
+                ]);
         }
 
         foreach ([
@@ -2462,15 +2544,24 @@ class BikeproductsCatalogService
             ->findOrFail($variationId);
         $payload = $this->databaseVariationDuplicatePayload(collect([$variation]))[0];
 
-        DB::transaction(function () use ($variation): void {
-            DB::table('shop_variation_attributes_values')->where('variation_id', $variation->id)->delete();
-            DB::table('shop_good_images')->where('variation_id', $variation->id)->delete();
+        $converted = false;
+        DB::transaction(function () use ($variation, &$converted): void {
+            $hasOtherVariations = ShopGoodVariation::query()
+                ->where('good_id', $variation->good_id)
+                ->whereKeyNot($variation->id)
+                ->exists();
+            if (! $hasOtherVariations) {
+                $this->convertSoleVariationToStandalone($variation);
+                $converted = true;
+                return;
+            }
             $variation->delete();
         });
         $this->touchSnapshotForAudit($snapshot);
 
         return [
             'deleted_variation' => $payload,
+            'converted_to_standalone_good' => $converted,
         ];
     }
 
@@ -2486,6 +2577,19 @@ class BikeproductsCatalogService
             $backup['variations'] = $variations->map(fn (ShopGoodVariation $variation) => $variation->getAttributes())->all();
             $backup['goods'] = ShopGood::query()->whereIn('id', $goodIds)->get()->map(fn (ShopGood $good) => $good->getAttributes())->all();
             $backup['variation_attribute_links'] = DB::table('shop_variation_attributes_values')->whereIn('variation_id', $ids)->get()->map(fn ($row) => (array) $row)->all();
+            // Conversion of a sole variation changes the parent product and
+            // moves its dependent rows. Keep a full parent-level snapshot so
+            // the existing action rollback remains lossless.
+            foreach ([
+                'images' => 'shop_good_images',
+                'stocks' => 'shop_stock',
+                'prices' => 'shop_good_prices',
+                'videos' => 'shop_good_videos',
+            ] as $key => $table) {
+                if (Schema::hasTable($table)) {
+                    $backup[$key] = DB::table($table)->whereIn('good_id', $goodIds)->get()->map(fn ($row) => (array) $row)->all();
+                }
+            }
             return $backup;
         }
 
@@ -2631,6 +2735,25 @@ class BikeproductsCatalogService
             $links = collect($backup['variation_attribute_links'] ?? [])->filter(fn (array $link) => in_array($link['variation_id'] ?? null, $variationIds, true))->values()->all();
             if ($links !== []) {
                 DB::table('shop_variation_attributes_values')->insert($links);
+            }
+
+            $goodIds = collect($backup['goods'] ?? [])
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->filter()
+                ->values();
+            foreach ([
+                'images' => 'shop_good_images',
+                'stocks' => 'shop_stock',
+                'prices' => 'shop_good_prices',
+                'videos' => 'shop_good_videos',
+            ] as $key => $table) {
+                $rows = collect($backup[$key] ?? [])->filter(fn (array $row) => ! empty($row['id']))->values();
+                if ($goodIds->isEmpty() || $rows->isEmpty() || ! Schema::hasTable($table)) {
+                    continue;
+                }
+                DB::table($table)->whereIn('good_id', $goodIds)->delete();
+                DB::table($table)->insert($rows->all());
             }
 
             $run->update([
@@ -4089,7 +4212,13 @@ class BikeproductsCatalogService
             if (Schema::hasColumn('shop_good_properties', 'value')) {
                 $attributes['value'] = $value;
             }
-            ShopGoodProperty::updateOrCreate(['good_id' => $good->id, 'property_id' => $propertyId], $attributes);
+            // A product property may have several values. Updating by only
+            // good_id/property_id overwrote every previous mapped source field.
+            ShopGoodProperty::firstOrCreate([
+                'good_id' => $good->id,
+                'property_id' => $propertyId,
+                'shop_property_value_id' => $propertyValue->id,
+            ], $attributes);
         }
     }
 
@@ -4193,6 +4322,144 @@ class BikeproductsCatalogService
         return true;
     }
 
+    /**
+     * Converts a product with exactly one variation into a standalone product.
+     * The method is called from a transaction and deliberately refuses to merge
+     * a variation into a product that still has other variations.
+     *
+     * @return array<string, int>
+     */
+    private function convertSoleVariationToStandalone(ShopGoodVariation $variation): array
+    {
+        $good = ShopGood::query()->lockForUpdate()->findOrFail($variation->good_id);
+        $hasOtherVariations = ShopGoodVariation::query()
+            ->where('good_id', $good->id)
+            ->whereKeyNot($variation->id)
+            ->exists();
+        if ($hasOtherVariations) {
+            throw new \LogicException('Нельзя преобразовать вариацию в одиночный товар: у товара есть другие вариации.');
+        }
+
+        $good->update([
+            'price' => $variation->price,
+            'sale_price' => $variation->sale_price,
+            'demping_price' => $variation->demping_price,
+            'show_demping' => $variation->show_demping,
+            'stock_quantity' => $variation->stock_quantity,
+            'remote_stock_quantity' => $variation->remote_stock_quantity,
+            'fast_remote_stock_quantity' => $variation->fast_remote_stock_quantity,
+            'stock_source' => $variation->stock_source,
+            'last_stock_import_run_id' => $variation->last_stock_import_run_id,
+            'last_stock_import_at' => $variation->last_stock_import_at,
+            'weight' => $variation->weight,
+            'width' => $variation->width,
+            'height' => $variation->height,
+            'depth' => $variation->length,
+            'shipping_weight' => $variation->shipping_weight,
+            'shipping_length' => $variation->shipping_length,
+            'shipping_width' => $variation->shipping_width,
+            'shipping_height' => $variation->shipping_height,
+            'ships_separately' => $variation->ships_separately,
+        ]);
+
+        $hasMainImage = DB::table('shop_good_images')
+            ->where('good_id', $good->id)
+            ->whereNull('variation_id')
+            ->where('is_main', true)
+            ->exists();
+        $images = DB::table('shop_good_images')
+            ->where('variation_id', $variation->id)
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->get(['id', 'is_main']);
+        foreach ($images as $index => $image) {
+            $makeMain = ! $hasMainImage && ((bool) $image->is_main || $index === 0);
+            DB::table('shop_good_images')->where('id', $image->id)->update([
+                'good_id' => $good->id,
+                'variation_id' => null,
+                'is_main' => $makeMain,
+                'updated_at' => now(),
+            ]);
+            $hasMainImage = $hasMainImage || $makeMain;
+        }
+
+        if (Schema::hasTable('shop_good_videos')) {
+            DB::table('shop_good_videos')->where('variation_id', $variation->id)->update([
+                'good_id' => $good->id,
+                'variation_id' => null,
+                'updated_at' => now(),
+            ]);
+        }
+
+        $stocksMoved = $this->moveVariationRowsToGood('shop_stock', $variation->id, $good->id, 'warehouse_id');
+        $pricesMoved = $this->moveVariationRowsToGood('shop_good_prices', $variation->id, $good->id, 'price_type_id');
+
+        // These records describe an unfinished customer action. Preserve them
+        // instead of letting the foreign-key cascade silently drop them.
+        foreach (['shop_cart_items', 'shop_preorders'] as $table) {
+            if (Schema::hasTable($table)) {
+                DB::table($table)->where('variation_id', $variation->id)->update([
+                    'variation_id' => null,
+                    'variation_name' => null,
+                    'updated_at' => now(),
+                ]);
+            }
+        }
+
+        foreach (['shop_ozon_product_bindings', 'shop_yandex_market_product_bindings'] as $table) {
+            if (! Schema::hasTable($table)) {
+                continue;
+            }
+            $values = ['variation_id' => null, 'updated_at' => now()];
+            if (Schema::hasColumn($table, 'is_variation')) {
+                $values['is_variation'] = false;
+            }
+            DB::table($table)->where('variation_id', $variation->id)->update($values);
+        }
+
+        $variation->delete();
+
+        return [
+            'good_id' => (int) $good->id,
+            'images_moved' => $images->count(),
+            'stocks_moved' => $stocksMoved,
+            'prices_moved' => $pricesMoved,
+        ];
+    }
+
+    private function moveVariationRowsToGood(string $table, int $variationId, int $goodId, string $typeColumn): int
+    {
+        if (! Schema::hasTable($table)) {
+            return 0;
+        }
+
+        $rows = DB::table($table)->where('variation_id', $variationId)->lockForUpdate()->get();
+        foreach ($rows as $row) {
+            $existing = DB::table($table)
+                ->where('good_id', $goodId)
+                ->whereNull('variation_id')
+                ->where($typeColumn, $row->{$typeColumn})
+                ->first(['id']);
+            if ($existing) {
+                $values = (array) $row;
+                unset($values['id'], $values['variation_id'], $values['created_at']);
+                $values['good_id'] = $goodId;
+                $values['updated_at'] = now();
+                DB::table($table)->where('id', $existing->id)->update($values);
+                DB::table($table)->where('id', $row->id)->delete();
+                continue;
+            }
+
+            DB::table($table)->where('id', $row->id)->update([
+                'good_id' => $goodId,
+                'variation_id' => null,
+                'updated_at' => now(),
+            ]);
+        }
+
+        return $rows->count();
+    }
+
     /** @param array<int, array<string, mixed>> $comparisons @return array<int, string> */
     private function axisIssueTypes(array $comparisons): array
     {
@@ -4278,9 +4545,7 @@ class BikeproductsCatalogService
     /** @return array<int, array<string, mixed>> */
     private function singleProductVariationComparisons(ShopGoodVariation $variation, SupplierCatalogItem $source, string $supplierCode): array
     {
-        $attributes = $this->standardVariationAttributeIds();
-        $yearAttributeId = $attributes['Год'] ?? null;
-        if ($supplierCode !== 'bikeproducts' || $yearAttributeId === null) {
+        if ($supplierCode !== 'bikeproducts') {
             return $this->variationComparisons($variation, $source, collect(), $supplierCode);
         }
 
@@ -4297,9 +4562,20 @@ class BikeproductsCatalogService
             $databaseAxesByName = $variation->attributeValues
                 ->groupBy(fn (ShopVariationAttributeValue $value) => $value->attribute?->name ?? '')
                 ->map(fn (Collection $values) => $values->pluck('value')->filter()->values()->all())
-                ->filter(fn (array $values, string $attribute) => in_array($attribute, ['Цвет', 'Размер'], true) && $values !== []);
+                ->filter(fn (array $values) => $values !== []);
 
             foreach ($databaseAxesByName as $attribute => $values) {
+                if (! in_array($attribute, ['Цвет', 'Размер'], true)) {
+                    $comparisons[] = [
+                        'status' => 'only_in_database',
+                        'attribute' => $attribute,
+                        'source_field' => null,
+                        'source_value' => null,
+                        'database_values' => $values,
+                        'message' => 'У одиночного товара в файле нет этой оси вариации.',
+                    ];
+                    continue;
+                }
                 $comparisons[] = [
                     'status' => 'match',
                     'attribute' => $attribute,
@@ -4314,44 +4590,7 @@ class BikeproductsCatalogService
 
             return $comparisons;
         }
-        $databaseAxes = $variation->attributeValues->groupBy('attribute_id')
-            ->map(fn (Collection $values) => $values->pluck('value')->values()->all());
-        $databaseYear = $databaseAxes->get($yearAttributeId, []);
-        // Год у Байкпродакс является дополнительным признаком. Если в базе оси
-        // «Год» нет, сравниваем только фактические оси строки (цвет/размер),
-        // не создавая ложного расхождения и не предлагая добавить год.
-        if ($databaseYear === []) {
-            return $this->variationComparisons($variation, $source, collect(), $supplierCode);
-        }
-
-        $sourceYear = $this->nullableString($source->source_year)
-            ?? $this->nullableString($source->raw_payload['MODELNYY_GOD'] ?? null)
-            ?? (string) now()->year;
-        $yearMatches = collect($databaseYear)->contains(fn (string $value) => $this->normalizeComparisonValue($value) === $this->normalizeComparisonValue($sourceYear));
-        $comparisons = [[
-            'status' => $databaseYear === [] ? 'missing_in_database' : ($yearMatches ? 'match' : 'different'),
-            'attribute' => 'Год',
-            'source_field' => 'MODELNYY_GOD',
-            'source_value' => $sourceYear,
-            'database_values' => $databaseYear,
-        ]];
-
-        foreach ($databaseAxes as $attributeId => $values) {
-            if ((int) $attributeId === (int) $yearAttributeId) {
-                continue;
-            }
-            $attributeName = $variation->attributeValues->firstWhere('attribute_id', $attributeId)?->attribute?->name ?? 'Неизвестная ось';
-            $comparisons[] = [
-                'status' => 'only_in_database',
-                'attribute' => $attributeName,
-                'source_field' => null,
-                'source_value' => null,
-                'database_values' => $values,
-                'message' => 'У одиночной вариации базы есть ось, которой нет у товара в файле.',
-            ];
-        }
-
-        return $comparisons;
+        return $this->variationComparisons($variation, $source, collect(), $supplierCode);
     }
 
     /** @param Collection<int, SupplierCatalogFieldMapping> $mappings @return array<int, array<string, mixed>> */
@@ -4404,9 +4643,9 @@ class BikeproductsCatalogService
             return $normalized;
         }
 
-        // Год нужен для товаров, которые в файле не имеют цвета/размера,
-        // но в нашей базе оформлены единственной технической вариацией.
-        $normalized['year'] = $this->nullableString($payload['MODELNYY_GOD'] ?? null) ?? (string) now()->year;
+        // Год сохраняем как данные строки поставщика, но никогда не используем
+        // как ось вариации и не подставляем текущий год искусственно.
+        $normalized['year'] = $this->nullableString($payload['MODELNYY_GOD'] ?? null);
 
         $contents = $this->trailingParenthesesContents($name);
         if ($contents === null) {
@@ -4508,51 +4747,7 @@ class BikeproductsCatalogService
     /** @return array<int, array{attribute_id: int, attribute_name: string, value: string}> */
     private function creationAxesForItem(SupplierCatalogItem $item, string $supplierCode): array
     {
-        $axes = $this->sourceAxesForItem($item, $this->getMappings($supplierCode), $supplierCode);
-        if ($axes !== [] || $supplierCode !== 'bikeproducts') {
-            return $axes;
-        }
-
-        $yearAttributeId = $this->standardVariationAttributeIds()['Год'] ?? null;
-        if (! $yearAttributeId) {
-            return [];
-        }
-
-        $year = $this->nullableString($item->source_year)
-            ?? $this->nullableString($item->raw_payload['MODELNYY_GOD'] ?? null)
-            ?? (string) now()->year;
-
-        return [[
-            'attribute_id' => $yearAttributeId,
-            'attribute_name' => 'Год',
-            'value' => $year,
-        ]];
-    }
-
-    /**
-     * Existing variations may not use the optional Year axis. Do not introduce it
-     * while repairing axes from a Bikeproducts single-product source row.
-     *
-     * @param array<int, array{attribute_id: int, attribute_name: string, value: string}> $axes
-     * @return array<int, array{attribute_id: int, attribute_name: string, value: string}>
-     */
-    private function withoutAbsentDatabaseYearAxis(ShopGoodVariation $variation, array $axes): array
-    {
-        $yearAttributeId = $this->standardVariationAttributeIds()['Год'] ?? null;
-        if (! $yearAttributeId) {
-            return $axes;
-        }
-
-        $containsYear = $variation->attributeValues
-            ->contains(fn (ShopVariationAttributeValue $value) => (int) $value->attribute_id === (int) $yearAttributeId);
-        if ($containsYear) {
-            return $axes;
-        }
-
-        return array_values(array_filter(
-            $axes,
-            fn (array $axis) => (int) $axis['attribute_id'] !== (int) $yearAttributeId,
-        ));
+        return $this->sourceAxesForItem($item, $this->getMappings($supplierCode), $supplierCode);
     }
 
     private function isSourceVariationItem(SupplierCatalogItem $item): bool
@@ -4967,7 +5162,7 @@ class BikeproductsCatalogService
 
     private function variationAuditBaseCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        return 'supplier-catalog:variation-audit-base:v43:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot);
+        return 'supplier-catalog:variation-audit-base:v44:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot);
     }
 
     /** @param array<int, string>|null $onlyTargets */
@@ -4988,7 +5183,7 @@ class BikeproductsCatalogService
 
     private function variationAuditStatsCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        return 'supplier-catalog:variation-audit-stats:v4:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        return 'supplier-catalog:variation-audit-stats:v5:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
     }
 
     /** @return array<int, string> */
@@ -5713,7 +5908,7 @@ class BikeproductsCatalogService
             ->all();
     }
     /** @param array<int, string> $sourceFields @param Collection<string, SupplierCatalogImageAudit> $sourceAudits @return array{created_image_ids: array<int, int>, attached_urls: array<int, string>, skipped_urls: array<int, array<string, string>>} */
-    private function attachSourceImages(ShopGood $good, ShopGoodVariation $variation, SupplierCatalogItem $item, ?string $baseUrl, array $sourceFields, array $contentAudit, Collection $sourceAudits): array
+    private function attachSourceImages(ShopGood $good, ?ShopGoodVariation $variation, SupplierCatalogItem $item, ?string $baseUrl, array $sourceFields, array $contentAudit, Collection $sourceAudits): array
     {
         $result = [
             'created_image_ids' => [],
@@ -5750,7 +5945,12 @@ class BikeproductsCatalogService
             return $result;
         }
 
-        $query = ShopGoodImage::query()->where('variation_id', $variation->id);
+        $query = ShopGoodImage::query()->where('good_id', $good->id);
+        if ($variation) {
+            $query->where('variation_id', $variation->id);
+        } else {
+            $query->whereNull('variation_id');
+        }
         $existingPaths = $query->pluck('file_path')->all();
         $nextSortOrder = (int) $query->max('sort_order') + 1;
         foreach ($urls as $url) {
@@ -5759,8 +5959,8 @@ class BikeproductsCatalogService
                 continue;
             }
             $image = ShopGoodImage::create([
-                'good_id' => null,
-                'variation_id' => $variation->id,
+                'good_id' => $good->id,
+                'variation_id' => $variation?->id,
                 'file_path' => $url,
                 'alt_text' => $item->clean_name ?: $item->name,
                 'is_main' => $existingPaths === [] && $nextSortOrder === 1,

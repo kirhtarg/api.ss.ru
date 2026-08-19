@@ -34,6 +34,9 @@ class ShopGoodsController extends Controller
 
         $ordersCountQuery = DB::table('shop_orders as orders')
             ->crossJoin(DB::raw("JSON_TABLE(orders.items, '$[*]' COLUMNS (good_id BIGINT PATH '$.good_id')) as order_item"))
+            // The orders screen shows active orders by default. Keep the product
+            // counter aligned with it and do not count failed payment attempts.
+            ->where('orders.is_active', true)
             ->selectRaw('order_item.good_id, COUNT(DISTINCT orders.id) as orders_count')
             ->groupBy('order_item.good_id');
 
@@ -1846,6 +1849,7 @@ class ShopGoodsController extends Controller
                 ->crossJoin(DB::raw("JSON_TABLE(orders.items, '$[*]' COLUMNS (good_id BIGINT PATH '$.good_id')) as order_item"))
                 ->leftJoin('shop_order_statuses as statuses', 'statuses.id', '=', 'orders.status_id')
                 ->where('order_item.good_id', $good->id)
+                ->where('orders.is_active', true)
                 ->select([
                     'orders.id',
                     'orders.order_number',

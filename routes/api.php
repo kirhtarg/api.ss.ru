@@ -2236,6 +2236,7 @@ Route::middleware('auth:sanctum')->group(function () {
                         });
                     });
                     
+                    Route::post('/attribute-removal-preview', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'attributeRemovalPreview']);
                     Route::post('/bulk-update', [\App\Http\Controllers\Admin\ShopGoodVariationsController::class, 'globalBulkUpdate']);
                 });
 

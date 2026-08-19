@@ -17,6 +17,7 @@ class ShopGoodProperty extends Model
         'variation_id',
         'property_id',
         'shop_property_value_id',
+        'value',
     ];
 
     protected $casts = [

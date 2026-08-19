@@ -2433,8 +2433,9 @@ class ShopGoodVariationsController extends Controller
             'variation_ids.*' => 'exists:shop_good_variations,id',
             'good_ids' => 'nullable|array',
             'good_ids.*' => $goodIdsItemRule,
-            'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping',
+            'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping,remove_attribute',
             'data' => 'nullable|array',
+            'data.attribute_id' => 'required_if:action,remove_attribute|nullable|integer|exists:shop_variation_attributes,id',
         ]);
 
         // РџСЂРѕРІРµСЂСЏРµРј, С‡С‚Рѕ РїРµСЂРµРґР°РЅ С…РѕС‚СЏ Р±С‹ РѕРґРёРЅ РёР· РјР°СЃСЃРёРІРѕРІ
@@ -2487,6 +2488,8 @@ class ShopGoodVariationsController extends Controller
             }
 
             $updatedCount = 0;
+            $affectedVariationsCount = 0;
+            $deletedAssignmentsCount = 0;
 
             switch ($action) {
                 case 'delete':
@@ -2664,6 +2667,29 @@ class ShopGoodVariationsController extends Controller
                         $updatedCount++;
                     }
                     break;
+
+                case 'remove_attribute':
+                    $attributeId = (int) ($data['attribute_id'] ?? 0);
+                    $attributeValueIds = DB::table('shop_variation_attribute_values')
+                        ->where('attribute_id', $attributeId)
+                        ->pluck('id');
+
+                    if ($attributeValueIds->isEmpty()) {
+                        break;
+                    }
+
+                    $affectedVariationsCount = DB::table('shop_variation_attributes_values')
+                        ->whereIn('variation_id', $variationIds)
+                        ->whereIn('attribute_value_id', $attributeValueIds)
+                        ->distinct()
+                        ->count('variation_id');
+
+                    $deletedAssignmentsCount = DB::table('shop_variation_attributes_values')
+                        ->whereIn('variation_id', $variationIds)
+                        ->whereIn('attribute_value_id', $attributeValueIds)
+                        ->delete();
+                    $updatedCount = $affectedVariationsCount;
+                    break;
             }
 
             DB::commit();
@@ -2673,6 +2699,8 @@ class ShopGoodVariationsController extends Controller
                 'message' => "РћР±РЅРѕРІР»РµРЅРѕ РІР°СЂРёР°С†РёР№: {$updatedCount}",
                 'data' => [
                     'updated_count' => $updatedCount,
+                    'affected_variations_count' => $affectedVariationsCount,
+                    'deleted_assignments_count' => $deletedAssignmentsCount,
                 ],
             ]);
         } catch (\Exception $e) {
@@ -2683,6 +2711,61 @@ class ShopGoodVariationsController extends Controller
                 'message' => 'РћС€РёР±РєР° РјР°СЃСЃРѕРІРѕРіРѕ РѕР±РЅРѕРІР»РµРЅРёСЏ: '.$e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Предварительный расчёт удаления атрибута у вариаций выбранных товаров.
+     */
+    public function attributeRemovalPreview(Request $request): JsonResponse
+    {
+        if ($request->get('selection_mode') === 'filters') {
+            $request->merge(['good_ids' => $this->resolveGoodsIdsFromSelectionFilters($request)]);
+        }
+
+        $goodIdsItemRule = $request->get('selection_mode') === 'filters' ? 'integer' : 'exists:shop_goods,id';
+        $validator = Validator::make($request->all(), [
+            'good_ids' => ['required', 'array', 'min:1'],
+            'good_ids.*' => $goodIdsItemRule,
+            'attribute_id' => ['required', 'integer', 'exists:shop_variation_attributes,id'],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $goodIds = collect($request->input('good_ids'))->map(fn ($id) => (int) $id)->filter()->unique()->values();
+        $attributeId = (int) $request->input('attribute_id');
+        $attribute = DB::table('shop_variation_attributes')->where('id', $attributeId)->first(['id', 'name']);
+
+        $variationsCount = ShopGoodVariation::query()->whereIn('good_id', $goodIds)->count();
+        $affectedVariationsCount = DB::table('shop_variation_attributes_values as vav')
+            ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+            ->join('shop_good_variations as v', 'v.id', '=', 'vav.variation_id')
+            ->whereIn('v.good_id', $goodIds)
+            ->where('av.attribute_id', $attributeId)
+            ->distinct()
+            ->count('v.id');
+        $assignmentsCount = DB::table('shop_variation_attributes_values as vav')
+            ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+            ->join('shop_good_variations as v', 'v.id', '=', 'vav.variation_id')
+            ->whereIn('v.good_id', $goodIds)
+            ->where('av.attribute_id', $attributeId)
+            ->count();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'attribute' => ['id' => (int) $attribute->id, 'name' => $attribute->name],
+                'goods_count' => $goodIds->count(),
+                'variations_count' => $variationsCount,
+                'affected_variations_count' => $affectedVariationsCount,
+                'assignments_count' => $assignmentsCount,
+            ],
+        ]);
     }
 
     /**
