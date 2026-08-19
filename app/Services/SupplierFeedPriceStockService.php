@@ -227,9 +227,19 @@ class SupplierFeedPriceStockService
             ->get()
             ->keyBy(fn (ShopGood $item) => $this->normalizeSku($item->sku));
         $summary = ['matched_skus' => [], 'not_found_skus' => []];
-        $counters = ['matched' => 0, 'updated_prices' => 0, 'updated_stocks' => 0, 'unchanged' => 0, 'not_found' => 0];
+        $counters = [
+            'matched' => 0,
+            'updated_prices' => 0,
+            'updated_stocks' => 0,
+            'unchanged' => 0,
+            'not_found' => 0,
+            'database_missing_in_feed' => 0,
+            'missing_in_feed_to_clear' => 0,
+            'cleared_missing_in_feed' => 0,
+        ];
+        $missingInFeedAction = (string) ($settings['feed_missing_in_feed_action'] ?? 'nothing');
 
-        DB::transaction(function () use ($offers, $variations, $goods, $priceField, $stockField, $availableQuantity, $runId, $apply, &$summary, &$counters): void {
+        DB::transaction(function () use ($offers, $variations, $goods, $priceField, $stockField, $availableQuantity, $runId, $apply, $missingInFeedAction, $supplierNames, $skus, &$summary, &$counters): void {
             $changeRows = [];
             foreach ($offers as $offer) {
                 $sku = trim($offer['sku']);
@@ -302,10 +312,149 @@ class SupplierFeedPriceStockService
             }
             if ($changeRows !== []) {
                 SupplierFeedPriceStockChange::query()->insert($changeRows);
+                $changeRows = [];
+            }
+
+            // The forward pass reports every offer from the feed. This reverse
+            // pass uses the same normalized lookup keys and supplier scope to
+            // show database offers that disappeared from the current feed.
+            $feedSkuKeys = array_fill_keys($skus->all(), true);
+            foreach ($this->supplierOfferModels($supplierNames) as $model) {
+                $normalizedSku = $this->normalizeSku($model->sku);
+                if ($normalizedSku === '' || isset($feedSkuKeys[$normalizedSku])) {
+                    continue;
+                }
+
+                $counters['database_missing_in_feed']++;
+                $hasAvailableStock = $this->stockValueMeansAvailable($model->{$stockField} ?? null);
+                if ($hasAvailableStock) {
+                    $counters['missing_in_feed_to_clear']++;
+                }
+                $shouldApply = $apply
+                    && $missingInFeedAction === 'clear'
+                    && $hasAvailableStock;
+                $changeRows[] = $this->feedReportRow(
+                    $runId,
+                    (string) $model->sku,
+                    $model,
+                    $stockField,
+                    0,
+                    'missing_in_feed',
+                    $shouldApply,
+                );
+                if ($shouldApply) {
+                    $model->update([$stockField => 0]);
+                    $counters['cleared_missing_in_feed']++;
+                }
+                if (count($changeRows) >= 500) {
+                    SupplierFeedPriceStockChange::query()->insert($changeRows);
+                    $changeRows = [];
+                }
+            }
+            if ($changeRows !== []) {
+                SupplierFeedPriceStockChange::query()->insert($changeRows);
             }
         });
 
-        return [...$counters, 'summary' => $summary];
+        $summary = [
+            ...$summary,
+            'database_missing_in_feed' => $counters['database_missing_in_feed'],
+            'missing_in_feed_to_clear' => $counters['missing_in_feed_to_clear'],
+            'cleared_missing_in_feed' => $counters['cleared_missing_in_feed'],
+        ];
+
+        return [
+            'matched' => $counters['matched'],
+            'updated_prices' => $counters['updated_prices'],
+            'updated_stocks' => $counters['updated_stocks'],
+            'unchanged' => $counters['unchanged'],
+            'not_found' => $counters['not_found'],
+            'summary' => $summary,
+        ];
+    }
+
+    /**
+     * @param array<int, string> $supplierNames
+     * @return \Generator<int, ShopGood|ShopGoodVariation>
+     */
+    private function supplierOfferModels(array $supplierNames): \Generator
+    {
+        $variationQuery = ShopGoodVariation::query()
+            ->whereNotNull('sku')
+            ->where('sku', '!=', '')
+            ->where(function ($query) use ($supplierNames) {
+                $query->whereIn('supplier', $supplierNames)
+                    ->orWhere(function ($query) use ($supplierNames) {
+                        $query->where(fn ($supplier) => $supplier->whereNull('supplier')->orWhere('supplier', ''))
+                            ->whereHas('good', fn ($good) => $good->whereIn('supplier', $supplierNames));
+                    });
+            })
+            ->with('good:id,name')
+            ->orderBy('id');
+        foreach ($variationQuery->lazyById(500) as $variation) {
+            yield $variation;
+        }
+
+        // A parent record with variations is not an independently matched
+        // offer: the forward matcher deliberately gives its variation priority.
+        $goodQuery = ShopGood::query()
+            ->whereIn('supplier', $supplierNames)
+            ->whereNotNull('sku')
+            ->where('sku', '!=', '')
+            ->doesntHave('variations')
+            ->orderBy('id');
+        foreach ($goodQuery->lazyById(500) as $good) {
+            yield $good;
+        }
+    }
+
+    public function clearMissingInFeedStocks(SupplierCatalogProfile $profile, SupplierFeedPriceStockRun $run): array
+    {
+        if ($run->profile_id !== $profile->id || $run->status !== 'completed') {
+            throw new \InvalidArgumentException('Можно очистить остатки только по завершённому отчёту этого поставщика.');
+        }
+
+        $stockField = (string) data_get($profile->settings, 'feed_stock_target', 'stock_quantity');
+        if (! in_array($stockField, self::STOCK_FIELDS, true)) {
+            throw new \InvalidArgumentException('Некорректно назначено поле остатка фида.');
+        }
+
+        $cleared = 0;
+        DB::transaction(function () use ($run, $stockField, &$cleared): void {
+            $changes = SupplierFeedPriceStockChange::query()
+                ->where('run_id', $run->id)
+                ->where('status', 'missing_in_feed')
+                ->where('field', $stockField)
+                ->where('is_applied', false)
+                ->orderBy('id')
+                ->get();
+            foreach ($changes as $change) {
+                $model = $change->entity_type === 'variation'
+                    ? ShopGoodVariation::find($change->variation_id)
+                    : ShopGood::find($change->good_id);
+                if (! $model || ! $this->stockValueMeansAvailable($model->{$stockField} ?? null)) {
+                    continue;
+                }
+                $beforeValue = (string) ($model->{$stockField} ?? '');
+                $model->update([$stockField => 0]);
+                $change->update([
+                    'before_value' => $beforeValue,
+                    'after_value' => '0',
+                    'is_applied' => true,
+                ]);
+                $cleared++;
+            }
+        });
+
+        $summary = $run->summary ?? [];
+        $summary['cleared_missing_in_feed'] = (int) ($summary['cleared_missing_in_feed'] ?? 0) + $cleared;
+        $run->update([
+            'updated_stocks' => (int) $run->updated_stocks + $cleared,
+            'summary' => $summary,
+        ]);
+        $this->notifications->notifySupplierFeedSync($run->fresh());
+
+        return ['cleared' => $cleared, 'stock_field' => $stockField];
     }
 
     /** @return array<string, mixed> */

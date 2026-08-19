@@ -53,6 +53,7 @@ class BikeproductsCatalogController extends Controller
             'settings.feed_price_target' => ['nullable', 'in:price,sale_price,demping_price'],
             'settings.feed_stock_target' => ['nullable', 'in:stock_quantity,remote_stock_quantity,fast_remote_stock_quantity'],
             'settings.feed_available_quantity' => ['nullable', 'integer', 'min:1', 'max:999999'],
+            'settings.feed_missing_in_feed_action' => ['nullable', 'in:nothing,clear'],
             'settings.min_parse_price' => ['nullable', 'numeric', 'min:0'],
             'settings.min_parse_price_mode' => ['nullable', 'in:any,all'],
             'settings.min_parse_price_source_fields' => ['nullable', 'array', 'max:20'],
@@ -170,7 +171,9 @@ class BikeproductsCatalogController extends Controller
                     'can_fill_source_name' => $canFillSourceName,
                     'status' => $changes->contains('status', 'not_found')
                         ? 'not_found'
-                        : ($changes->contains('status', 'different') ? 'different' : 'match'),
+                        : ($changes->contains('status', 'missing_in_feed')
+                            ? 'missing_in_feed'
+                            : ($changes->contains('status', 'different') ? 'different' : 'match')),
                     'price' => $price ? [
                         'status' => $price->status,
                         'before_value' => $price->before_value,
@@ -186,6 +189,7 @@ class BikeproductsCatalogController extends Controller
             ->values();
         $rows = (match ($filter) {
             'not_found' => $rows->filter(fn (array $row) => $row['status'] === 'not_found'),
+            'missing_in_feed' => $rows->filter(fn (array $row) => $row['status'] === 'missing_in_feed'),
             'price_different' => $rows->filter(fn (array $row) => data_get($row, 'price.status') === 'different'),
             'price_match' => $rows->filter(fn (array $row) => data_get($row, 'price.status') === 'match'),
             'stock_different' => $rows->filter(fn (array $row) => data_get($row, 'stock.status') === 'different'),
@@ -280,6 +284,18 @@ class BikeproductsCatalogController extends Controller
         $run->delete();
 
         return response()->json(['success' => true, 'message' => 'Отчёт проверки фида удалён.']);
+    }
+
+    public function clearMissingInFeedStocks(SupplierCatalogProfile $profile, SupplierFeedPriceStockRun $run): JsonResponse
+    {
+        abort_unless($run->profile_id === $profile->id, 404);
+        $result = $this->feedPriceStock->clearMissingInFeedStocks($profile, $run);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Очищено остатков: {$result['cleared']} ({$this->feedStockField($profile)}).",
+            'data' => $result,
+        ]);
     }
 
     private function feedPriceField(SupplierCatalogProfile $profile): string

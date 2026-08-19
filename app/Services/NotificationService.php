@@ -1288,6 +1288,12 @@ class NotificationService
             $message .= ($run->mode === 'preview' ? 'Изменится' : 'Обновлено').' остатков: '.(int) $run->updated_stocks."\n";
             $message .= 'Без изменений: '.(int) $run->unchanged."\n";
             $message .= 'SKU не найдены: '.(int) $run->not_found."\n";
+            $summary = $run->summary ?? [];
+            $message .= 'В базе, но нет в фиде: '.(int) ($summary['database_missing_in_feed'] ?? 0)."\n";
+            $message .= 'Остатков подлежит очистке: '.(int) ($summary['missing_in_feed_to_clear'] ?? 0)."\n";
+            if ((int) ($summary['cleared_missing_in_feed'] ?? 0) > 0) {
+                $message .= 'Очищено из-за отсутствия в фиде: '.(int) $summary['cleared_missing_in_feed']."\n";
+            }
         } else {
             $message .= 'Ошибка: '.($run->error_message ?: 'неизвестная ошибка')."\n";
         }
