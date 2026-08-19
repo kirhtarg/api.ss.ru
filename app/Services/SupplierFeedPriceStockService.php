@@ -272,12 +272,23 @@ class SupplierFeedPriceStockService
                 }
                 if ($offer['available'] !== null) {
                     $stock = $offer['available'] ? $availableQuantity : 0;
-                    $isDifferent = (string) $model->{$stockField} !== (string) $stock;
+                    // The feed reports availability as a boolean, while remote
+                    // stock fields may contain a supplier's textual quantity.
+                    // Compare availability, not that raw value with 0/10.
+                    $isDifferent = $this->stockValueMeansAvailable($model->{$stockField} ?? null) !== $offer['available'];
                     if ($isDifferent) {
                         $changes[$stockField] = $stock;
                         $counters['updated_stocks']++;
                     }
-                    $changeRows[] = $this->feedReportRow($runId, $sku, $model, $stockField, $stock, $isDifferent ? 'different' : 'match', $apply && $isDifferent);
+                    $changeRows[] = $this->feedReportRow(
+                        $runId,
+                        $sku,
+                        $model,
+                        $stockField,
+                        'available='.($offer['available'] ? 'true' : 'false'),
+                        $isDifferent ? 'different' : 'match',
+                        $apply && $isDifferent,
+                    );
                 }
                 if ($changes === []) {
                     $counters['unchanged']++;
@@ -329,6 +340,19 @@ class SupplierFeedPriceStockService
         $decimal = $this->decimal($value);
 
         return $decimal === null ? null : (string) ((int) floor((float) $decimal));
+    }
+
+    private function stockValueMeansAvailable(mixed $value): bool
+    {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return false;
+        }
+
+        // Suppliers use both "0" and decimal zero values. Every other
+        // non-empty value, including a textual availability marker, is stock.
+        return ! is_numeric(str_replace(',', '.', $value))
+            || (float) str_replace(',', '.', $value) != 0.0;
     }
 
     /** @return array<int, array{from: string, to: string}> */

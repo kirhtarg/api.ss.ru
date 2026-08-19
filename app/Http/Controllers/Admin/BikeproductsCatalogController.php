@@ -124,8 +124,8 @@ class BikeproductsCatalogController extends Controller
                 $sourceItemsBySku = SupplierCatalogItem::query()
                     ->where('snapshot_id', $snapshotId)
                     ->whereIn('external_sku', $reportSkus)
-                    ->get(['external_sku', 'name'])
-                    ->keyBy('external_sku');
+                    ->get(['id', 'external_sku', 'name'])
+                    ->groupBy('external_sku');
             }
         }
 
@@ -142,8 +142,18 @@ class BikeproductsCatalogController extends Controller
                 $price = $changes->firstWhere('field', $this->feedPriceField($profile));
                 $stock = $changes->firstWhere('field', $this->feedStockField($profile));
 
-                $sourceItem = $sourceItemsBySku->get($first->sku);
-                $goodName = $first->good_name ?: $sourceItem?->name;
+                $sourceItems = $sourceItemsBySku->get($first->sku, collect());
+                $sourceName = $sourceItems
+                    ->pluck('name')
+                    ->map(fn ($name) => trim((string) $name))
+                    ->first(fn (string $name) => $name !== '');
+                $hasSourceItem = $sourceItems->isNotEmpty();
+                $feedName = trim((string) $first->good_name);
+                $goodName = $feedName !== '' ? $feedName : $sourceName;
+                $canFillSourceName = $first->entity_type === 'none'
+                    && $hasSourceItem
+                    && $sourceName === null
+                    && $feedName !== '';
 
                 return [
                     'id' => $first->id,
@@ -152,7 +162,12 @@ class BikeproductsCatalogController extends Controller
                     'good_id' => $first->good_id,
                     'variation_id' => $first->variation_id,
                     'good_name' => $goodName,
-                    'source_file_exists' => $hasSourceSnapshot ? $sourceItem !== null : null,
+                    'feed_name' => $feedName !== '' ? $feedName : null,
+                    'source_file_exists' => $hasSourceSnapshot ? $hasSourceItem : null,
+                    'source_name_state' => ! $hasSourceSnapshot
+                        ? 'unavailable'
+                        : (! $hasSourceItem ? 'missing_row' : ($sourceName === null ? 'empty' : 'filled')),
+                    'can_fill_source_name' => $canFillSourceName,
                     'status' => $changes->contains('status', 'not_found')
                         ? 'not_found'
                         : ($changes->contains('status', 'different') ? 'different' : 'match'),
@@ -201,6 +216,59 @@ class BikeproductsCatalogController extends Controller
                 'total' => $paginator->total(),
             ],
         ]]);
+    }
+
+    public function fillFeedPriceStockSourceName(Request $request, SupplierCatalogProfile $profile, SupplierFeedPriceStockRun $run): JsonResponse
+    {
+        abort_unless($run->profile_id === $profile->id, 404);
+        $data = $request->validate([
+            'sku' => ['required', 'string', 'max:190'],
+            'name' => ['required', 'string', 'max:1000'],
+        ]);
+        $sku = trim($data['sku']);
+        $name = trim($data['name']);
+        if ($sku === '' || $name === '') {
+            throw ValidationException::withMessages([
+                'name' => ['Для добавления требуется непустой артикул и название.'],
+            ]);
+        }
+
+        $snapshot = SupplierCatalogSnapshot::query()
+            ->where('supplier_code', $profile->code)
+            ->where('status', 'ready')
+            ->latest('id')
+            ->first();
+        if (! $snapshot) {
+            return response()->json(['success' => false, 'message' => 'Нет готового файла поставщика для изменения.'], 422);
+        }
+
+        $items = SupplierCatalogItem::query()
+            ->where('snapshot_id', $snapshot->id)
+            ->where('external_sku', $sku)
+            ->get();
+        if ($items->isEmpty()) {
+            return response()->json(['success' => false, 'message' => 'В текущем файле нет строки с этим артикулом.'], 422);
+        }
+
+        $updated = 0;
+        foreach ($items as $item) {
+            if (trim((string) $item->name) !== '') {
+                continue;
+            }
+            $item->update(['name' => $name, 'clean_name' => $name]);
+            $updated++;
+        }
+        if ($updated === 0) {
+            return response()->json(['success' => false, 'message' => 'Название в строке файла уже заполнено.'], 422);
+        }
+
+        $this->touchSupplierSnapshots($profile->code);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Название добавлено в {$updated} строк(и) текущего файла.",
+            'data' => ['updated' => $updated],
+        ]);
     }
 
     public function deleteFeedPriceStockRun(SupplierCatalogProfile $profile, SupplierFeedPriceStockRun $run): JsonResponse
