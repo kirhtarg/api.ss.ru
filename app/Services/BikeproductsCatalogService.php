@@ -647,6 +647,14 @@ class BikeproductsCatalogService
         if ($scope === 'goods') {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'good')->where('is_check_enabled', true)->get();
             $allowedTargets = ['name', 'short_description', 'description', 'brand', 'weight', 'depth', 'width', 'height'];
+            // The goods audit owns product metadata only. Price and stock
+            // mappings are maintained by their dedicated audit tabs and must
+            // never be changed from a description/name bulk action.
+            $mappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => in_array(
+                (string) data_get($mapping->conditions, 'target'),
+                $allowedTargets,
+                true,
+            ));
             $targets = array_values(array_intersect($allowedTargets, $targets));
             if ($targets !== []) {
                 $mappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => in_array((string) data_get($mapping->conditions, 'target'), $targets, true));
@@ -662,11 +670,17 @@ class BikeproductsCatalogService
                     $good = $matchedGoods->get($goodId);
                     if (! $good) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'matched_good_missing', ['scope' => 'goods']); continue; }
                     $mappedValues = $this->mappedGoodAttributes($item, $mappings);
-                    $values = collect($mappedValues)->only(['name', 'short_description', 'description', 'weight', 'depth', 'width', 'height', 'price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all();
+                    $values = collect($mappedValues)
+                        ->only(['name', 'short_description', 'description', 'weight', 'depth', 'width', 'height'])
+                        ->filter(fn ($value, string $field) => ! $this->mappedGoodValuesMatch($field, $good->{$field} ?? null, $value))
+                        ->all();
                     $brand = $this->nullableString($mappedValues['brand'] ?? null);
-                    if ($values === [] && $brand === null) {
+                    $brandNeedsUpdate = $brand !== null && ! $good->brands
+                        ->pluck('name')
+                        ->contains(fn (string $databaseBrand) => $this->mappedGoodValuesMatch('brand', $databaseBrand, $brand));
+                    if ($values === [] && ! $brandNeedsUpdate) {
                         $skipped++;
-                        $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_mapped_values', [
+                        $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_field_changes', [
                             'scope' => 'goods',
                             'good_id' => $good?->id,
                             'targets' => $targets,
@@ -707,7 +721,7 @@ class BikeproductsCatalogService
                         $committedGoodUpdates[$good->id] = $values;
                         $good->forceFill($persistedValues);
                     }
-                    if ($brand !== null) $good->brands()->sync([ShopBrand::firstOrCreate(['name' => $brand], ['is_active' => true])->id]);
+                    if ($brandNeedsUpdate) $good->brands()->sync([ShopBrand::firstOrCreate(['name' => $brand], ['is_active' => true])->id]);
                     $affected++;
                     $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'mapped_goods_updated', [
                         'scope' => 'goods',
@@ -3534,54 +3548,28 @@ class BikeproductsCatalogService
         $sourceNameMissing = $allSourceItems
             ->filter(fn (SupplierCatalogItem $item) => $this->nullableString($item->name) === null)
             ->count();
-        if ($onlyTargets === null) {
-            // A parent field (name, descriptions, brand) is compared only by
-            // the exact SKU of shop_goods. Variation rows never take part in
-            // this tab and cannot become a fallback for a parent product.
-            $allMatches = $this->resolveSkuMatches(
-                $allSourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
-                $snapshot->supplier_code,
-            );
-            $sourceItems = $allSourceItems
-                ->reject(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))
-                ->filter(function (SupplierCatalogItem $item) use ($allMatches, $snapshot): bool {
-                    $sku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
-                    $match = $allMatches->get($sku) ?? $allMatches->get($this->normalizeSku($sku));
+        // The goods audit always compares fields of the parent product. This
+        // stays true for a single-field filter: otherwise a variation with
+        // the same SKU can make an already correct parent description appear
+        // out of sync and later send an invalid bulk update.
+        $allMatches = $this->resolveSkuMatches(
+            $allSourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
+            $snapshot->supplier_code,
+        );
+        $sourceItems = $allSourceItems
+            ->reject(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))
+            ->filter(function (SupplierCatalogItem $item) use ($allMatches, $snapshot): bool {
+                $sku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
+                $match = $allMatches->get($sku) ?? $allMatches->get($this->normalizeSku($sku));
 
-                    return $match === null || $match['type'] === 'good';
-                })
-                ->values();
-            $matches = $this->resolveSkuMatches(
-                $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
-                $snapshot->supplier_code,
-            )->filter(fn (array $match) => $match['type'] === 'good');
-        } else {
-            $sourceVariationGroupKeys = $allSourceItems
-                ->filter(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))
-                ->mapWithKeys(fn (SupplierCatalogItem $item) => [$this->sourceGoodGroupKey($item) => true])
-                ->all();
-            $sourceItems = $allSourceItems
-                ->reject(fn (SupplierCatalogItem $item) => ! $this->isSourceVariationItem($item)
-                    && isset($sourceVariationGroupKeys[$this->sourceGoodGroupKey($item)]))
-                ->values();
-            $matches = $this->resolveSkuMatches(
-                $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
-                $snapshot->supplier_code,
-                true,
-                true,
-            );
-        }
-        $databaseDuplicateSkuGroups = $onlyTargets !== null
-            ? $this->findVariationGroupsBySku(
-                $sourceItems
-                    ->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code))
-                    ->filter()
-                    ->flatMap(fn ($sku) => $this->skuLookupKeys($sku, $snapshot->supplier_code))
-                    ->unique()
-                    ->values(),
-                $snapshot->supplier_code,
-            )->filter(fn (Collection $group) => $group->count() > 1)
-            : collect();
+                return $match === null || $match['type'] === 'good';
+            })
+            ->values();
+        $matches = $this->resolveSkuMatches(
+            $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
+            $snapshot->supplier_code,
+        )->filter(fn (array $match) => $match['type'] === 'good');
+        $databaseDuplicateSkuGroups = collect();
         $mappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
             ->where('scope', 'good')
@@ -3615,11 +3603,7 @@ class BikeproductsCatalogService
             $good = $match
                 ? $goods->get($match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)
                 : $singleGoodByName;
-            // Product metadata belongs to the parent good, while prices and
-            // stocks belong to the exact SKU (variation when it exists).
-            $comparisonModel = $onlyTargets !== null && $match
-                ? ($match['type'] === 'variation' ? $match['model'] : $good)
-                : $good;
+            $comparisonModel = $good;
             $differences = [];
             if (! $good) {
                 foreach ($mappings as $mapping) {
@@ -3687,19 +3671,15 @@ class BikeproductsCatalogService
                 'source_name' => $item->name,
                 'database_match_type' => $match['type'] ?? ($singleGoodByName ? 'good_name' : null),
                 'database_matched_by_name' => $singleGoodByName !== null,
-                'database_value_source' => $onlyTargets !== null && $match
-                    ? ($match['type'] === 'variation' ? 'variation' : 'good')
-                    : 'good',
+                'database_value_source' => 'good',
                 'database_good_id' => $good?->id,
                 'database_name' => $good?->name,
                 'database_slug' => $good?->slug,
                 'database_sku' => $match
                     ? (string) ($match['model']->sku ?? '')
                     : (string) ($good?->sku ?? ''),
-                'database_variation_id' => $match && $match['type'] === 'variation' ? $match['model']->id : null,
-                'database_variation_axes' => $onlyTargets !== null && $match && $match['type'] === 'variation'
-                    ? $this->variationAxesFlatPayload($match['model'])
-                    : [],
+                'database_variation_id' => null,
+                'database_variation_axes' => [],
                 // Show the complete database stock state in the price/stock audit,
                 // independently of which stock fields were mapped from the file.
                 'database_stocks' => $comparisonModel ? [
@@ -5183,7 +5163,7 @@ class BikeproductsCatalogService
     {
         $targets = $onlyTargets === null ? 'goods' : implode(',', $onlyTargets);
 
-        return 'supplier-catalog:good-audit-base:v47:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
+        return 'supplier-catalog:good-audit-base:v48:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
     }
 
     private function snapshotAuditCacheVersion(SupplierCatalogSnapshot $snapshot): string
