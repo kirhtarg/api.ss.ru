@@ -830,32 +830,51 @@ class BikeproductsCatalogService
         }
         if ($scope === 'properties') {
             $mappings = SupplierCatalogFieldMapping::query()->where('supplier_code', $snapshot->supplier_code)->where('scope', 'product')->where('is_check_enabled', true)->whereNotNull('property_id')->get();
-            $differentItemIds = array_flip($this->propertySelection($snapshot));
-            DB::transaction(function () use ($items, $matches, $mappings, $differentItemIds, $snapshot, &$affected, &$skipped, &$actionLog): void {
-                foreach ($items as $item) {
-                    $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
-                    $match = $matches->get($sourceSku) ?? $matches->get($this->normalizeSku($sourceSku));
-                    if (! $match) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_match_not_found', ['scope' => 'properties', 'source_sku' => $sourceSku]); continue; }
-                    if (! isset($differentItemIds[$item->id])) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_actionable_property_difference', ['scope' => 'properties']); continue; }
-                    $good = $match['type'] === 'variation' ? $match['model']->good : $match['model'];
-                    $actionableMappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => $this->propertySourceValueFromPayload($item->raw_payload ?? [], $mapping) !== null);
-                    if (! $good) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'matched_good_missing', ['scope' => 'properties']); continue; }
-                    if ($actionableMappings->isEmpty()) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_source_property_values', ['scope' => 'properties', 'good_id' => $good->id]); continue; }
-                    $propertyLog = $actionableMappings->map(fn (SupplierCatalogFieldMapping $mapping) => ['property_id' => $mapping->property_id, 'source_field' => $mapping->source_field, 'source_value' => $this->propertySourceValueFromPayload($item->raw_payload ?? [], $mapping)])->values()->all();
-                    $this->syncMappedProperties($good, $item->raw_payload ?? [], $actionableMappings, true);
-                    $propertyIds = collect($propertyLog)->pluck('property_id')->map(fn ($id) => (int) $id)->unique()->values();
-                    $savedValues = DB::table('shop_good_properties as gp')
-                        ->leftJoin('shop_property_values as pv', 'pv.id', '=', 'gp.shop_property_value_id')
-                        ->where('gp.good_id', $good->id)
-                        ->whereIn('gp.property_id', $propertyIds)
-                        ->orderBy('gp.property_id')
-                        ->orderBy('pv.value')
-                        ->get(['gp.property_id', 'pv.value'])
-                        ->groupBy('property_id')
-                        ->map(fn (Collection $values) => $values->pluck('value')->filter()->values()->all())
-                        ->all();
+            $selectedItemIds = $items->pluck('id')->flip();
+            $attentionGoodIds = collect($this->propertyAudit($snapshot, 1, 100000, null, ['attention'])['data'])
+                ->pluck('database_good_id')
+                ->map(fn ($id) => (int) $id)
+                ->flip();
+            $groups = $this->propertyAuditGroups($snapshot)
+                ->filter(fn (array $group) => $group['items']->contains(fn (SupplierCatalogItem $item) => isset($selectedItemIds[$item->id])));
+
+            DB::transaction(function () use ($groups, $mappings, $attentionGoodIds, &$affected, &$skipped, &$actionLog): void {
+                foreach ($groups as $group) {
+                    /** @var ShopGood $good */
+                    $good = $group['good'];
+                    /** @var Collection<int, SupplierCatalogItem> $sourceItems */
+                    $sourceItems = $group['items'];
+                    $representative = $sourceItems->first();
+                    if (! isset($attentionGoodIds[$good->id])) {
+                        $skipped++;
+                        $actionLog[] = $this->catalogActionLogRow($representative, 'skipped', 'no_actionable_property_difference', ['scope' => 'properties', 'good_id' => $good->id]);
+                        continue;
+                    }
+
+                    $propertyValues = $this->mappedPropertyValuesFromItems($sourceItems, $mappings);
+                    if ($propertyValues->isEmpty()) {
+                        $skipped++;
+                        $actionLog[] = $this->catalogActionLogRow($representative, 'skipped', 'no_source_property_values', ['scope' => 'properties', 'good_id' => $good->id]);
+                        continue;
+                    }
+
+                    $this->syncMappedPropertyValues($good, $propertyValues, true);
+                    $savedValues = $this->savedPropertyValues($good->id, $propertyValues->keys());
+                    if (! $this->propertyValuesMatch($savedValues, $propertyValues)) {
+                        throw new \RuntimeException('База данных не сохранила характеристики товара #'.$good->id.'.');
+                    }
+
                     $affected++;
-                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'mapped_properties_synced', ['scope' => 'properties', 'good_id' => $good->id, 'match_type' => $match['type'], 'source_sku' => $sourceSku, 'properties' => $propertyLog, 'saved_values' => $savedValues]);
+                    $actionLog[] = $this->catalogActionLogRow($representative, 'updated', 'mapped_properties_synced', [
+                        'scope' => 'properties',
+                        'good_id' => $good->id,
+                        'source_item_ids' => $sourceItems->pluck('id')->values()->all(),
+                        'properties' => $propertyValues->map(fn (Collection $values, $propertyId) => [
+                            'property_id' => (int) $propertyId,
+                            'source_values' => $values->values()->all(),
+                        ])->values()->all(),
+                        'saved_values' => $savedValues,
+                    ]);
                 }
             });
             return ['affected' => $affected, 'skipped' => $skipped, 'message' => 'Характеристики обновлены', 'log' => $actionLog];
@@ -3370,9 +3389,10 @@ class BikeproductsCatalogService
     public function propertyAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?string $search = null, array $statuses = []): array
     {
         $this->assertReadySnapshot($snapshot);
-        $items = $this->bindingParticipatingItems($this->snapshotItemsQuery($snapshot, $search)->get(), $snapshot->supplier_code);
-        $skuMatches = $this->resolveSkuMatches($items->pluck('external_sku'), $snapshot->supplier_code)
-            ->mapWithKeys(fn (array $match, string $sku) => [$this->normalizeSku($sku) => $match]);
+        // A source file normally contains one row per variation, whereas
+        // product properties belong only to the parent ShopGood. Collapse all
+        // matched rows of one parent before comparing anything.
+        $groups = $this->propertyAuditGroups($snapshot);
         $mappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
             ->where('scope', 'product')
@@ -3383,12 +3403,7 @@ class BikeproductsCatalogService
         $mappingsByProperty = $mappings
             ->filter(fn (SupplierCatalogFieldMapping $mapping) => (int) $mapping->property_id > 0)
             ->groupBy(fn (SupplierCatalogFieldMapping $mapping) => (int) $mapping->property_id);
-        $matchedGoodIds = $skuMatches
-            ->map(fn (array $match) => $match['type'] === 'good' ? $match['model']->id : $match['model']->good?->id)
-            ->filter()
-            ->unique()
-            ->values();
-        $goodIds = $matchedGoodIds;
+        $goodIds = $groups->keys()->map(fn ($id) => (int) $id)->values();
         $propertyQuery = DB::table('shop_good_properties as gp')
             ->join('shop_properties as p', 'p.id', '=', 'gp.property_id')
             ->whereIn('gp.good_id', $goodIds);
@@ -3404,25 +3419,17 @@ class BikeproductsCatalogService
             ->groupBy(fn ($row) => $row->good_id.':'.$row->property_id);
         $rows = [];
 
-        foreach ($items as $item) {
-            $match = $skuMatches->get($this->normalizeSku($item->external_sku));
-            if (! $match) {
-                continue;
-            }
-
-            $good = $match['type'] === 'good' ? $match['model'] : $match['model']->good;
-            if (! $good) {
-                continue;
-            }
-
+        foreach ($groups as $group) {
+            /** @var ShopGood $good */
+            $good = $group['good'];
+            /** @var Collection<int, SupplierCatalogItem> $sourceItems */
+            $sourceItems = $group['items'];
             $goodId = $good->id;
             $differences = [];
             foreach ($mappingsByProperty as $propertyId => $propertyMappings) {
                 /** @var Collection<int, SupplierCatalogFieldMapping> $propertyMappings */
-                $sourceValues = $propertyMappings
-                    ->map(fn (SupplierCatalogFieldMapping $mapping) => $this->propertySourceValueFromPayload($item->raw_payload ?? [], $mapping))
-                    ->filter(fn (?string $value) => $value !== null)
-                    ->unique(fn (string $value) => $this->normalizeComparisonValue($value))
+                $sourceValues = $this->mappedPropertyValuesFromItems($sourceItems, $propertyMappings)
+                    ->get((int) $propertyId, collect())
                     ->values()
                     ->all();
                 $databaseValues = $properties->get($goodId.':'.$propertyId, collect())
@@ -3461,10 +3468,16 @@ class BikeproductsCatalogService
             $hasActionableProperties = collect($differences)->contains(fn (array $diff) => in_array($diff['status'], ['different', 'missing_in_database'], true));
             $hasMissingInFileProperties = collect($differences)->contains(fn (array $diff) => $diff['status'] === 'missing_in_file');
             $rows[] = [
-                'item_id' => $item->id,
-                'external_sku' => $this->sourceSkuForItem($item, $snapshot->supplier_code) ?: $item->external_sku,
-                'source_name' => $item->name,
-                'source_name_missing' => $this->nullableString($item->name) === null,
+                // item_id remains a representative source row for the
+                // existing selection API. item_ids identifies the whole
+                // source group used for the aggregated comparison.
+                'item_id' => $sourceItems->first()?->id,
+                'item_ids' => $sourceItems->pluck('id')->values()->all(),
+                'external_sku' => $this->sourceSkuForItem($sourceItems->first(), $snapshot->supplier_code) ?: $sourceItems->first()?->external_sku,
+                'source_skus' => $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code) ?: $item->external_sku)->filter()->unique()->values()->all(),
+                'source_item_count' => $sourceItems->count(),
+                'source_name' => $sourceItems->map(fn (SupplierCatalogItem $item) => $this->nullableString($item->name))->filter()->first(),
+                'source_name_missing' => $sourceItems->every(fn (SupplierCatalogItem $item) => $this->nullableString($item->name) === null),
                 'database_good_id' => $goodId,
                 'database_name' => $good->name,
                 'database_slug' => $good->slug,
@@ -3474,6 +3487,23 @@ class BikeproductsCatalogService
                 'differences' => $differences,
                 'status' => $hasActionableProperties ? 'attention' : ($hasMissingInFileProperties ? 'missing_in_file' : 'match'),
             ];
+        }
+
+        $searchTerm = $this->normalizeComparisonValue((string) $search);
+        if ($searchTerm !== '') {
+            $rows = array_values(array_filter($rows, function (array $row) use ($searchTerm): bool {
+                $haystack = [
+                    $row['source_name'] ?? null,
+                    $row['database_name'] ?? null,
+                    $row['external_sku'] ?? null,
+                    ...($row['source_skus'] ?? []),
+                ];
+
+                return collect($haystack)->contains(fn ($value) => str_contains(
+                    $this->normalizeComparisonValue((string) $value),
+                    $searchTerm,
+                ));
+            }));
         }
 
         $stats = [
@@ -4213,6 +4243,150 @@ class BikeproductsCatalogService
                 'shop_property_value_id' => $propertyValue->id,
             ], $attributes);
         }
+    }
+
+    /**
+     * @return Collection<int, array{good: ShopGood, items: Collection<int, SupplierCatalogItem>}>
+     */
+    private function propertyAuditGroups(SupplierCatalogSnapshot $snapshot): Collection
+    {
+        $items = $this->bindingParticipatingItems(
+            $this->snapshotItemsQuery($snapshot, null)->get(),
+            $snapshot->supplier_code,
+        );
+        $matches = $this->resolveSkuMatches(
+            $items->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
+            $snapshot->supplier_code,
+        );
+        $goodIds = $matches
+            ->map(fn (array $match) => $match['type'] === 'variation' ? $match['model']->good_id : $match['model']->id)
+            ->filter()
+            ->unique()
+            ->values();
+        $goods = ShopGood::query()
+            ->whereIn('id', $goodIds)
+            ->get(['id', 'name', 'slug'])
+            ->keyBy('id');
+        $groups = collect();
+
+        foreach ($items as $item) {
+            $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
+            $match = $matches->get($sourceSku) ?? $matches->get($this->normalizeSku($sourceSku));
+            if (! $match) {
+                continue;
+            }
+            $goodId = $match['type'] === 'variation' ? $match['model']->good_id : $match['model']->id;
+            $good = $goods->get($goodId);
+            if (! $good) {
+                continue;
+            }
+
+            $group = $groups->get($goodId, ['good' => $good, 'items' => collect()]);
+            $group['items']->push($item);
+            $groups->put($goodId, $group);
+        }
+
+        return $groups;
+    }
+
+    /**
+     * @param Collection<int, SupplierCatalogItem> $items
+     * @param Collection<int, SupplierCatalogFieldMapping> $mappings
+     * @return Collection<int, Collection<int, string>>
+     */
+    private function mappedPropertyValuesFromItems(Collection $items, Collection $mappings): Collection
+    {
+        $valuesByProperty = collect();
+        foreach ($mappings as $mapping) {
+            $propertyId = (int) $mapping->property_id;
+            if ($propertyId <= 0) {
+                continue;
+            }
+            foreach ($items as $item) {
+                $value = $this->propertySourceValueFromPayload($item->raw_payload ?? [], $mapping);
+                if ($value === null) {
+                    continue;
+                }
+                $valuesByProperty->put($propertyId, $valuesByProperty->get($propertyId, collect())->push($value));
+            }
+        }
+
+        return $valuesByProperty
+            ->map(fn (Collection $values) => $values
+                ->unique(fn (string $value) => $this->normalizeComparisonValue($value))
+                ->values())
+            ->filter(fn (Collection $values) => $values->isNotEmpty());
+    }
+
+    /** @param Collection<int, Collection<int, string>> $valuesByProperty */
+    private function syncMappedPropertyValues(ShopGood $good, Collection $valuesByProperty, bool $replace = false): void
+    {
+        $propertyIds = $valuesByProperty->keys()->map(fn ($id) => (int) $id)->filter()->values();
+        if ($replace && $propertyIds->isNotEmpty()) {
+            ShopGoodProperty::query()
+                ->where('good_id', $good->id)
+                ->whereIn('property_id', $propertyIds)
+                ->delete();
+        }
+        foreach ($valuesByProperty as $propertyId => $values) {
+            foreach ($values as $value) {
+                $propertyValue = PropertyValue::firstOrCreate([
+                    'property_id' => (int) $propertyId,
+                    'value' => $value,
+                ], [
+                    'is_active' => true,
+                    'sort_order' => 0,
+                ]);
+                $attributes = ['shop_property_value_id' => $propertyValue->id];
+                if (Schema::hasColumn('shop_good_properties', 'value')) {
+                    $attributes['value'] = $value;
+                }
+                ShopGoodProperty::firstOrCreate([
+                    'good_id' => $good->id,
+                    'property_id' => (int) $propertyId,
+                    'shop_property_value_id' => $propertyValue->id,
+                ], $attributes);
+            }
+        }
+    }
+
+    /** @param Collection<int, int> $propertyIds @return Collection<int, Collection<int, string>> */
+    private function savedPropertyValues(int $goodId, Collection $propertyIds): Collection
+    {
+        $query = DB::table('shop_good_properties as gp')->where('gp.good_id', $goodId)->whereIn('gp.property_id', $propertyIds);
+        if (Schema::hasColumn('shop_good_properties', 'value')) {
+            $query->select(['gp.property_id', 'gp.value']);
+        } else {
+            $query->leftJoin('shop_property_values as pv', 'pv.id', '=', 'gp.shop_property_value_id')
+                ->select(['gp.property_id', 'pv.value']);
+        }
+
+        return $query->get()
+            ->groupBy('property_id')
+            ->map(fn (Collection $values) => $values->pluck('value')
+                ->map(fn ($value) => $this->nullableString($value))
+                ->filter()
+                ->unique(fn (string $value) => $this->normalizeComparisonValue($value))
+                ->values());
+    }
+
+    /** @param Collection<int, Collection<int, string>> $saved @param Collection<int, Collection<int, string>> $expected */
+    private function propertyValuesMatch(Collection $saved, Collection $expected): bool
+    {
+        return $expected->every(function (Collection $expectedValues, $propertyId) use ($saved): bool {
+            $actual = $saved->get((int) $propertyId, collect())
+                ->map(fn (string $value) => $this->normalizeComparisonValue($value))
+                ->sort()
+                ->values()
+                ->all();
+            $expectedNormalized = $expectedValues
+                ->map(fn (string $value) => $this->normalizeComparisonValue($value))
+                ->sort()
+                ->values()
+                ->all();
+
+            return $actual === $expectedNormalized;
+        });
     }
 
     private function uniqueGoodSlug(string $name): string

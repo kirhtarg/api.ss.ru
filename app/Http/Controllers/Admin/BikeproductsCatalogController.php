@@ -1044,7 +1044,7 @@ class BikeproductsCatalogController extends Controller
         );
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v46:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v47:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.
