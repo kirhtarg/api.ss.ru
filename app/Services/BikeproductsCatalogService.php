@@ -612,19 +612,6 @@ class BikeproductsCatalogService
             $items->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
             $snapshot->supplier_code,
         );
-        if ($scope === 'goods') {
-            // Parent fields can be changed only by the exact SKU of the
-            // parent product. A variation SKU must never resolve to its
-            // parent here: it belongs to the variation/price/stock audits.
-            $matches = $matches->filter(fn (array $match) => $match['type'] === 'good');
-            $items = $items
-                ->filter(function (SupplierCatalogItem $item) use ($matches, $snapshot): bool {
-                    $sku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
-
-                    return $matches->has($sku) || $matches->has($this->normalizeSku($sku));
-                })
-                ->values();
-        }
         // resolveSkuMatches intentionally loads a compact parent relation for
         // audit rendering. Updates need the complete ShopGood model instead:
         // otherwise an unloaded short_description is logged as null and may
@@ -659,17 +646,25 @@ class BikeproductsCatalogService
             if ($targets !== []) {
                 $mappings = $mappings->filter(fn (SupplierCatalogFieldMapping $mapping) => in_array((string) data_get($mapping->conditions, 'target'), $targets, true));
             }
-            DB::transaction(function () use ($items, $matches, $matchedGoods, $mappings, $targets, $snapshot, &$affected, &$skipped, &$actionLog, &$committedGoodUpdates): void {
-                foreach ($items as $item) {
-                    $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
-                    $match = $matches->get($sourceSku) ?? $matches->get($this->normalizeSku($sourceSku));
-                    if (! $match) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'database_match_not_found', ['scope' => 'goods', 'source_sku' => $sourceSku]); continue; }
-                    $goodId = $match['type'] === 'variation'
-                        ? $match['model']->good_id
-                        : $match['model']->id;
-                    $good = $matchedGoods->get($goodId);
-                    if (! $good) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'matched_good_missing', ['scope' => 'goods']); continue; }
-                    $mappedValues = $this->mappedGoodAttributes($item, $mappings);
+            $selectedItemIds = $items->pluck('id')->flip();
+            $groups = $this->propertyAuditGroups($snapshot)
+                ->filter(fn (array $group) => $group['items']->contains(fn (SupplierCatalogItem $item) => isset($selectedItemIds[$item->id])));
+            DB::transaction(function () use ($groups, $matchedGoods, $mappings, $targets, &$affected, &$skipped, &$actionLog, &$committedGoodUpdates): void {
+                foreach ($groups as $group) {
+                    /** @var ShopGood $groupGood */
+                    $groupGood = $group['good'];
+                    /** @var Collection<int, SupplierCatalogItem> $sourceItems */
+                    $sourceItems = $group['items'];
+                    $item = $sourceItems->first();
+                    $good = $matchedGoods->get($groupGood->id) ?? $groupGood;
+                    $sourceValues = $this->mappedGoodValuesFromItems($sourceItems, $mappings);
+                    $conflictingTargets = $sourceValues->filter(fn (Collection $values) => $values->count() > 1)->keys()->values()->all();
+                    if ($conflictingTargets !== []) {
+                        $skipped++;
+                        $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'source_field_conflict', ['scope' => 'goods', 'good_id' => $good->id, 'fields' => $conflictingTargets]);
+                        continue;
+                    }
+                    $mappedValues = $sourceValues->map(fn (Collection $values) => $values->first())->all();
                     $values = collect($mappedValues)
                         ->only(['name', 'short_description', 'description', 'weight', 'depth', 'width', 'height'])
                         ->filter(fn ($value, string $field) => ! $this->mappedGoodValuesMatch($field, $good->{$field} ?? null, $value))
@@ -708,15 +703,23 @@ class BikeproductsCatalogService
                         // typographic apostrophes). Confirm writes by that
                         // same contract; a byte-for-byte comparison made a
                         // valid short-description update abort the whole batch.
-                        $writeFailed = collect($values)->contains(
-                            fn ($value, string $field) => ! $this->mappedGoodValuesMatch(
+                        $failedFields = collect($values)
+                            ->filter(fn ($value, string $field) => ! $this->mappedGoodValuesMatch(
                                 $field,
                                 $persistedValues[$field] ?? null,
                                 $value,
-                            ),
-                        );
-                        if ($writeFailed) {
-                            throw new \RuntimeException('База данных не сохранила обновлённые поля товара #'.$good->id.'.');
+                            ))
+                            ->keys()
+                            ->values()
+                            ->all();
+                        if ($failedFields !== []) {
+                            Log::error('[supplier-catalog] Good mapped update did not persist', [
+                                'good_id' => $good->id,
+                                'fields' => $failedFields,
+                                'expected' => $values,
+                                'persisted' => $persistedValues,
+                            ]);
+                            throw new \RuntimeException('База данных не сохранила поля товара #'.$good->id.': '.implode(', ', $failedFields).'.');
                         }
                         $committedGoodUpdates[$good->id] = $values;
                         $good->forceFill($persistedValues);
@@ -726,8 +729,8 @@ class BikeproductsCatalogService
                     $actionLog[] = $this->catalogActionLogRow($item, 'updated', 'mapped_goods_updated', [
                         'scope' => 'goods',
                         'good_id' => $good->id,
-                        'match_type' => $match['type'],
-                        'source_sku' => $sourceSku,
+                        'match_type' => 'grouped_parent_good',
+                        'source_item_ids' => $sourceItems->pluck('id')->values()->all(),
                         'targets' => $targets,
                         'fields' => $fieldChanges,
                         'saved_values' => $persistedValues,
@@ -3568,6 +3571,9 @@ class BikeproductsCatalogService
     public function goodAudit(SupplierCatalogSnapshot $snapshot, int $page = 1, int $perPage = 50, ?array $onlyTargets = null, ?string $search = null, array $statuses = [], array $differenceTypes = [], bool $paginateByGood = false, ?int $goodId = null): array
     {
         $this->assertReadySnapshot($snapshot);
+        if ($onlyTargets === null) {
+            return $this->groupedProductGoodAudit($snapshot, $page, $perPage, $search, $statuses, $differenceTypes, $goodId);
+        }
         // Build the expensive file-to-database comparison once. Search,
         // filters and pagination below operate on this immutable payload.
         $baseCacheKey = $this->goodAuditBaseCacheKey($snapshot, $onlyTargets);
@@ -3962,6 +3968,117 @@ class BikeproductsCatalogService
     }
 
     /** @return array<int, int> */
+    /** @return array{data: array<int, array<string, mixed>>, meta: array<string, int>, stats: array<string, int>} */
+    private function groupedProductGoodAudit(SupplierCatalogSnapshot $snapshot, int $page, int $perPage, ?string $search, array $statuses, array $differenceTypes, ?int $goodId): array
+    {
+        $mappings = SupplierCatalogFieldMapping::query()
+            ->where('supplier_code', $snapshot->supplier_code)
+            ->where('scope', 'good')
+            ->where('is_check_enabled', true)
+            ->get()
+            ->filter(fn (SupplierCatalogFieldMapping $mapping) => in_array((string) data_get($mapping->conditions, 'target'), ['name', 'short_description', 'description', 'brand', 'weight', 'depth', 'width', 'height'], true));
+        $mappingsByTarget = $mappings->groupBy(fn (SupplierCatalogFieldMapping $mapping) => (string) data_get($mapping->conditions, 'target'));
+        $groups = $this->propertyAuditGroups($snapshot);
+        $goods = ShopGood::query()->whereIn('id', $groups->keys())->with('brands:id,name')->get()->keyBy('id');
+        $rows = [];
+
+        foreach ($groups as $group) {
+            $good = $goods->get($group['good']->id);
+            if (! $good) {
+                continue;
+            }
+            $sourceItems = $group['items'];
+            $sourceValuesByTarget = $this->mappedGoodValuesFromItems($sourceItems, $mappings);
+            $differences = [];
+            foreach ($mappingsByTarget as $target => $targetMappings) {
+                $sourceValues = $sourceValuesByTarget->get($target, collect())->values()->all();
+                if ($sourceValues === []) {
+                    continue;
+                }
+                $databaseValues = $target === 'brand'
+                    ? $good->brands->pluck('name')->filter()->values()->all()
+                    : array_values(array_filter([trim((string) ($good->{$target} ?? ''))], fn (string $value) => $value !== ''));
+                $status = count($sourceValues) > 1
+                    ? 'source_conflict'
+                    : (empty($databaseValues)
+                        ? 'missing_in_database'
+                        : (collect($databaseValues)->contains(fn (string $value) => $this->mappedGoodValuesMatch($target, $value, $sourceValues[0])) ? 'match' : 'different'));
+                $differences[] = [
+                    'status' => $status,
+                    'field' => $target,
+                    'source_field' => $targetMappings->pluck('source_field')->implode(', '),
+                    'source_value' => implode(' / ', $sourceValues),
+                    'source_values' => $sourceValues,
+                    'database_values' => $databaseValues,
+                ];
+            }
+            $hasActionableDifferences = collect($differences)->contains(fn (array $difference) => in_array($difference['status'], ['different', 'missing_in_database'], true));
+            $hasConflict = collect($differences)->contains(fn (array $difference) => $difference['status'] === 'source_conflict');
+            $representative = $sourceItems->first();
+            $rows[] = [
+                'item_id' => $representative?->id,
+                'item_ids' => $sourceItems->pluck('id')->values()->all(),
+                'external_sku' => $this->sourceSkuForItem($representative, $snapshot->supplier_code) ?: $representative?->external_sku,
+                'source_skus' => $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code) ?: $item->external_sku)->filter()->unique()->values()->all(),
+                'source_item_count' => $sourceItems->count(),
+                'source_variation_count' => $sourceItems->filter(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))->count(),
+                'source_name' => $sourceItems->map(fn (SupplierCatalogItem $item) => $this->nullableString($item->name))->filter()->first(),
+                'source_name_missing' => $sourceItems->every(fn (SupplierCatalogItem $item) => $this->nullableString($item->name) === null),
+                'database_match_type' => 'grouped_parent_good',
+                'database_good_id' => $good->id,
+                'database_name' => $good->name,
+                'database_slug' => $good->slug,
+                'database_sku' => $good->sku,
+                'database_variation_id' => null,
+                'database_variation_axes' => [],
+                'database_value_source' => 'good',
+                'source_is_variation' => $sourceItems->every(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item)),
+                'differences' => $differences,
+                'status' => $hasActionableDifferences ? 'attention' : ($hasConflict ? 'source_conflict' : 'match'),
+            ];
+        }
+
+        $needle = $this->normalizeComparisonValue((string) $search);
+        if ($needle !== '') {
+            $rows = array_values(array_filter($rows, fn (array $row) => collect([$row['source_name'], $row['database_name'], $row['external_sku'], ...$row['source_skus']])
+                ->contains(fn ($value) => str_contains($this->normalizeComparisonValue((string) $value), $needle))));
+        }
+        $statsRows = collect($rows);
+        if ($goodId !== null) {
+            $rows = array_values(array_filter($rows, fn (array $row) => (int) $row['database_good_id'] === $goodId));
+        }
+        if ($statuses !== []) {
+            $rows = array_values(array_filter($rows, fn (array $row) => in_array($row['status'], $statuses, true)));
+        }
+        if ($differenceTypes !== []) {
+            $rows = array_values(array_filter($rows, fn (array $row) => collect($row['differences'])->contains(fn (array $difference) => in_array($difference['field'], $differenceTypes, true) && in_array($difference['status'], ['different', 'missing_in_database'], true))));
+        }
+        usort($rows, fn (array $left, array $right) => strcmp((string) $left['database_name'], (string) $right['database_name']));
+        $total = count($rows);
+        $page = max(1, min($page, max(1, (int) ceil($total / max(1, $perPage)))));
+        $pageRows = array_slice($rows, ($page - 1) * $perPage, $perPage);
+        $differenceCount = fn (string $field): int => $statsRows->filter(fn (array $row) => collect($row['differences'])->contains(fn (array $difference) => $difference['field'] === $field && in_array($difference['status'], ['different', 'missing_in_database'], true)))->count();
+
+        return [
+            'data' => $pageRows,
+            'meta' => ['current_page' => $page, 'last_page' => max(1, (int) ceil($total / max(1, $perPage))), 'per_page' => $perPage, 'total' => $total],
+            'stats' => [
+                'attention' => $statsRows->where('status', 'attention')->count(),
+                'name_differences' => $differenceCount('name'),
+                'short_description_differences' => $differenceCount('short_description'),
+                'description_differences' => $differenceCount('description'),
+                'brand_differences' => $differenceCount('brand'),
+                'source_conflicts' => $statsRows->where('status', 'source_conflict')->count(),
+                'matched' => $statsRows->count(),
+                'source_items' => $statsRows->sum('source_item_count'),
+                'source_variations' => $statsRows->sum('source_variation_count'),
+                'not_found' => 0,
+                'missing_in_file' => 0,
+                'source_name_missing' => $statsRows->filter(fn (array $row) => $row['source_name_missing'])->count(),
+            ],
+        ];
+    }
+
     public function goodSelection(SupplierCatalogSnapshot $snapshot, string $status, ?string $search = null, array $differenceTypes = []): array
     {
         $audit = $this->goodAudit($snapshot, 1, 100000, null, $search, [$status], $differenceTypes);
@@ -4174,6 +4291,29 @@ class BikeproductsCatalogService
         }
 
         return $attributes;
+    }
+
+    /**
+     * @param Collection<int, SupplierCatalogItem> $items
+     * @param Collection<int, SupplierCatalogFieldMapping> $mappings
+     * @return Collection<string, Collection<int, string>>
+     */
+    private function mappedGoodValuesFromItems(Collection $items, Collection $mappings): Collection
+    {
+        $valuesByTarget = collect();
+        foreach ($items as $item) {
+            foreach ($this->mappedGoodAttributes($item, $mappings) as $target => $value) {
+                $value = $this->nullableString($value);
+                if ($value === null) {
+                    continue;
+                }
+                $valuesByTarget->put($target, $valuesByTarget->get($target, collect())->push($value));
+            }
+        }
+
+        return $valuesByTarget->map(fn (Collection $values) => $values
+            ->unique(fn (string $value) => $this->normalizeComparisonValue($value))
+            ->values());
     }
 
     /** @param array<string, mixed> $attributes @param array<string, mixed> $payload @param Collection<int, SupplierCatalogFieldMapping> $propertyMappings */
