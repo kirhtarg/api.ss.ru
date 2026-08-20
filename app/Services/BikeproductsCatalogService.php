@@ -689,8 +689,17 @@ class BikeproductsCatalogService
                         $persistedValues = collect(array_keys($values))
                             ->mapWithKeys(fn (string $field) => [$field => $persisted->{$field} ?? null])
                             ->all();
+                        // The audit deliberately ignores insignificant text
+                        // formatting differences (spaces, line breaks and
+                        // typographic apostrophes). Confirm writes by that
+                        // same contract; a byte-for-byte comparison made a
+                        // valid short-description update abort the whole batch.
                         $writeFailed = collect($values)->contains(
-                            fn ($value, string $field) => (string) ($persistedValues[$field] ?? '') !== (string) $value,
+                            fn ($value, string $field) => ! $this->mappedGoodValuesMatch(
+                                $field,
+                                $persistedValues[$field] ?? null,
+                                $value,
+                            ),
                         );
                         if ($writeFailed) {
                             throw new \RuntimeException('База данных не сохранила обновлённые поля товара #'.$good->id.'.');
@@ -721,7 +730,11 @@ class BikeproductsCatalogService
                     ->mapWithKeys(fn (string $field) => [$field => $persisted->{$field} ?? null])
                     ->all();
                 if (collect($values)->contains(
-                    fn ($value, string $field) => (string) ($persistedValues[$field] ?? '') !== (string) $value,
+                    fn ($value, string $field) => ! $this->mappedGoodValuesMatch(
+                        $field,
+                        $persistedValues[$field] ?? null,
+                        $value,
+                    ),
                 )) {
                     Log::error('[supplier-catalog] Goods update was reverted after commit', [
                         'snapshot_id' => $snapshot->id,

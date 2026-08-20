@@ -190,6 +190,8 @@ class BikeproductsCatalogController extends Controller
         $rows = (match ($filter) {
             'not_found' => $rows->filter(fn (array $row) => $row['status'] === 'not_found'),
             'missing_in_feed' => $rows->filter(fn (array $row) => $row['status'] === 'missing_in_feed'),
+            'missing_in_feed_with_stock' => $rows->filter(fn (array $row) => $row['status'] === 'missing_in_feed'
+                && $this->feedStockMeansAvailable(data_get($row, 'stock.before_value'))),
             'price_different' => $rows->filter(fn (array $row) => data_get($row, 'price.status') === 'different'),
             'price_match' => $rows->filter(fn (array $row) => data_get($row, 'price.status') === 'match'),
             'stock_different' => $rows->filter(fn (array $row) => data_get($row, 'stock.status') === 'different'),
@@ -306,6 +308,18 @@ class BikeproductsCatalogController extends Controller
     private function feedStockField(SupplierCatalogProfile $profile): string
     {
         return (string) data_get($profile->settings, 'feed_stock_target', 'stock_quantity');
+    }
+
+    private function feedStockMeansAvailable(mixed $value): bool
+    {
+        $value = trim((string) $value);
+        if ($value === '') {
+            return false;
+        }
+
+        $decimal = str_replace(',', '.', $value);
+
+        return ! is_numeric($decimal) || (float) $decimal != 0.0;
     }
 
     public function snapshots(Request $request): JsonResponse
