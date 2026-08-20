@@ -3476,6 +3476,7 @@ class BikeproductsCatalogService
                 'external_sku' => $this->sourceSkuForItem($sourceItems->first(), $snapshot->supplier_code) ?: $sourceItems->first()?->external_sku,
                 'source_skus' => $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code) ?: $item->external_sku)->filter()->unique()->values()->all(),
                 'source_item_count' => $sourceItems->count(),
+                'source_variation_count' => $sourceItems->filter(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))->count(),
                 'source_name' => $sourceItems->map(fn (SupplierCatalogItem $item) => $this->nullableString($item->name))->filter()->first(),
                 'source_name_missing' => $sourceItems->every(fn (SupplierCatalogItem $item) => $this->nullableString($item->name) === null),
                 'database_good_id' => $goodId,
@@ -3508,6 +3509,8 @@ class BikeproductsCatalogService
 
         $stats = [
             'matched' => count($rows),
+            'source_items' => array_sum(array_map(fn (array $row) => (int) $row['source_item_count'], $rows)),
+            'source_variations' => array_sum(array_map(fn (array $row) => (int) $row['source_variation_count'], $rows)),
             'attention' => count(array_filter($rows, fn (array $row) => $row['has_actionable_properties'])),
             'match' => count(array_filter($rows, fn (array $row) => collect($row['differences'])->isNotEmpty() && collect($row['differences'])->every(fn (array $diff) => in_array($diff['status'], ['match', 'empty_both'], true)))),
             'different' => count(array_filter($rows, fn (array $row) => collect($row['differences'])->contains(fn (array $diff) => $diff['status'] === 'different'))),
