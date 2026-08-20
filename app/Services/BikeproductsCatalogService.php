@@ -4150,6 +4150,17 @@ class BikeproductsCatalogService
             }
         }
 
+        if ($this->isPhysicalGoodField($target)) {
+            $databaseDecimal = $this->nullableDecimal($databaseValue);
+            $sourceDecimal = $this->nullableDecimal($sourceValue);
+            if ($databaseDecimal !== null && $sourceDecimal !== null) {
+                // shop_goods physical columns are DECIMAL(8,2), so compare the
+                // same value the database can actually persist.
+                return number_format($databaseDecimal, 2, '.', '')
+                    === number_format($sourceDecimal, 2, '.', '');
+            }
+        }
+
         return $this->normalizeComparisonValue((string) $databaseValue) === $this->normalizeComparisonValue((string) $sourceValue);
     }
     /**
@@ -4176,7 +4187,7 @@ class BikeproductsCatalogService
             $number *= 100;
         }
 
-        return rtrim(rtrim(number_format($number, 3, '.', ''), '0'), '.');
+        return rtrim(rtrim(number_format($number, 2, '.', ''), '0'), '.');
     }
 
     /** @return Collection<int, SupplierCatalogFieldMapping> */
