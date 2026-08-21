@@ -2769,7 +2769,7 @@ class BikeproductsCatalogService
             throw new \InvalidArgumentException('Резервные данные вариаций не найдены.');
         }
 
-        return DB::transaction(function () use ($run, $backup, $variations): array {
+        $result = DB::transaction(function () use ($run, $backup, $variations): array {
             foreach ($backup['goods'] ?? [] as $good) {
                 if (! empty($good['id'])) {
                     DB::table('shop_goods')->updateOrInsert(['id' => $good['id']], $good);
@@ -2813,6 +2813,24 @@ class BikeproductsCatalogService
 
             return ['affected' => count($variationIds), 'message' => 'Вариации и их оси восстановлены из резервной копии'];
         });
+
+        // This rollback intentionally restores rows through the query builder,
+        // bypassing Eloquent observers. Refresh the static feed and inform
+        // Yandex only after the database transaction has committed.
+        $goodIds = collect($backup['goods'] ?? [])
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values();
+
+        if ($goodIds->isNotEmpty()) {
+            \App\Jobs\RefreshYmlFeedJob::dispatch()->delay(now()->addSeconds(20));
+            $yandexSync = app(YandexProductsOfferSyncService::class);
+            $goodIds->each(fn (int $goodId) => $yandexSync->queueGood($goodId));
+        }
+
+        return $result;
     }
 
     /** @return array<string, int|string|bool|null> */
