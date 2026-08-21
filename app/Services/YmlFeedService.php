@@ -12,6 +12,27 @@ use Illuminate\Support\Facades\Log;
 class YmlFeedService
 {
     /**
+     * Returns the exact availability and price state used by the public YML
+     * offer. The Products API uses the same aggregate main-good offer IDs.
+     *
+     * @return array{offer_id: string, available: bool, price: ?float, old_price: ?float}
+     */
+    public function offerSnapshot(ShopGood $good): array
+    {
+        $priceData = $this->getOfferPriceData($good);
+        $available = (bool) $good->is_active
+            && $priceData !== null
+            && $this->getOfferStockValue($good) > 0;
+
+        return [
+            'offer_id' => (string) $good->id,
+            'available' => $available,
+            'price' => $available ? (float) $priceData['price'] : null,
+            'old_price' => $available && $priceData['oldprice'] !== null ? (float) $priceData['oldprice'] : null,
+        ];
+    }
+
+    /**
      * Генерация YML фида
      * 
      * @return array

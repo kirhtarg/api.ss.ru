@@ -8,6 +8,11 @@ use Illuminate\Support\Facades\Storage;
 
 class GoodsFeedController extends Controller
 {
+    public function getYandexProductsFeed(Request $request)
+    {
+        return $this->getGoodsFeed($request);
+    }
+
     public function getGoodsFeed(Request $request)
     {
         $fileName = 'exports/goods_feed.xml';

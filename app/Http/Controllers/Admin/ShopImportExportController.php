@@ -214,6 +214,35 @@ class ShopImportExportController extends Controller
         }
     }
 
+    public function getYandexProductsSettings(\App\Services\YandexProductsOfferSyncService $service): JsonResponse
+    {
+        $settings = $service->getSettings();
+
+        return response()->json(['success' => true, 'data' => [
+            ...$settings,
+            'oauth_token_masked' => $settings['oauth_token'] !== '' ? '********' : '',
+            'oauth_token' => '',
+            'feed_url' => rtrim(config('app.url'), '/').'/api/public/yandex-products-feed.xml',
+        ]]);
+    }
+
+    public function updateYandexProductsSettings(Request $request, \App\Services\YandexProductsOfferSyncService $service): JsonResponse
+    {
+        $data = $request->validate([
+            'enabled' => 'required|boolean',
+            'feed_id' => 'nullable|string|max:50',
+            'oauth_token' => 'nullable|string|max:1000',
+        ]);
+        $settings = $service->saveSettings($data);
+
+        return response()->json(['success' => true, 'message' => 'Настройки API Яндекс Товаров сохранены', 'data' => [
+            ...$settings,
+            'oauth_token_masked' => $settings['oauth_token'] !== '' ? '********' : '',
+            'oauth_token' => '',
+            'feed_url' => rtrim(config('app.url'), '/').'/api/public/yandex-products-feed.xml',
+        ]]);
+    }
+
     public function getYandexMarketStockSettings(\App\Services\YandexMarketStockService $stockService): JsonResponse
     {
         $settings = $stockService->getSettings();
