@@ -22,7 +22,13 @@ class YandexProductsFeedObserver implements ShouldHandleEventsAfterCommit
     public function updated(Model $model): void
     {
         if ($model->wasChanged(self::OFFER_FIELDS)) {
-            $this->queue($model);
+            RefreshYmlFeedJob::dispatch()->delay(now()->addSeconds(20));
+
+            $before = YandexProductsOfferStateObserver::pullBeforeState($model);
+            $after = app(YandexProductsOfferSyncService::class)->offerState($this->goodId($model));
+            if ($before === null || $before !== $after) {
+                app(YandexProductsOfferSyncService::class)->queueGood($this->goodId($model));
+            }
         }
     }
 

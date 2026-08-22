@@ -8,6 +8,7 @@ use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Observers\PartnerShopOrderObserver;
 use App\Observers\YandexProductsFeedObserver;
+use App\Observers\YandexProductsOfferStateObserver;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
@@ -35,6 +36,8 @@ class AppServiceProvider extends ServiceProvider
         // Регистрируем VK провайдер для Socialite
         Event::listen(SocialiteWasCalled::class, SocialiteWasCalledListener::class);
         ShopOrder::observe(PartnerShopOrderObserver::class);
+        ShopGood::observe(YandexProductsOfferStateObserver::class);
+        ShopGoodVariation::observe(YandexProductsOfferStateObserver::class);
         ShopGood::observe(YandexProductsFeedObserver::class);
         ShopGoodVariation::observe(YandexProductsFeedObserver::class);
 

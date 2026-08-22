@@ -52,6 +52,28 @@ class YandexProductsOfferSyncService
         SyncYandexProductsOfferJob::dispatch($goodId)->delay(now()->addSeconds(12));
     }
 
+    /**
+     * Returns the availability and price state that is meaningful to the
+     * Yandex Products API. Exact stock quantities are carried only by YML.
+     *
+     * @return array{available: bool, price: ?float, old_price: ?float}
+     */
+    public function offerState(int $goodId): array
+    {
+        $good = ShopGood::query()->with('variations')->find($goodId);
+        if (! $good) {
+            return ['available' => false, 'price' => null, 'old_price' => null];
+        }
+
+        $offer = app(YmlFeedService::class)->offerSnapshot($good);
+
+        return [
+            'available' => $offer['available'],
+            'price' => $offer['price'],
+            'old_price' => $offer['old_price'],
+        ];
+    }
+
     public function syncGood(int $goodId): void
     {
         if (! $this->isConfigured()) {
