@@ -22,10 +22,14 @@ class YandexProductsOfferStateObserver
             return;
         }
 
+        $yandexSync = app(YandexProductsOfferSyncService::class);
+        if (! $yandexSync->isConfigured()) {
+            return;
+        }
+
         // This observer deliberately runs before the SQL write. The feed
         // observer consumes this value after the enclosing transaction commits.
-        self::$beforeStates[spl_object_id($model)] = app(YandexProductsOfferSyncService::class)
-            ->offerState($this->goodId($model));
+        self::$beforeStates[spl_object_id($model)] = $yandexSync->offerState($this->goodId($model));
     }
 
     /** @return array{available: bool, price: ?float, old_price: ?float}|null */

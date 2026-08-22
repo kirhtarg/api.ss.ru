@@ -24,10 +24,15 @@ class YandexProductsFeedObserver implements ShouldHandleEventsAfterCommit
         if ($model->wasChanged(self::OFFER_FIELDS)) {
             RefreshYmlFeedJob::dispatch()->delay(now()->addSeconds(20));
 
+            $yandexSync = app(YandexProductsOfferSyncService::class);
+            if (! $yandexSync->isConfigured()) {
+                return;
+            }
+
             $before = YandexProductsOfferStateObserver::pullBeforeState($model);
-            $after = app(YandexProductsOfferSyncService::class)->offerState($this->goodId($model));
+            $after = $yandexSync->offerState($this->goodId($model));
             if ($before === null || $before !== $after) {
-                app(YandexProductsOfferSyncService::class)->queueGood($this->goodId($model));
+                $yandexSync->queueGood($this->goodId($model));
             }
         }
     }
@@ -36,13 +41,19 @@ class YandexProductsFeedObserver implements ShouldHandleEventsAfterCommit
     {
         $goodId = $this->goodId($model);
         RefreshYmlFeedJob::dispatch()->delay(now()->addSeconds(20));
-        app(YandexProductsOfferSyncService::class)->queueGood($goodId);
+        $yandexSync = app(YandexProductsOfferSyncService::class);
+        if ($yandexSync->isConfigured()) {
+            $yandexSync->queueGood($goodId);
+        }
     }
 
     private function queue(Model $model): void
     {
         RefreshYmlFeedJob::dispatch()->delay(now()->addSeconds(20));
-        app(YandexProductsOfferSyncService::class)->queueGood($this->goodId($model));
+        $yandexSync = app(YandexProductsOfferSyncService::class);
+        if ($yandexSync->isConfigured()) {
+            $yandexSync->queueGood($this->goodId($model));
+        }
     }
 
     private function goodId(Model $model): int
