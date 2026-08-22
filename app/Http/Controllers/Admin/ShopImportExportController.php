@@ -233,13 +233,42 @@ class ShopImportExportController extends Controller
             'feed_id' => 'nullable|string|max:50',
             'oauth_token' => 'nullable|string|max:1000',
         ]);
-        $settings = $service->saveSettings($data);
+        try {
+            if ($data['enabled']) {
+                $service->verifyCredentials($data);
+            }
+            $settings = $service->saveSettings($data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
 
         return response()->json(['success' => true, 'message' => 'Настройки API Яндекс Товаров сохранены', 'data' => [
             ...$settings,
             'oauth_token_masked' => $settings['oauth_token'] !== '' ? '********' : '',
             'oauth_token' => '',
             'feed_url' => rtrim(config('app.url'), '/').'/api/public/yandex-products-feed.xml',
+        ]]);
+    }
+
+    public function verifyYandexProductsSettings(Request $request, \App\Services\YandexProductsOfferSyncService $service): JsonResponse
+    {
+        $data = $request->validate([
+            'feed_id' => 'nullable|string|max:50',
+            'oauth_token' => 'nullable|string|max:1000',
+        ]);
+
+        try {
+            $result = $service->verifyCredentials($data);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
+        }
+
+        $expectedFeedUrl = rtrim(config('app.url'), '/').'/api/public/yandex-products-feed.xml';
+
+        return response()->json(['success' => true, 'message' => 'OAuth-токен и Feed ID подтверждены Яндексом', 'data' => [
+            ...$result,
+            'expected_feed_url' => $expectedFeedUrl,
+            'feed_url_matches' => rtrim($result['yandex_feed_url'], '/') === rtrim($expectedFeedUrl, '/'),
         ]]);
     }
 

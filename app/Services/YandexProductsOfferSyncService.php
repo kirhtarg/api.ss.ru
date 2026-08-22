@@ -43,6 +43,46 @@ class YandexProductsOfferSyncService
         return $this->getSettings();
     }
 
+    /** @return array{feed_id: string, yandex_feed_url: string} */
+    public function verifyCredentials(array $data): array
+    {
+        $current = $this->getSettings();
+        $feedId = trim((string) ($data['feed_id'] ?? $current['feed_id']));
+        $token = trim((string) ($data['oauth_token'] ?? '')) ?: $current['oauth_token'];
+
+        if (! ctype_digit($feedId)) {
+            throw new \InvalidArgumentException('Укажите числовой Feed ID Яндекс Товаров.');
+        }
+        if ($token === '') {
+            throw new \InvalidArgumentException('Укажите OAuth-токен Яндекс Товаров.');
+        }
+
+        try {
+            $response = Http::timeout(20)
+                ->acceptJson()
+                ->withToken($token, 'OAuth')
+                ->get(self::API_URL.'/feeds-info');
+        } catch (\Throwable $e) {
+            throw new \InvalidArgumentException('Не удалось обратиться к API Яндекс Товаров: '.$e->getMessage());
+        }
+
+        $body = $response->json() ?: [];
+        if (! $response->successful() || data_get($body, 'status') === 'ERROR') {
+            throw new \InvalidArgumentException('Яндекс не принял OAuth-токен: '.json_encode($body ?: $response->body(), JSON_UNESCAPED_UNICODE));
+        }
+
+        $feed = collect($body['feeds'] ?? [])
+            ->first(fn (array $item) => (string) ($item['feedId'] ?? '') === $feedId);
+        if (! $feed) {
+            throw new \InvalidArgumentException('Feed ID '.$feedId.' не найден среди фидов, доступных этому OAuth-токену.');
+        }
+
+        return [
+            'feed_id' => $feedId,
+            'yandex_feed_url' => (string) ($feed['feedUrl'] ?? ''),
+        ];
+    }
+
     public function queueGood(int $goodId): void
     {
         if ($goodId <= 0 || ! $this->isConfigured()) {
