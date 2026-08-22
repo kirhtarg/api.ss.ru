@@ -43,16 +43,12 @@ class YandexProductsOfferSyncService
         return $this->getSettings();
     }
 
-    /** @return array{feed_id: string, yandex_feed_url: string} */
-    public function verifyCredentials(array $data): array
+    /** @return array<int, array{feed_id: string, yandex_feed_url: string}> */
+    public function availableFeeds(array $data): array
     {
         $current = $this->getSettings();
-        $feedId = trim((string) ($data['feed_id'] ?? $current['feed_id']));
         $token = trim((string) ($data['oauth_token'] ?? '')) ?: $current['oauth_token'];
 
-        if (! ctype_digit($feedId)) {
-            throw new \InvalidArgumentException('Укажите числовой Feed ID Яндекс Товаров.');
-        }
         if ($token === '') {
             throw new \InvalidArgumentException('Укажите OAuth-токен Яндекс Товаров.');
         }
@@ -71,15 +67,34 @@ class YandexProductsOfferSyncService
             throw new \InvalidArgumentException('Яндекс не принял OAuth-токен: '.json_encode($body ?: $response->body(), JSON_UNESCAPED_UNICODE));
         }
 
-        $feed = collect($body['feeds'] ?? [])
-            ->first(fn (array $item) => (string) ($item['feedId'] ?? '') === $feedId);
+        return collect($body['feeds'] ?? [])
+            ->filter(fn ($item) => is_array($item) && isset($item['feedId']))
+            ->map(fn (array $item) => [
+                'feed_id' => (string) $item['feedId'],
+                'yandex_feed_url' => (string) ($item['feedUrl'] ?? ''),
+            ])
+            ->values()
+            ->all();
+    }
+
+    /** @return array{feed_id: string, yandex_feed_url: string} */
+    public function verifyCredentials(array $data): array
+    {
+        $current = $this->getSettings();
+        $feedId = trim((string) ($data['feed_id'] ?? $current['feed_id']));
+        if (! ctype_digit($feedId)) {
+            throw new \InvalidArgumentException('Укажите числовой Feed ID Яндекс Товаров.');
+        }
+
+        $feed = collect($this->availableFeeds($data))
+            ->first(fn (array $item) => $item['feed_id'] === $feedId);
         if (! $feed) {
             throw new \InvalidArgumentException('Feed ID '.$feedId.' не найден среди фидов, доступных этому OAuth-токену.');
         }
 
         return [
             'feed_id' => $feedId,
-            'yandex_feed_url' => (string) ($feed['feedUrl'] ?? ''),
+            'yandex_feed_url' => (string) ($feed['yandex_feed_url'] ?? ''),
         ];
     }
 

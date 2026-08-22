@@ -258,6 +258,11 @@ class ShopImportExportController extends Controller
         ]);
 
         try {
+            if (trim((string) ($data['feed_id'] ?? '')) === '') {
+                return response()->json(['success' => true, 'message' => 'OAuth-токен подтверждён. Выберите нужный фид.', 'data' => [
+                    'feeds' => $service->availableFeeds($data),
+                ]]);
+            }
             $result = $service->verifyCredentials($data);
         } catch (\InvalidArgumentException $e) {
             return response()->json(['success' => false, 'message' => $e->getMessage()], 422);
