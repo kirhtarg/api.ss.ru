@@ -249,8 +249,6 @@ class YmlFeedService
 
         $url = $this->getMainSiteUrl() . '/catalog/' . ($good->slug ?? $good->id);
         fwrite($handle, '                <url>' . htmlspecialchars($url) . '</url>' . PHP_EOL);
-        fwrite($handle, '                <count>' . $stock . '</count>' . PHP_EOL);
-
         // Цена. Для товаров с вариациями выгружаем минимальную актуальную цену активной вариации.
         $price = $priceData['price'];
         $oldPrice = $priceData['oldprice'];
