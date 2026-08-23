@@ -283,7 +283,9 @@ class YmlFeedService
 
         if ($images->isNotEmpty()) {
             $images = $images->sortBy('sort_order')->sortByDesc('is_main');
-            foreach ($images as $image) {
+            // Yandex Products accepts at most ten pictures in one offer.
+            // Keep the current main-image/sort ordering and omit the rest.
+            foreach ($images->take(10) as $image) {
                 $imgUrl = $this->getYmlImageUrl($image->file_path);
                 if ($imgUrl) {
                     fwrite($handle, '                <picture>' . htmlspecialchars($imgUrl) . '</picture>' . PHP_EOL);
