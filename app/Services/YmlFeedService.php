@@ -266,6 +266,11 @@ class YmlFeedService
             fwrite($handle, '                <categoryId>' . $categoryId . '</categoryId>' . PHP_EOL);
         }
 
+        // Yandex classifies some bicycle and moto offers as transport. Its
+        // transport-feed validator requires this numeric parameter; a neutral
+        // common value keeps the offer valid without changing its price data.
+        fwrite($handle, '                <param name="Конверсия">1</param>' . PHP_EOL);
+
         // Изображения
         $images = collect();
         if ($good->images->isNotEmpty()) {
