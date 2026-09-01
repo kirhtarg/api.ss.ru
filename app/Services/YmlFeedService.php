@@ -39,6 +39,9 @@ class YmlFeedService
      */
     public function generate()
     {
+        $handle = null;
+        $temporaryFullPath = null;
+
         try {
             // Увеличиваем лимиты для генерации большого файла
             ini_set('memory_limit', '512M');
@@ -52,17 +55,15 @@ class YmlFeedService
                 Storage::disk('public')->makeDirectory('exports');
             }
 
-            // Удаляем старый файл перед генерацией, чтобы избежать артефактов
-            if (Storage::disk('public')->exists($filepath)) {
-                Storage::disk('public')->delete($filepath);
-            }
-
-            // Используем прямой доступ к файлу для потоковой записи
+            // Собираем файл под уникальным временным именем. Нельзя очищать
+            // опубликованный файл до окончания генерации: робот Яндекса может
+            // читать его в этот момент и получит XML без закрывающего offers.
             $fullPath = Storage::disk('public')->path($filepath);
-            $handle = fopen($fullPath, 'w');
+            $temporaryFullPath = $fullPath . '.tmp-' . bin2hex(random_bytes(8));
+            $handle = fopen($temporaryFullPath, 'wb');
 
             if (!$handle) {
-                throw new \Exception("Не удалось открыть файл для записи: $fullPath");
+                throw new \Exception("Не удалось открыть временный файл для записи: $temporaryFullPath");
             }
 
             fwrite($handle, '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL);
@@ -142,7 +143,16 @@ class YmlFeedService
             fwrite($handle, '    </shop>' . PHP_EOL);
             fwrite($handle, '</yml_catalog>');
 
+            fflush($handle);
             fclose($handle);
+            $handle = null;
+
+            // rename в пределах одного каталога атомарно заменяет старую
+            // опубликованную версию уже готовой новой версией.
+            if (! rename($temporaryFullPath, $fullPath)) {
+                throw new \RuntimeException("Не удалось опубликовать YML-фид: $fullPath");
+            }
+            $temporaryFullPath = null;
 
             // Копируем на фронтенд, если путь настроен
             $this->copyToFrontend($filename);
@@ -159,7 +169,15 @@ class YmlFeedService
                 'download_url' => Storage::disk('public')->url($filepath),
             ];
 
-        } catch (\Exception $e) {
+        } catch (\Throwable $e) {
+            if (is_resource($handle)) {
+                fclose($handle);
+            }
+
+            if ($temporaryFullPath !== null && is_file($temporaryFullPath)) {
+                @unlink($temporaryFullPath);
+            }
+
             Log::error('YML Export Error: ' . $e->getMessage());
             return [
                 'success' => false,
