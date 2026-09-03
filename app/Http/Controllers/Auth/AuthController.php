@@ -25,7 +25,7 @@ class AuthController extends Controller
             $request->validate([
                 'name' => 'required|string|max:255',
                 'email' => 'required|string|email|max:255|unique:users',
-                'password' => 'required|string|min:8|confirmed',
+                'password' => ['required', 'string', 'confirmed', 'regex:/[A-Z]/', 'regex:/[a-z]/'],
             ]);
 
             // НЕ создаем пользователя сразу - сохраняем данные во временном хранилище
@@ -97,7 +97,7 @@ class AuthController extends Controller
             $request->validate([
                 'name' => 'required|string|max:255',
                 'email' => 'required|string|email|max:255|unique:users',
-                'password' => 'nullable|string|min:8|confirmed', // Пароль опционален (для быстрой регистрации)
+                'password' => ['nullable', 'string', 'confirmed', 'regex:/[A-Z]/', 'regex:/[a-z]/'], // Пароль опционален (для быстрой регистрации)
                 'phone' => 'nullable|string|max:20', // Телефон опционален
             ]);
 
@@ -191,7 +191,7 @@ class AuthController extends Controller
             $request->validate([
                 'name' => 'required|string|max:255',
                 'email' => 'required|string|email|max:255|unique:users',
-                'password' => 'required|string|min:8|confirmed',
+                'password' => ['required', 'string', 'confirmed', 'regex:/[A-Z]/', 'regex:/[a-z]/'],
             ]);
 
             // Создаем пользователя

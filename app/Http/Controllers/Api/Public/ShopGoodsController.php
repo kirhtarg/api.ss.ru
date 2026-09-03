@@ -255,6 +255,13 @@ class ShopGoodsController extends Controller
      */
     private function applyCustomStockFilter($query, $stockFilter)
     {
+        // Явный фильтр магазина: учитываем только основной остаток товара.
+        // Вариации, удалённые склады и режимы показа здесь намеренно не участвуют.
+        if ($stockFilter === 'store_stock') {
+            $query->where('stock_quantity', '>', 0);
+            return;
+        }
+
         $shopRemoteQ = Setting::where('key', 'shop_remote_q')->first();
         $remoteQ = $shopRemoteQ ? (int) $shopRemoteQ->value : 1;
 
@@ -625,6 +632,10 @@ class ShopGoodsController extends Controller
     public function index(Request $request): JsonResponse
     {
         try {
+            // Старые ссылки используют `stock`; приводим его к каноническому имени.
+            if (! $request->has('stock_filter') && $request->has('stock')) {
+                $request->merge(['stock_filter' => $request->input('stock')]);
+            }
 
             $query = ShopGood::with([
                 'variations' => function ($query) {
@@ -1015,12 +1026,18 @@ class ShopGoodsController extends Controller
                     foreach ($attributes as $attributeId => $values) {
                         if (is_array($values) && ! empty($values)) {
                             // Фильтруем товары, у которых есть вариация с указанным атрибутом и одним из выбранных значений
-                            $query->whereHas('variations', function ($q) use ($attributeId, $values) {
+                            $query->whereHas('variations', function ($q) use ($attributeId, $values, $request) {
                                 $q->where('is_active', true)
                                     ->whereHas('attributeValues', function ($avQ) use ($attributeId, $values) {
                                         $avQ->where('attribute_id', $attributeId)
                                             ->whereIn('value', $values);
                                     });
+
+                                // При фильтре «В наличии» наличие должно быть у той же
+                                // вариации, которая соответствует выбранному атрибуту.
+                                if ($request->input('stock_filter') === 'in_stock') {
+                                    $q->where('stock_quantity', '>', 0);
+                                }
                             });
                         }
                     }
@@ -2619,8 +2636,6 @@ class ShopGoodsController extends Controller
         ];
     }
 }
-
-
 
 
 
