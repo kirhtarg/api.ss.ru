@@ -722,20 +722,10 @@ class ShopGoodsController extends Controller
             }
 
             $query->where(function ($mainQuery) use ($min, $max) {
-                // Вариант 1: Товары с вариациями - проверяем остатки вариаций
-                $mainQuery->whereHas('variations', function ($varQ) use ($min, $max) {
-                    if ($min !== null && $max !== null) {
-                        if ($min === $max) {
-                            $varQ->where('stock_quantity', '=', $min);
-                        } else {
-                            $varQ->whereBetween('stock_quantity', [$min, $max]);
-                        }
-                    } elseif ($min !== null) {
-                        $varQ->where('stock_quantity', '>=', $min);
-                    } elseif ($max !== null) {
-                        $varQ->where('stock_quantity', '<=', $max);
-                    }
-                })
+                // Вариант 1: товары с вариациями — фильтруем фактическую сумму основного остатка
+                $mainQuery->whereHas('variations')
+                    ->whereRaw('(SELECT COALESCE(SUM(stock_quantity), 0) FROM shop_good_variations WHERE good_id = shop_goods.id) >= ?', [$min ?? 0])
+                    ->when($max !== null, fn ($q) => $q->whereRaw('(SELECT COALESCE(SUM(stock_quantity), 0) FROM shop_good_variations WHERE good_id = shop_goods.id) <= ?', [$max]))
                 // Вариант 2: Товары без вариаций - проверяем остатки основного товара
                     ->orWhere(function ($noVariationsQuery) use ($min, $max) {
                         $noVariationsQuery->whereDoesntHave('variations')
