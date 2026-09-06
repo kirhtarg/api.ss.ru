@@ -2449,9 +2449,29 @@ class ProcessExportJob implements ShouldQueue
                 Storage::put($permanentFilePath, $xmlContent);
                 $fileSize = strlen($xmlContent);
 
-                // Дополнительно генерируем файл с остатками
+                // Остаточный фид должен содержать все объявления, которые
+                // потенциально присутствуют на Avito, включая товары с нулевым
+                // остатком. Если использовать отфильтрованный набор $goods,
+                // товар после обнуления исчезает из XML и Avito сохраняет его
+                // старый остаток. Для ручной выгрузки выбранных товаров
+                // сохраняем ограничение selected_ids.
                 try {
-                    $stocksXml = $service->generateStocks($goods);
+                    $stockQuery = ShopGood::query()
+                        ->where('is_active', true)
+                        ->where('is_show', true);
+                    $selectedStockIds = data_get($config, 'filters.selected_ids');
+                    if (is_array($selectedStockIds) && $selectedStockIds !== []) {
+                        $selectedStockIds = collect($selectedStockIds)
+                            ->filter(fn ($id) => is_numeric($id) && (int) $id > 0)
+                            ->map(fn ($id) => (int) $id)
+                            ->values()
+                            ->all();
+                        if ($selectedStockIds !== []) {
+                            $stockQuery->whereIn('id', $selectedStockIds);
+                        }
+                    }
+                    $stockGoods = $stockQuery->with('variations')->get();
+                    $stocksXml = $service->generateStocks($stockGoods);
                     Storage::put('exports/avito_stocks.xml', $stocksXml);
                 } catch (\Exception $e) {
                     \Illuminate\Support\Facades\Log::error('Avito Stocks Export failed: ' . $e->getMessage());

@@ -71,6 +71,12 @@ class YandexMarketPayloadBuilderTest extends TestCase
         $this->assertSame(77, data_get(collect($offer['parameterValues'])->firstWhere('parameterId', 2), 'valueId'));
         $this->assertSame('9 дюймов', data_get(collect($offer['parameterValues'])->firstWhere('parameterId', 2), 'value'));
         $this->assertSame('shop-good-10', data_get(collect($offer['parameterValues'])->firstWhere('parameterId', 200), 'value'));
+        $this->assertArrayHasKey('marketCategoryId', $offer);
+        $this->assertArrayHasKey('parameterValues', $offer);
+        $this->assertArrayNotHasKey('category', $offer);
+        $this->assertArrayNotHasKey('customsCommodityCode', $offer);
+        $this->assertArrayNotHasKey('firstVideoAsCover', $offer);
+        $this->assertArrayNotHasKey('params', $offer);
         $this->assertSame('9"', data_get(collect($built['display_parameters'])->firstWhere('id', 2), 'source_value'));
         $this->assertSame('9 дюймов', data_get(collect($built['display_parameters'])->firstWhere('id', 2), 'value'));
         $this->assertSame([], $built['errors']);
