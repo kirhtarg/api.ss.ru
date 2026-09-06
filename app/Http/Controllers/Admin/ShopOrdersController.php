@@ -93,7 +93,12 @@ class ShopOrdersController extends Controller
             if ($request->filled('product_search')) {
                 $productSearch = addcslashes(trim((string) $request->get('product_search')), '%_\\');
                 if ($productSearch !== '') {
-                    $query->where('items', 'like', '%'.$productSearch.'%');
+                    // JSON-поле может иметь бинарную сортировку, из-за чего
+                    // поиск «чехол» не находил «Чехол». Нормализуем обе стороны.
+                    $query->whereRaw(
+                        'LOWER(CAST(items AS CHAR)) LIKE LOWER(?)',
+                        ['%'.$productSearch.'%']
+                    );
                 }
             }
 
