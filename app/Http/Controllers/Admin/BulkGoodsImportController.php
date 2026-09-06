@@ -60,6 +60,42 @@ class BulkGoodsImportController extends Controller
         return $this->normalizeText($text);
     }
 
+    /**
+     * Возвращает сохранённое написание числового SKU из базы.
+     * Excel часто превращает артикулы вроде 0843346124289 в 843346124289,
+     * поэтому сначала сравниваем числовую часть без ведущих нулей, а затем
+     * используем найденное значение во всех последующих ветках импорта.
+     */
+    private function resolveExistingSku(string $sku, ?string $supplier = null): string
+    {
+        $sku = trim($sku);
+        if ($sku === '' || ! preg_match('/^\d+$/', $sku)) {
+            return $sku;
+        }
+
+        $find = function ($model, ?string $supplierFilter = null) use ($sku, $supplier) {
+            $query = $model::query()
+                ->where(function ($q) use ($sku) {
+                    $q->where('sku', $sku)
+                        ->orWhere(function ($q) use ($sku) {
+                            $q->whereRaw("sku REGEXP '^[0-9]+$'")
+                                ->whereRaw('CAST(sku AS UNSIGNED) = CAST(? AS UNSIGNED)', [$sku]);
+                        });
+                });
+            if ($supplierFilter !== null && $supplierFilter !== '') {
+                $query->where('supplier', $supplierFilter);
+            }
+            return $query->orderBy('id')->first();
+        };
+
+        $match = $find(ShopGoodVariation::class, $supplier) ?: $find(ShopGood::class, $supplier);
+        if (! $match && $supplier !== null && $supplier !== '') {
+            $match = $find(ShopGoodVariation::class) ?: $find(ShopGood::class);
+        }
+
+        return $match && filled($match->sku) ? trim((string) $match->sku) : $sku;
+    }
+
     private function normalizeStockSource($source): ?string
     {
         $source = trim((string) $source);
@@ -460,6 +496,10 @@ class BulkGoodsImportController extends Controller
                             $supplierName = $trimmed;
                         }
                     }
+
+                    // Нормализуем SKU до поиска товара/вариации. Это позволяет
+                    // сопоставить 843346124289 с сохранённым 0843346124289.
+                    $sku = $this->resolveExistingSku($sku, $supplierName);
 
                     if ($stockSource && $stockImportRunId) {
                         $goodData['_stock_source'] = $stockSource;
