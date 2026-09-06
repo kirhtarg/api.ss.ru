@@ -903,6 +903,7 @@ class ShopGoodVariationsController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'nullable|string|max:255',
             'sku' => 'nullable|string|max:255',
+            'supplier' => 'nullable|string|max:255',
             'price' => 'required|numeric|min:0',
             'sale_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'nullable|integer|min:0',
@@ -944,6 +945,7 @@ class ShopGoodVariationsController extends Controller
                 'good_id' => $goodId,
                 'name' => $variationName,
                 'sku' => $variationSku,
+                'supplier' => $request->filled('supplier') ? trim((string) $request->get('supplier')) : null,
                 'price' => $request->get('price'),
                 'sale_price' => $request->get('sale_price'),
                 'stock_quantity' => $request->get('stock_quantity'),
@@ -1008,7 +1010,8 @@ class ShopGoodVariationsController extends Controller
                     sort($existingAttributeValueIds);
 
                     // РЎСЂР°РІРЅРёРІР°РµРј РєРѕРјР±РёРЅР°С†РёРё Р°С‚СЂРёР±СѓС‚РѕРІ
-                    if ($requestAttributeValueIds === $existingAttributeValueIds) {
+                    $sameSupplier = (string) ($existingVariation->supplier ?? '') === (string) ($variationData['supplier'] ?? '');
+                    if ($sameSupplier && $requestAttributeValueIds === $existingAttributeValueIds) {
                         // Р¤РѕСЂРјРёСЂСѓРµРј СЃС‚СЂРѕРєСѓ РєРѕРјР±РёРЅР°С†РёРё РґР»СЏ РѕС‚РѕР±СЂР°Р¶РµРЅРёСЏ
                         $combinationParts = [];
                         foreach ($request->get('attributes') as $attr) {
@@ -2108,7 +2111,7 @@ class ShopGoodVariationsController extends Controller
         $validator = Validator::make($request->all(), [
             'variation_ids' => 'required|array',
             'variation_ids.*' => 'exists:shop_good_variations,id',
-            'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping,update_dimensions',
+            'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping,update_dimensions,change_attribute_value',
             'data' => 'nullable|array',
         ]);
 
@@ -2171,6 +2174,34 @@ class ShopGoodVariationsController extends Controller
                     foreach ($variations as $variation) {
                         $variation->remote_stock_quantity = $remoteStockValue ? (string) $remoteStockValue : null;
                         $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'change_attribute_value':
+                    $attributeId = (int) ($data['attribute_id'] ?? 0);
+                    $valueId = (int) ($data['value_id'] ?? 0);
+                    $valueValid = DB::table('shop_variation_attribute_values')
+                        ->where('id', $valueId)->where('attribute_id', $attributeId)->exists();
+                    if (! $attributeId || ! $valueValid) {
+                        throw new \InvalidArgumentException('Значение не принадлежит выбранному атрибуту.');
+                    }
+                    foreach ($variations as $variation) {
+                        $assignmentIds = DB::table('shop_variation_attributes_values as vav')
+                            ->join('shop_variation_attribute_values as av', 'av.id', '=', 'vav.attribute_value_id')
+                            ->where('vav.variation_id', $variation->id)
+                            ->where('av.attribute_id', $attributeId)
+                            ->pluck('vav.id');
+                        if ($assignmentIds->isNotEmpty()) {
+                            DB::table('shop_variation_attributes_values')->whereIn('id', $assignmentIds)->update([
+                                'attribute_value_id' => $valueId, 'updated_at' => now(),
+                            ]);
+                        } else {
+                            DB::table('shop_variation_attributes_values')->insert([
+                                'variation_id' => $variation->id, 'attribute_value_id' => $valueId,
+                                'created_at' => now(), 'updated_at' => now(),
+                            ]);
+                        }
                         $updatedCount++;
                     }
                     break;
