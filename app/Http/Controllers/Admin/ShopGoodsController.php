@@ -2783,7 +2783,7 @@ class ShopGoodsController extends Controller
         $validator = Validator::make($rawJsonData, [
             'ids' => $idsRules,
             'ids.*' => $idsItemRule,
-            'action' => 'required|in:activate,deactivate,delete,delete_without_supplier,delete_without_images,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_fast_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_non_main_images,delete_zero_stock_no_media',
+            'action' => 'required|in:activate,deactivate,delete,delete_without_supplier,delete_without_images,update_categories,update_brands,update_tags,update_properties,update_stock,update_remote_stock,update_fast_remote_stock,update_price,update_sale_price,update_demping_price,toggle_show_demping,toggle_fields,update_label,remove_after_symbol,replace_text,update_dimensions,enable_preorder,disable_preorder,clear_by_tags,clear_by_suppliers,delete_images,delete_non_main_images,delete_zero_stock_no_media,set_supplier',
             'data' => 'nullable|array',
             'data.field' => 'nullable|in:name,description,short_description',
             'data.mode' => 'nullable|in:exact,start_end',
@@ -2802,6 +2802,7 @@ class ShopGoodsController extends Controller
             'data.start' => 'nullable|string',
             'data.end' => 'nullable|string',
             'data.normalize_spaces' => 'nullable|boolean',
+            'data.supplier' => 'nullable|string|max:255',
         ]);
 
         if ($validator->fails()) {
@@ -3204,6 +3205,13 @@ class ShopGoodsController extends Controller
 
                     // Явно убеждаемся, что товар не удаляется - просто продолжаем цикл
                     // Товар остается в базе данных, даже если у него не осталось вариаций
+                    continue;
+                }
+
+                if ($action === 'set_supplier') {
+                    $supplier = trim((string) ($data['supplier'] ?? '')) ?: null;
+                    $good->update(['supplier' => $supplier]);
+                    ShopGoodVariation::where('good_id', $good->id)->update(['supplier' => $supplier]);
                     continue;
                 }
 
@@ -7879,6 +7887,7 @@ class ShopGoodsController extends Controller
                             'good_id' => $targetGood->id,
                             'name' => $sourceVariation->name,
                             'sku' => $sourceVariation->sku,
+                            'supplier' => $sourceVariation->supplier,
                             'price' => $sourceVariation->price,
                             'sale_price' => $sourceVariation->sale_price,
                             'demping_price' => $sourceVariation->demping_price,
