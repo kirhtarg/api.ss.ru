@@ -354,7 +354,6 @@ class BikeproductsCatalogService
             ->keyBy(fn (ShopGood $good) => $this->normalizeSku($good->sku));
         $singleGoodsBySourceGroup = ShopGood::query()
             ->where('supplier', $supplierName)
-            ->doesntHave('variations')
             ->get(['id', 'name', 'sku'])
             ->groupBy(fn (ShopGood $good) => $this->normalizeSourceGroupKey($this->sourceGroupName($good->name, $good->sku)));
         $parentGoodsBySourceGroup = [];
@@ -460,7 +459,7 @@ class BikeproductsCatalogService
                     $parentSku = $this->nullableString($item->external_group_key) ?? (string) $sourceSku;
                     $good = $match && $match['type'] === 'good' ? $match['model'] : ($parentGoodsBySourceGroup[$groupKey] ?? null);
                     if (! $good && $item->clean_name) {
-                        $candidates = ShopGood::query()->where('supplier', $supplierName)->where('name', $item->clean_name)->doesntHave('variations')->limit(2)->get();
+                        $candidates = ShopGood::query()->where('supplier', $supplierName)->where('name', $item->clean_name)->limit(2)->get();
                         $good = $candidates->count() === 1 ? $candidates->first() : null;
                     }
                     if (($sourceGroupCounts[$groupKey] ?? 0) === 1 && $good && ! ShopGoodVariation::query()->where('good_id', $good->id)->exists()) {
@@ -482,7 +481,7 @@ class BikeproductsCatalogService
                         $good = ShopGood::query()->where('supplier', $supplierName)->where('sku', $parentSku)->first();
                     }
                     if (! $good && $item->clean_name) {
-                        $candidates = ShopGood::query()->where('supplier', $supplierName)->where('name', $item->clean_name)->doesntHave('variations')->limit(2)->get();
+                        $candidates = ShopGood::query()->where('supplier', $supplierName)->where('name', $item->clean_name)->limit(2)->get();
                         $good = $candidates->count() === 1 ? $candidates->first() : null;
                     }
                     if (! $good) {
@@ -823,10 +822,42 @@ class BikeproductsCatalogService
                         : collect($this->mappedGoodAttributes($item, $mappings))->only($targets)->all();
                     if ($values === []) { $skipped++; $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_mapped_values', ['scope' => $scope, 'source_sku' => $sourceSku, 'targets' => $targets]); continue; }
                     $model = $match['model'];
+                    // Do not count a row as updated when the supplier value is
+                    // already in the database.  Previously Eloquent's update()
+                    // was called for every selected row and the audit log then
+                    // reported before==after as a successful change.
+                    $values = collect($values)
+                        ->filter(fn ($value, string $field) => ! $this->mappedGoodValuesMatch($field, $model->{$field} ?? null, $value))
+                        ->all();
+                    if ($values === []) {
+                        $skipped++;
+                        $actionLog[] = $this->catalogActionLogRow($item, 'skipped', 'no_field_changes', [
+                            'scope' => $scope,
+                            'source_sku' => $sourceSku,
+                            'match_type' => $match['type'],
+                            'good_id' => $match['type'] === 'variation' ? $model->good_id : $model->id,
+                            'variation_id' => $match['type'] === 'variation' ? $model->id : null,
+                            'targets' => $targets,
+                        ]);
+                        continue;
+                    }
                     $fieldChanges = $this->modelFieldChanges($model, $values);
-                    $model->update($values);
+                    $table = $match['type'] === 'variation' ? 'shop_good_variations' : 'shop_goods';
+                    $key = $model->id;
+                    $updatedRows = DB::table($table)->where('id', $key)->update([...$values, 'updated_at' => now()]);
+                    $persisted = DB::table($table)->where('id', $key)->first(array_keys($values));
+                    $persistedValues = collect(array_keys($values))->mapWithKeys(
+                        fn (string $field) => [$field => $persisted->{$field} ?? null]
+                    )->all();
+                    $failedFields = collect($values)
+                        ->filter(fn ($value, string $field) => ! $this->mappedGoodValuesMatch($field, $persistedValues[$field] ?? null, $value))
+                        ->keys()->values()->all();
+                    if ($failedFields !== []) {
+                        throw new \RuntimeException('База данных не сохранила поля записи #'.$key.': '.implode(', ', $failedFields).'.');
+                    }
+                    $model->forceFill($persistedValues);
                     $affected++;
-                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', $scope === 'prices' ? 'mapped_prices_updated' : ($scope === 'zero_stocks' ? 'mapped_stocks_zeroed' : 'mapped_stocks_updated'), ['scope' => $scope, 'match_type' => $match['type'], 'good_id' => $match['type'] === 'variation' ? $model->good_id : $model->id, 'variation_id' => $match['type'] === 'variation' ? $model->id : null, 'fields' => $fieldChanges]);
+                    $actionLog[] = $this->catalogActionLogRow($item, 'updated', $scope === 'prices' ? 'mapped_prices_updated' : ($scope === 'zero_stocks' ? 'mapped_stocks_zeroed' : 'mapped_stocks_updated'), ['scope' => $scope, 'match_type' => $match['type'], 'good_id' => $match['type'] === 'variation' ? $model->good_id : $model->id, 'variation_id' => $match['type'] === 'variation' ? $model->id : null, 'fields' => $fieldChanges, 'saved_values' => $persistedValues, 'sql_affected_rows' => $updatedRows]);
                 }
             });
             return ['affected' => $affected, 'skipped' => $skipped, 'message' => $scope === 'prices' ? 'Цены обновлены' : ($scope === 'zero_stocks' ? 'Остатки обнулены' : 'Остатки обновлены'), 'log' => $actionLog];
@@ -3609,23 +3640,28 @@ class BikeproductsCatalogService
         // stays true for a single-field filter: otherwise a variation with
         // the same SKU can make an already correct parent description appear
         // out of sync and later send an invalid bulk update.
+        $isPriceStockAudit = collect($onlyTargets)->intersect([
+            'price', 'sale_price', 'demping_price',
+            'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity',
+        ])->isNotEmpty();
         $allMatches = $this->resolveSkuMatches(
             $allSourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
             $snapshot->supplier_code,
         );
         $sourceItems = $allSourceItems
-            ->reject(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item))
-            ->filter(function (SupplierCatalogItem $item) use ($allMatches, $snapshot): bool {
+            ->when(! $isPriceStockAudit, fn (Collection $items) => $items->reject(fn (SupplierCatalogItem $item) => $this->isSourceVariationItem($item)))
+            ->filter(function (SupplierCatalogItem $item) use ($allMatches, $snapshot, $isPriceStockAudit): bool {
                 $sku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
                 $match = $allMatches->get($sku) ?? $allMatches->get($this->normalizeSku($sku));
 
-                return $match === null || $match['type'] === 'good';
+                return $isPriceStockAudit || $match === null || $match['type'] === 'good';
             })
             ->values();
         $matches = $this->resolveSkuMatches(
             $sourceItems->map(fn (SupplierCatalogItem $item) => $this->sourceSkuForItem($item, $snapshot->supplier_code)),
             $snapshot->supplier_code,
-        )->filter(fn (array $match) => $match['type'] === 'good');
+            $isPriceStockAudit,
+        )->when(! $isPriceStockAudit, fn (Collection $items) => $items->filter(fn (array $match) => $match['type'] === 'good'));
         $databaseDuplicateSkuGroups = collect();
         $mappings = SupplierCatalogFieldMapping::query()
             ->where('supplier_code', $snapshot->supplier_code)
@@ -3651,7 +3687,7 @@ class BikeproductsCatalogService
 
         foreach ($sourceItems as $item) {
             $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
-            $match = $matches->get($sourceSku);
+            $match = $matches->get($sourceSku) ?? $matches->get($this->normalizeSku($sourceSku));
             $duplicateSkuVariations = $this->duplicateVariationGroupForSourceSku($sourceSku, $snapshot->supplier_code, $databaseDuplicateSkuGroups);
             $singleGoodCandidates = ! $match && ! $this->isSourceVariationItem($item)
                 ? $singleGoodsBySourceGroup->get($this->normalizeSourceGroupKey($item->clean_name ?: $this->sourceGroupName($item->name, $item->external_sku)), collect())
@@ -3660,7 +3696,9 @@ class BikeproductsCatalogService
             $good = $match
                 ? $goods->get($match['type'] === 'good' ? $match['model']->id : $match['model']->good_id)
                 : $singleGoodByName;
-            $comparisonModel = $good;
+            $comparisonModel = $match && $match['type'] === 'variation'
+                ? $match['model']
+                : $good;
             $differences = [];
             if (! $good) {
                 foreach ($mappings as $mapping) {
@@ -3728,14 +3766,14 @@ class BikeproductsCatalogService
                 'source_name' => $item->name,
                 'database_match_type' => $match['type'] ?? ($singleGoodByName ? 'good_name' : null),
                 'database_matched_by_name' => $singleGoodByName !== null,
-                'database_value_source' => 'good',
+                'database_value_source' => $match && $match['type'] === 'variation' ? 'variation' : 'good',
                 'database_good_id' => $good?->id,
                 'database_name' => $good?->name,
                 'database_slug' => $good?->slug,
                 'database_sku' => $match
                     ? (string) ($match['model']->sku ?? '')
                     : (string) ($good?->sku ?? ''),
-                'database_variation_id' => null,
+                'database_variation_id' => $match && $match['type'] === 'variation' ? $match['model']->id : null,
                 'database_variation_axes' => [],
                 // Show the complete database stock state in the price/stock audit,
                 // independently of which stock fields were mapped from the file.
@@ -5509,7 +5547,7 @@ class BikeproductsCatalogService
     {
         $targets = $onlyTargets === null ? 'goods' : implode(',', $onlyTargets);
 
-        return 'supplier-catalog:good-audit-base:v48:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
+        return 'supplier-catalog:good-audit-base:v49:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot).':'.sha1($targets);
     }
 
     private function snapshotAuditCacheVersion(SupplierCatalogSnapshot $snapshot): string
