@@ -87,6 +87,16 @@ class ShopOrdersController extends Controller
                 });
             }
 
+            // Отдельный поиск по сохранённым позициям заказа. Позиции хранятся
+            // в JSON, поэтому ищем по названию товара, SKU и значениям
+            // вариации, не смешивая этот запрос с поиском клиента/заказа.
+            if ($request->filled('product_search')) {
+                $productSearch = addcslashes(trim((string) $request->get('product_search')), '%_\\');
+                if ($productSearch !== '') {
+                    $query->where('items', 'like', '%'.$productSearch.'%');
+                }
+            }
+
             // Фильтрация по статусам (по имени статуса)
             if ($request->filled('status')) {
                 $statuses = $request->get('status');
@@ -762,6 +772,7 @@ class ShopOrdersController extends Controller
                 'is_restore' => 'sometimes|boolean',
                 'take_to_work' => 'sometimes|boolean',
                 'comment' => 'nullable|string|max:2000',
+                'reset_bonus_balance' => 'nullable|boolean',
                 'restore_items' => 'sometimes|array',
                 'restore_items.*.good_id' => 'required_with:restore_items|integer',
                 'restore_items.*.variation_id' => 'nullable|integer',
@@ -1181,6 +1192,7 @@ class ShopOrdersController extends Controller
             $bonusPoints = $request->has('bonus_points')
                 ? (int) $request->get('bonus_points')
                 : (int) ($order->order_bonus_points ?? 0);
+            $resetBonusBalance = $request->boolean('reset_bonus_balance');
 
             // Получаем текущее количество бонусов пользователя для ответа
             $currentBonusPoints = 0;
@@ -1201,14 +1213,35 @@ class ShopOrdersController extends Controller
                 ]);
             }
 
+            // Явное обнуление счёта выполняется отдельным подтверждённым
+            // сценарием и полностью отключает начисление/списание за этот шаг.
+            if ($resetBonusBalance && $order->user_id) {
+                $userBonus = \App\Models\UserBonus::getOrCreateForUser($order->user_id);
+                $userBonus->points = 0;
+                $userBonus->save();
+                $bonusPoints = 0;
+            }
+
             // Работа с бонусами только для зарегистрированных пользователей
-            if ($order->user_id && $bonusPoints > 0) {
+            if ($order->user_id && $bonusPoints > 0 && ! $resetBonusBalance) {
                 $userBonus = \App\Models\UserBonus::getOrCreateForUser($order->user_id);
                 $bonusAction = $request->get('bonus_action', $newPayedStatus ? 'accrual' : 'revocation');
 
-                if ($newPayedStatus) {
+                if ($newPayedStatus && $bonusPoints > 0) {
                     // Меняем статус на ОПЛАЧЕНО
                     if ($bonusAction === 'spending') {
+                        if ($userBonus->points < $bonusPoints) {
+                            return response()->json([
+                                'success' => false,
+                                'code' => 'insufficient_bonus_points',
+                                'message' => 'Недостаточно бонусных баллов для списания.',
+                                'data' => [
+                                    'current_bonus_points' => (int) $userBonus->points,
+                                    'required_bonus_points' => $bonusPoints,
+                                    'can_reset_bonus_balance' => true,
+                                ],
+                            ], 422);
+                        }
                         // Списание бонусов (например, повторное после отмены)
                         $userBonus->spendPoints(
                             $bonusPoints,
