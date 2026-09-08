@@ -409,7 +409,9 @@ class UploadController extends Controller
                 }
 
                 // Сохраняем обработанное изображение
-                file_put_contents($storageFullPath, $imageData);
+                if (file_put_contents($storageFullPath, $imageData) === false || !file_exists($storageFullPath)) {
+                    throw new \RuntimeException('Не удалось сохранить встроенное изображение: '.$storageFullPath);
+                }
 
                 return $fullPath;
             } else {
@@ -444,7 +446,9 @@ class UploadController extends Controller
                 }
 
                 // Сохраняем обработанное изображение
-                file_put_contents($storageFullPath, $imageData);
+                if (file_put_contents($storageFullPath, $imageData) === false || !file_exists($storageFullPath)) {
+                    throw new \RuntimeException('Не удалось сохранить встроенное изображение: '.$storageFullPath);
+                }
 
                 return $fullPath;
             }
