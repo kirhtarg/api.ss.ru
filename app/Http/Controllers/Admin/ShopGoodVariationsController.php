@@ -2111,7 +2111,7 @@ class ShopGoodVariationsController extends Controller
         $validator = Validator::make($request->all(), [
             'variation_ids' => 'required|array',
             'variation_ids.*' => 'exists:shop_good_variations,id',
-            'action' => 'required|in:delete,change_stock,change_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping,update_dimensions,change_attribute_value,set_supplier',
+            'action' => 'required|in:delete,change_stock,change_remote_stock,change_fast_remote_stock,change_price,change_sale_price,change_demping_price,activate,deactivate,enable_demping,disable_demping,update_dimensions,change_attribute_value,set_supplier',
             'data' => 'nullable|array',
         ]);
 
@@ -2173,6 +2173,15 @@ class ShopGoodVariationsController extends Controller
                     $remoteStockValue = $data['value'] ?? null;
                     foreach ($variations as $variation) {
                         $variation->remote_stock_quantity = $remoteStockValue ? (string) $remoteStockValue : null;
+                        $variation->save();
+                        $updatedCount++;
+                    }
+                    break;
+
+                case 'change_fast_remote_stock':
+                    $fastRemoteStockValue = $data['value'] ?? null;
+                    foreach ($variations as $variation) {
+                        $variation->fast_remote_stock_quantity = $fastRemoteStockValue ? (string) $fastRemoteStockValue : null;
                         $variation->save();
                         $updatedCount++;
                     }
