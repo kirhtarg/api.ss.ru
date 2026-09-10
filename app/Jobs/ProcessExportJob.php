@@ -2474,8 +2474,24 @@ class ProcessExportJob implements ShouldQueue
                         }
                     }
                     $stockGoods = $stockQuery->with('variations')->get();
+                    // Не допускаем тихого формирования пустого stock-фида:
+                    // основной фид уже содержит $goods, поэтому при неожиданно
+                    // пустом втором запросе используем тот же набор товаров.
+                    if ($stockGoods->isEmpty() && $goods->isNotEmpty()) {
+                        $stockGoods = $goods;
+                    }
                     $stocksXml = $service->generateStocks($stockGoods);
-                    Storage::put('exports/avito_stocks.xml', $stocksXml);
+                    if (!is_string($stocksXml) || trim($stocksXml) === '' ||
+                        ($stockGoods->isNotEmpty() && substr_count($stocksXml, '<item>') === 0)) {
+                        throw new \RuntimeException('Фид остатков получился пустым при наличии товаров');
+                    }
+                    if (!Storage::put('exports/avito_stocks.xml', $stocksXml)) {
+                        throw new \RuntimeException('Не удалось сохранить фид остатков');
+                    }
+                    Log::info('Avito stocks feed generated', [
+                        'goods_count' => $stockGoods->count(),
+                        'bytes' => strlen($stocksXml),
+                    ]);
                 } catch (\Exception $e) {
                     \Illuminate\Support\Facades\Log::error('Avito Stocks Export failed: ' . $e->getMessage());
                 }
