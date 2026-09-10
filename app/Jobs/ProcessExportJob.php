@@ -2445,8 +2445,12 @@ class ProcessExportJob implements ShouldQueue
                 $permanentFilename = 'avito.xml';
                 $permanentFilePath = 'exports/' . $permanentFilename;
                 
-                Storage::put($archiveFilePath, $xmlContent);
-                Storage::put($permanentFilePath, $xmlContent);
+                if (!is_string($xmlContent) || trim($xmlContent) === '' || !str_starts_with(ltrim($xmlContent), '<?xml')) {
+                    throw new \RuntimeException('Основной фид Авито получился некорректным или пустым');
+                }
+                if (!Storage::put($archiveFilePath, $xmlContent) || !Storage::put($permanentFilePath, $xmlContent)) {
+                    throw new \RuntimeException('Не удалось сохранить основной фид Авито');
+                }
                 $fileSize = strlen($xmlContent);
 
                 // Остаточный фид должен содержать все объявления, которые
@@ -2494,6 +2498,7 @@ class ProcessExportJob implements ShouldQueue
                     ]);
                 } catch (\Exception $e) {
                     \Illuminate\Support\Facades\Log::error('Avito Stocks Export failed: ' . $e->getMessage());
+                    throw $e;
                 }
 
                 $this->exportFile->update([
