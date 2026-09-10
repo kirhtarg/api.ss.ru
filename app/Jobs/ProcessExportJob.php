@@ -2456,9 +2456,12 @@ class ProcessExportJob implements ShouldQueue
                 // старый остаток. Для ручной выгрузки выбранных товаров
                 // сохраняем ограничение selected_ids.
                 try {
-                    $stockQuery = ShopGood::query()
-                        ->where('is_active', true)
-                        ->where('is_show', true);
+                    // Фид остатков должен включать все товары, которые могли
+                    // ранее попасть на Avito, в том числе отключённые и скрытые.
+                    // Иначе после снятия товара с показа он исчезает из фида, а
+                    // Avito сохраняет его старый остаток. Ограничение selected_ids
+                    // применяется только для ручной выгрузки выбранных товаров.
+                    $stockQuery = ShopGood::query();
                     $selectedStockIds = data_get($config, 'filters.selected_ids');
                     if (is_array($selectedStockIds) && $selectedStockIds !== []) {
                         $selectedStockIds = collect($selectedStockIds)
