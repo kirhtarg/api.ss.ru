@@ -55,9 +55,9 @@ class ShopGoodsController extends Controller
             'tags:id,name,color',
             'label:id,name,color',
             'properties:id,name,slug',
-            'images:id,good_id,file_path,alt_text,is_main,sort_order',
+            'images:id,good_id,file_path,alt_text,is_main,is_size_chart,sort_order',
             'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,weight,length,width,height,is_active,supplier',
-            'variations.images:id,variation_id,file_path,alt_text,is_main,sort_order',
+            'variations.images:id,variation_id,file_path,alt_text,is_main,is_size_chart,sort_order',
         ])->withCount('variations');
 
         // Флаг: применять фильтры остатков только к основному товару, игнорируя вариации
@@ -1315,7 +1315,7 @@ class ShopGoodsController extends Controller
                     'variations' => function ($variationQuery) use ($request) {
                         $this->applyExportVariationRowFilters($variationQuery, $request);
                     },
-                    'variations.images:id,variation_id,file_path,alt_text,is_main,sort_order',
+                    'variations.images:id,variation_id,file_path,alt_text,is_main,is_size_chart,sort_order',
                 ]);
             }
 
@@ -1888,9 +1888,10 @@ class ShopGoodsController extends Controller
             'brands:id,name,slug',
             'tags:id,name,color,slug',
             'properties:id,name,slug',
-            'images:id,good_id,variation_id,file_path,alt_text,is_main,sort_order',
+            'images:id,good_id,variation_id,file_path,alt_text,is_main,is_size_chart,sort_order',
             'videos:id,good_id,variation_id,video_path,external_url,title,sort_order',
             'variations:id,good_id,supplier,name,description,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,sku,is_active',
+            'variations.images:id,variation_id,file_path,alt_text,is_main,is_size_chart,sort_order',
             'stock:id,good_id,warehouse_id,quantity,reserved_quantity,min_quantity',
             'stock.warehouse:id,name',
             'prices:id,good_id,price_type_id,price,sale_price',

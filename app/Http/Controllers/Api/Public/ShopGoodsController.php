@@ -1830,7 +1830,10 @@ class ShopGoodsController extends Controller
             $good = ShopGood::with([
                 'variations' => function ($query) {
                     $query->where('is_active', true)
-                        ->select('*'); // Включаем все поля, включая remote_stock_quantity
+                        ->select('*') // Включаем все поля, включая remote_stock_quantity
+                        ->with(['images' => function ($imageQuery) {
+                            $imageQuery->orderBy('sort_order')->orderBy('id');
+                        }]);
                 },
                 'images' => function ($query) {
                     $query->whereNull('variation_id')->orderBy('sort_order');
@@ -2638,5 +2641,4 @@ class ShopGoodsController extends Controller
         ];
     }
 }
-
 
