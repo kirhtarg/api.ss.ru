@@ -22,11 +22,13 @@ class ShopGoodImage extends Model
         'content_checked_at',
         'alt_text',
         'is_main',
+        'is_size_chart',
         'sort_order',
     ];
 
     protected $casts = [
         'is_main' => 'boolean',
+        'is_size_chart' => 'boolean',
         'sort_order' => 'integer',
         'image_width' => 'integer',
         'image_height' => 'integer',
