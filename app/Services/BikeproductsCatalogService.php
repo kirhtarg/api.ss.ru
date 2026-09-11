@@ -1628,10 +1628,9 @@ class BikeproductsCatalogService
             SupplierCatalogFieldMapping::query()
                 ->where('supplier_code', $supplierCode)
                 ->where('scope', 'variation')
-                ->where(function ($query) {
-                    $query->where('source_field', 'SKU_GOD')
-                        ->orWhereHas('variationAttribute', fn ($attribute) => $attribute->where('name', 'Год'));
-                })
+                // SKU_GOD — служебный идентификатор поставщика, а не год
+                // модели. Сам год разбирается отдельно из MODELNYY_GOD/NAME.
+                ->where('source_field', 'SKU_GOD')
                 ->update([
                     'is_check_enabled' => false,
                     'is_update_enabled' => false,
@@ -1683,12 +1682,10 @@ class BikeproductsCatalogService
                 continue;
             }
 
-            // Для Байкпродакс значения цвета и размера берутся из NAME. SKU_*
-            // содержит служебные идентификаторы, а год в этой задаче не является
-            // вариацией и не должен создавать ложные расхождения.
+            // Для Байкпродакс значения цвета, размера и года разбираются из
+            // NAME/MODELNYY_GOD. SKU_* содержит служебные идентификаторы.
             if ($supplierCode === 'bikeproducts' && (
                 in_array((int) $mapping->variation_attribute_id, $parsedAttributeIds, true)
-                || $mapping->variationAttribute?->name === 'Год'
             )) {
                 continue;
             }
@@ -5001,7 +4998,7 @@ class BikeproductsCatalogService
         }
 
         $attributes = $this->standardVariationAttributeIds();
-        return $this->namedVariationAxes($normalized['color'], $normalized['size'], $attributes);
+        return $this->namedVariationAxes($normalized['color'], $normalized['size'], $normalized['year'], $attributes);
     }
 
     /** @return array{clean_name: ?string, color: ?string, size: ?string, year: ?string, sku: ?string, is_variation: bool} */
@@ -5020,16 +5017,18 @@ class BikeproductsCatalogService
             return $normalized;
         }
 
-        // Год сохраняем как данные строки поставщика, но никогда не используем
-        // как ось вариации и не подставляем текущий год искусственно.
-        $normalized['year'] = $this->nullableString($payload['MODELNYY_GOD'] ?? null);
+        // MODELNYY_GOD — основной источник третьей оси. Принимаем только
+        // отдельный четырёхзначный год, чтобы технические значения никогда
+        // не попадали в вариации.
+        $modelYear = $this->nullableString($payload['MODELNYY_GOD'] ?? null);
+        $normalized['year'] = $this->isSourceYearValue($modelYear) ? $modelYear : null;
 
         $contents = $this->trailingParenthesesContents($name);
         if ($contents === null) {
             return $normalized;
         }
 
-        // Последний вложенный блок — SKU. Год (третья часть) намеренно не используем.
+        // Последний вложенный блок — SKU; год может быть третьей частью блока.
         if (preg_match('/\(([^()]*)\)\s*$/u', $contents, $skuMatch)) {
             $normalized['sku'] = $this->nullableString($skuMatch[1]) ?? $normalized['sku'];
         }
@@ -5046,9 +5045,9 @@ class BikeproductsCatalogService
         // Some source names omit the empty size position and contain only
         // "(Color, 2026 (SKU))". A model year must never become Size.
         if ($this->isSourceYearValue($normalized['size'])) {
-            $normalized['year'] = $normalized['size'];
+            $normalized['year'] ??= $normalized['size'];
             $normalized['size'] = null;
-        } elseif (isset($parts[2]) && $this->isSourceYearValue($this->nullableString($parts[2]))) {
+        } elseif ($normalized['year'] === null && isset($parts[2]) && $this->isSourceYearValue($this->nullableString($parts[2]))) {
             $normalized['year'] = $this->nullableString($parts[2]);
         }
         if ($normalized['color'] === null || $normalized['size'] === null) {
@@ -5078,9 +5077,9 @@ class BikeproductsCatalogService
     }
 
     /** @param array<string, int> $attributes @return array<int, array<string, mixed>> */
-    private function namedVariationAxes(?string $color, ?string $size, array $attributes): array
+    private function namedVariationAxes(?string $color, ?string $size, ?string $year, array $attributes): array
     {
-        $values = ['Цвет' => $color, 'Размер' => $size];
+        $values = ['Цвет' => $color, 'Размер' => $size, 'Год' => $year];
         $axes = [];
         foreach ($values as $name => $value) {
             if ($value === null || ! isset($attributes[$name])) {
@@ -5089,7 +5088,7 @@ class BikeproductsCatalogService
             $axes[] = [
                 'attribute_id' => $attributes[$name],
                 'attribute_name' => $name,
-                'source_field' => 'NAME',
+                'source_field' => $name === 'Год' ? 'MODELNYY_GOD/NAME' : 'NAME',
                 'source_code' => $value,
                 'value' => $value,
                 'is_check_enabled' => true,
@@ -5110,12 +5109,12 @@ class BikeproductsCatalogService
             $color = $this->nullableString($item->source_color);
             $size = $this->nullableString($item->source_size);
             if ($color === $parsed['color'] && $size === $parsed['size']) {
-                return $this->namedVariationAxes($color, $size, $this->standardVariationAttributeIds());
+                return $this->namedVariationAxes($color, $size, $parsed['year'], $this->standardVariationAttributeIds());
             }
 
             // Снимок мог быть создан прежним алгоритмом, который сдвигал
             // значения после пустой позиции. Используем корректный разбор NAME.
-            return $this->namedVariationAxes($parsed['color'], $parsed['size'], $this->standardVariationAttributeIds());
+            return $this->namedVariationAxes($parsed['color'], $parsed['size'], $parsed['year'], $this->standardVariationAttributeIds());
         }
 
         return $this->resolveSourceAxes($item->raw_payload ?? [], $mappings, $supplierCode);
