@@ -368,6 +368,7 @@ class ShopGoodImagesController extends Controller
         $validator = Validator::make($request->all(), [
             'alt_text' => 'nullable|string|max:255',
             'is_main' => 'boolean',
+            'is_size_chart' => 'boolean',
             'sort_order' => 'integer',
         ]);
 
@@ -402,6 +403,19 @@ class ShopGoodImagesController extends Controller
             'success' => true,
             'message' => 'Изображение успешно обновлено',
             'data' => $image,
+        ]);
+    }
+
+    /** Переключить признак изображения таблицей размеров. */
+    public function toggleSizeChart(Request $request, $goodId, $imageId): JsonResponse
+    {
+        $image = ShopGoodImage::findOrFail($imageId);
+        $image->update(['is_size_chart' => $request->boolean('is_size_chart')]);
+
+        return response()->json([
+            'success' => true,
+            'message' => $image->is_size_chart ? 'Изображение отмечено как таблица размеров' : 'Отметка таблицы размеров снята',
+            'data' => $image->fresh(),
         ]);
     }
 

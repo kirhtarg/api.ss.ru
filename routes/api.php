@@ -2266,6 +2266,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::delete('/batch', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroyBatch']);
                     Route::post('/batch-copy-variations', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'copyBatchByVariations']);
                     Route::post('/batch-delete-by-variations', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroyBatchByVariations']);
+                    Route::post('/{imageId}/toggle-size-chart', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'toggleSizeChart']);
                     Route::put('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'update']);
                     Route::delete('/{imageId}', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'destroy']);
                     Route::put('/{imageId}/main', [\App\Http\Controllers\Admin\ShopGoodImagesController::class, 'setMain']);
