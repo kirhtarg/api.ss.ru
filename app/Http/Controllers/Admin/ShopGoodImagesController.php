@@ -141,6 +141,7 @@ class ShopGoodImagesController extends Controller
             'variation_id' => 'nullable|exists:shop_good_variations,id',
             'alt_text' => 'nullable|string|max:255',
             'is_main' => 'boolean',
+            'is_size_chart' => 'boolean',
             'sort_order' => 'integer',
             'upload_type' => 'nullable|string|in:system_fit,system_crop,original,custom_fit',
             'custom_width' => 'nullable|integer|min:1|max:5000',
@@ -378,7 +379,7 @@ class ShopGoodImagesController extends Controller
             ], 422);
         }
 
-        $image->update($request->only(['alt_text', 'is_main', 'sort_order']));
+        $image->update($request->only(['alt_text', 'is_main', 'is_size_chart', 'sort_order']));
 
         // Если это главное изображение, снимаем флаг с других
         if ($image->is_main) {
