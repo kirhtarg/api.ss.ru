@@ -1527,6 +1527,7 @@ class ShopGoodsController extends Controller
                     'old_price' => $good->old_price,
                     'image_url' => $mainImage ?: $good->image_url,
                     'images' => $good->images ? $good->images->toArray() : [],
+                    'size_chart_image' => optional($good->images?->firstWhere('is_size_chart', true))->file_path,
                     'videos' => $good->videos ? $good->videos->toArray() : [],
                     'properties' => $good->properties ? $good->properties->toArray() : [],
                     'categories' => $good->categories ? $good->categories->toArray() : [],
@@ -1583,6 +1584,7 @@ class ShopGoodsController extends Controller
                         'attributes' => $variationAttributes,
                         'is_active' => $variation->is_active,
                         'images' => $variation->images ? $variation->images->toArray() : [],
+                        'size_chart_image' => optional($variation->images?->firstWhere('is_size_chart', true))->file_path,
                         'videos' => $variation->videos ? $variation->videos->toArray() : [],
                         // Добавляем поля размеров и веса для вариаций
                         'weight' => $variation->weight,
@@ -2636,6 +2638,5 @@ class ShopGoodsController extends Controller
         ];
     }
 }
-
 
 
