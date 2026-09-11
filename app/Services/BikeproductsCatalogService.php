@@ -5538,7 +5538,8 @@ class BikeproductsCatalogService
 
     private function variationAuditBaseCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        return 'supplier-catalog:variation-audit-base:v44:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot);
+        // v45: год снова является полноценной осью вариации Bikeproducts.
+        return 'supplier-catalog:variation-audit-base:v45:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot);
     }
 
     /** @param array<int, string>|null $onlyTargets */
@@ -5559,7 +5560,7 @@ class BikeproductsCatalogService
 
     private function variationAuditStatsCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        return 'supplier-catalog:variation-audit-stats:v5:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        return 'supplier-catalog:variation-audit-stats:v6:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
     }
 
     /** @return array<int, string> */
