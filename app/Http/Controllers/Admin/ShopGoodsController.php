@@ -7218,7 +7218,11 @@ class ShopGoodsController extends Controller
             $variation->price = $price;
             $variation->sale_price = $salePrice;
             $variation->demping_price = $dempingPrice;
-            $variation->avito_price = $request->filled('avito_price') ? (float) $request->get('avito_price') : null;
+            // Старые редакторы цены не передают avito_price. В таком случае
+            // нельзя очищать уже установленную отдельную цену Авито.
+            if ($request->has('avito_price')) {
+                $variation->avito_price = $request->filled('avito_price') ? (float) $request->get('avito_price') : null;
+            }
             $variation->save();
 
             return response()->json([
