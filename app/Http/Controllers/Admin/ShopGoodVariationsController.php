@@ -906,6 +906,7 @@ class ShopGoodVariationsController extends Controller
             'supplier' => 'nullable|string|max:255',
             'price' => 'required|numeric|min:0',
             'sale_price' => 'nullable|numeric|min:0',
+            'avito_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'nullable|integer|min:0',
             'remote_stock_quantity' => 'nullable|string|max:255',
             'fast_remote_stock_quantity' => 'nullable|string|max:255',
@@ -948,6 +949,7 @@ class ShopGoodVariationsController extends Controller
                 'supplier' => $request->filled('supplier') ? trim((string) $request->get('supplier')) : null,
                 'price' => $request->get('price'),
                 'sale_price' => $request->get('sale_price'),
+                'avito_price' => $request->get('avito_price'),
                 'stock_quantity' => $request->get('stock_quantity'),
                 'weight' => $request->get('weight') ?: $good->weight,
                 'length' => $request->get('length') ?: $good->length,
@@ -1308,6 +1310,7 @@ class ShopGoodVariationsController extends Controller
             'sku' => 'nullable|string|max:255',
             'price' => 'required|numeric|min:0',
             'sale_price' => 'nullable|numeric|min:0',
+            'avito_price' => 'nullable|numeric|min:0',
             'stock_quantity' => 'nullable|integer|min:0',
             'remote_stock_quantity' => 'nullable|string|max:255',
             'fast_remote_stock_quantity' => 'nullable|string|max:255',
@@ -1333,7 +1336,7 @@ class ShopGoodVariationsController extends Controller
 
         // РџРѕРґРіРѕС‚Р°РІР»РёРІР°РµРј РґР°РЅРЅС‹Рµ РґР»СЏ РѕР±РЅРѕРІР»РµРЅРёСЏ
         $updateData = $request->only([
-            'name', 'sku', 'price', 'sale_price', 'stock_quantity', 'weight',
+            'name', 'sku', 'price', 'sale_price', 'avito_price', 'stock_quantity', 'weight',
             'length', 'height', 'width', 'shipping_weight', 'shipping_length',
             'shipping_width', 'shipping_height', 'ships_separately', 'is_active',
         ]);

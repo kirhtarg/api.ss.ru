@@ -4718,6 +4718,7 @@ class BikeproductsCatalogService
             'price' => $variation->price,
             'sale_price' => $variation->sale_price,
             'demping_price' => $variation->demping_price,
+            'avito_price' => $variation->avito_price,
             'show_demping' => $variation->show_demping,
             'stock_quantity' => $variation->stock_quantity,
             'remote_stock_quantity' => $variation->remote_stock_quantity,

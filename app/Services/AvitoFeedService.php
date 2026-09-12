@@ -567,7 +567,7 @@ class AvitoFeedService
             $inStockVariations = $activeVariations->filter(fn($variation) => $this->isInStock($variation));
 
             foreach (($inStockVariations->isNotEmpty() ? $inStockVariations : $activeVariations) as $variation) {
-                $prices[] = $this->calculateFinalPrice($variation);
+                $prices[] = $this->getAvitoPrice($variation);
             }
 
             $prices = array_filter($prices, fn($p) => $p > 0);
@@ -579,13 +579,27 @@ class AvitoFeedService
 
         // Цена самого товара используется только для товаров без валидных цен вариаций.
         if ($this->isInStock($good)) {
-            $prices[] = $this->calculateFinalPrice($good);
+            $prices[] = $this->getAvitoPrice($good);
         }
 
         $prices = array_filter($prices, fn($p) => $p > 0);
 
         // Если ничего нет в наличии, возвращаем цену товара как fallback.
-        return !empty($prices) ? min($prices) : $this->calculateFinalPrice($good);
+        return !empty($prices) ? min($prices) : $this->getAvitoPrice($good);
+    }
+
+    /**
+     * Цена для Авито имеет приоритет только при явном положительном значении.
+     * Пустое (и нулевое) поле сохраняет прежний алгоритм final_price целиком.
+     */
+    private function getAvitoPrice($item): float
+    {
+        $avitoPrice = $item->avito_price ?? null;
+        if ($avitoPrice !== null && (float) $avitoPrice > 0) {
+            return (float) $avitoPrice;
+        }
+
+        return (float) $this->calculateFinalPrice($item);
     }
 
     /**

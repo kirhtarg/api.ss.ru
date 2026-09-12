@@ -42,7 +42,7 @@ class ShopGoodsController extends Controller
 
         $query = ShopGood::select([
             'id', 'name', 'slug', 'sku', 'description', 'short_description',
-            'price', 'sale_price', 'demping_price', 'show_demping', 'label_id', 'supplier',
+            'price', 'sale_price', 'demping_price', 'avito_price', 'show_demping', 'label_id', 'supplier',
             'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'rating', 'reviews_count',
             'width', 'height', 'depth', 'weight',
             'is_active', 'is_featured', 'is_new', 'is_sale', 'is_preorder', 'is_show', 'sort_order',
@@ -56,7 +56,7 @@ class ShopGoodsController extends Controller
             'label:id,name,color',
             'properties:id,name,slug',
             'images:id,good_id,file_path,alt_text,is_main,is_size_chart,sort_order',
-            'variations:id,good_id,name,sku,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,weight,length,width,height,is_active,supplier',
+            'variations:id,good_id,name,sku,price,sale_price,demping_price,avito_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,weight,length,width,height,is_active,supplier',
             'variations.images:id,variation_id,file_path,alt_text,is_main,is_size_chart,sort_order',
         ])->withCount('variations');
 
@@ -1890,7 +1890,7 @@ class ShopGoodsController extends Controller
             'properties:id,name,slug',
             'images:id,good_id,variation_id,file_path,alt_text,is_main,is_size_chart,sort_order',
             'videos:id,good_id,variation_id,video_path,external_url,title,sort_order',
-            'variations:id,good_id,supplier,name,description,price,sale_price,demping_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,sku,is_active',
+            'variations:id,good_id,supplier,name,description,price,sale_price,demping_price,avito_price,show_demping,stock_quantity,remote_stock_quantity,fast_remote_stock_quantity,sku,is_active',
             'variations.images:id,variation_id,file_path,alt_text,is_main,is_size_chart,sort_order',
             'stock:id,good_id,warehouse_id,quantity,reserved_quantity,min_quantity',
             'stock.warehouse:id,name',
@@ -1935,6 +1935,9 @@ class ShopGoodsController extends Controller
             'short_description' => 'nullable|string',
             'price' => 'required|numeric|min:0',
             'sale_price' => 'nullable|numeric|min:0',
+            'demping_price' => 'nullable|numeric|min:0',
+            'avito_price' => 'nullable|numeric|min:0',
+            'show_demping' => 'boolean',
             'stock_quantity' => 'integer|min:0',
             'remote_stock_quantity' => 'nullable|string|max:255',
             'fast_remote_stock_quantity' => 'nullable|string|max:255',
@@ -1979,7 +1982,7 @@ class ShopGoodsController extends Controller
 
             $good = ShopGood::create($request->only([
                 'name', 'slug', 'sku', 'description', 'short_description',
-                'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
+                'price', 'sale_price', 'demping_price', 'avito_price', 'show_demping', 'label_id',
                 'stock_quantity', 'remote_stock_quantity', 'width', 'height',
                 'depth', 'weight', 'shipping_weight', 'shipping_length', 'shipping_width',
                 'shipping_height', 'ships_separately', 'meta_title', 'meta_description',
@@ -2071,6 +2074,7 @@ class ShopGoodsController extends Controller
             'price' => 'required|numeric|min:0',
             'sale_price' => 'nullable|numeric|min:0',
             'demping_price' => 'nullable|numeric|min:0',
+            'avito_price' => 'nullable|numeric|min:0',
             'show_demping' => 'boolean',
             'label_id' => 'nullable|exists:shop_labels,id',
             'stock_quantity' => 'integer|min:0',
@@ -2120,7 +2124,7 @@ class ShopGoodsController extends Controller
             // Подготавливаем данные для обновления
             $updateData = $request->only([
                 'name', 'slug', 'sku', 'description', 'short_description',
-                'price', 'sale_price', 'demping_price', 'show_demping', 'label_id',
+                'price', 'sale_price', 'demping_price', 'avito_price', 'show_demping', 'label_id',
                 'stock_quantity', 'width', 'height',
                 'depth', 'weight', 'shipping_weight', 'shipping_length', 'shipping_width',
                 'shipping_height', 'ships_separately', 'meta_title', 'meta_description',
@@ -2753,6 +2757,146 @@ class ShopGoodsController extends Controller
                 });
             }
         }
+    }
+
+    /**
+     * Заполнить отдельную цену для Авито у выбранных товаров и их вариаций.
+     *
+     * Базой всегда служит текущая фактическая цена строки: демпинговая,
+     * акционная либо обычная. Поэтому для каждой вариации расчёт
+     * независим от цены родительского товара.
+     */
+    public function fillAvitoPrice(Request $request): JsonResponse
+    {
+        $payload = json_decode($request->getContent(), true) ?: $request->all();
+
+        if (($payload['selection_mode'] ?? null) === 'filters') {
+            $payload['ids'] = $this->resolveGoodsIdsFromSelectionFilters($payload, $request);
+        }
+
+        $validator = Validator::make($payload, [
+            'ids' => 'required|array|min:1',
+            'ids.*' => (($payload['selection_mode'] ?? null) === 'filters') ? 'integer' : 'exists:shop_goods,id',
+            'apply_to' => 'required|in:goods,variations,both',
+            'mode' => 'required|in:copy,percent_increase,percent_decrease,amount_increase,amount_decrease',
+            'value' => 'required_unless:mode,copy|nullable|numeric|min:0',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ошибка валидации параметров заполнения цены Авито',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $ids = array_values(array_unique(array_map('intval', $payload['ids'])));
+        $mode = $payload['mode'];
+        $value = (float) ($payload['value'] ?? 0);
+        $applyTo = $payload['apply_to'];
+        $goodsUpdated = 0;
+        $variationsUpdated = 0;
+        $cleared = 0;
+
+        try {
+            DB::transaction(function () use ($ids, $mode, $value, $applyTo, &$goodsUpdated, &$variationsUpdated, &$cleared) {
+                if (in_array($applyTo, ['goods', 'both'], true)) {
+                    ShopGood::whereIn('id', $ids)
+                        ->select(['id', 'price', 'sale_price', 'demping_price', 'show_demping', 'avito_price'])
+                        ->orderBy('id')
+                        ->each(function (ShopGood $good) use ($mode, $value, &$goodsUpdated, &$cleared) {
+                            [$price, $wasCleared] = $this->calculateFilledAvitoPrice($good, $mode, $value);
+                            if ($wasCleared) {
+                                $cleared++;
+                            }
+                            $currentPrice = $good->avito_price === null ? null : round((float) $good->avito_price, 2);
+                            if ($currentPrice !== $price) {
+                                $good->avito_price = $price;
+                                $good->save();
+                                $goodsUpdated++;
+                            }
+                        });
+                }
+
+                if (in_array($applyTo, ['variations', 'both'], true)) {
+                    ShopGoodVariation::whereIn('good_id', $ids)
+                        ->select(['id', 'good_id', 'price', 'sale_price', 'demping_price', 'show_demping', 'avito_price'])
+                        ->orderBy('id')
+                        ->each(function (ShopGoodVariation $variation) use ($mode, $value, &$variationsUpdated, &$cleared) {
+                            [$price, $wasCleared] = $this->calculateFilledAvitoPrice($variation, $mode, $value);
+                            if ($wasCleared) {
+                                $cleared++;
+                            }
+                            $currentPrice = $variation->avito_price === null ? null : round((float) $variation->avito_price, 2);
+                            if ($currentPrice !== $price) {
+                                $variation->avito_price = $price;
+                                $variation->save();
+                                $variationsUpdated++;
+                            }
+                        });
+                }
+            });
+        } catch (\Throwable $e) {
+            Log::error('Не удалось массово заполнить цену Авито', ['exception' => $e]);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Не удалось заполнить цену Авито: '.$e->getMessage(),
+            ], 500);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => "Цена Авито обновлена: товаров — {$goodsUpdated}, вариаций — {$variationsUpdated}",
+            'data' => [
+                'goods_updated' => $goodsUpdated,
+                'variations_updated' => $variationsUpdated,
+                'cleared_without_effective_price' => $cleared,
+            ],
+        ]);
+    }
+
+    /**
+     * @return array{0: ?float, 1: bool}
+     */
+    private function calculateFilledAvitoPrice(ShopGood|ShopGoodVariation $item, string $mode, float $value): array
+    {
+        $basePrice = $this->getEffectivePriceForAvito($item);
+        if ($basePrice <= 0) {
+            // Пустая цена означает штатный fallback экспорта, а не ошибочную цену 0.
+            return [null, $item->avito_price !== null];
+        }
+
+        $price = match ($mode) {
+            'percent_increase' => $basePrice * (1 + $value / 100),
+            'percent_decrease' => $basePrice * (1 - $value / 100),
+            'amount_increase' => $basePrice + $value,
+            'amount_decrease' => $basePrice - $value,
+            default => $basePrice,
+        };
+
+        // Нулевая цена не может быть отдельной ценой Авито: очищаем override,
+        // чтобы экспорт вернулся к своей обычной цене.
+        if ($price <= 0) {
+            return [null, $item->avito_price !== null];
+        }
+
+        return [round($price, 2), false];
+    }
+
+    private function getEffectivePriceForAvito(ShopGood|ShopGoodVariation $item): float
+    {
+        if ($item->show_demping && (float) $item->demping_price > 0) {
+            return (float) $item->demping_price;
+        }
+
+        // Повторяем штатную логику AvitoFeedService буквально: любая
+        // положительная акционная цена имеет приоритет над обычной.
+        if ((float) $item->sale_price > 0) {
+            return (float) $item->sale_price;
+        }
+
+        return (float) $item->price;
     }
 
     /**
@@ -7034,6 +7178,7 @@ class ShopGoodsController extends Controller
                 'price' => 'required|numeric|min:0',
                 'sale_price' => 'nullable|numeric|min:0',
                 'demping_price' => 'nullable|numeric|min:0',
+                'avito_price' => 'nullable|numeric|min:0',
             ]);
 
             if ($validator->fails()) {
@@ -7073,6 +7218,7 @@ class ShopGoodsController extends Controller
             $variation->price = $price;
             $variation->sale_price = $salePrice;
             $variation->demping_price = $dempingPrice;
+            $variation->avito_price = $request->filled('avito_price') ? (float) $request->get('avito_price') : null;
             $variation->save();
 
             return response()->json([
@@ -7083,6 +7229,7 @@ class ShopGoodsController extends Controller
                     'price' => $variation->price,
                     'sale_price' => $variation->sale_price,
                     'demping_price' => $variation->demping_price,
+                    'avito_price' => $variation->avito_price,
                 ],
             ]);
         } catch (\Exception $e) {
@@ -7888,6 +8035,7 @@ class ShopGoodsController extends Controller
                             'price' => $sourceVariation->price,
                             'sale_price' => $sourceVariation->sale_price,
                             'demping_price' => $sourceVariation->demping_price,
+                            'avito_price' => $sourceVariation->avito_price,
                             'show_demping' => $sourceVariation->show_demping,
                             'stock_quantity' => $sourceVariation->stock_quantity,
                             'remote_stock_quantity' => $sourceVariation->remote_stock_quantity,
@@ -8227,6 +8375,7 @@ class ShopGoodsController extends Controller
                             $updateData['price'] = $goodWithoutVariations->price;
                             $updateData['sale_price'] = $goodWithoutVariations->sale_price;
                             $updateData['demping_price'] = $goodWithoutVariations->demping_price;
+                            $updateData['avito_price'] = $goodWithoutVariations->avito_price;
                         }
 
                         $variation->update($updateData);
@@ -8759,6 +8908,7 @@ class ShopGoodsController extends Controller
                     'price' => $sourceGood->price,
                     'sale_price' => $sourceGood->sale_price,
                     'demping_price' => $sourceGood->demping_price,
+                    'avito_price' => $sourceGood->avito_price,
                     'show_demping' => $sourceGood->show_demping,
                     'stock_quantity' => $sourceGood->stock_quantity,
                     'remote_stock_quantity' => $sourceGood->remote_stock_quantity,
