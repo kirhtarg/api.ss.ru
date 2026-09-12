@@ -2775,11 +2775,13 @@ class ShopGoodsController extends Controller
         }
 
         $validator = Validator::make($payload, [
-            'ids' => 'required|array|min:1',
+            'ids' => 'required_without:variation_ids|array|min:1',
             'ids.*' => (($payload['selection_mode'] ?? null) === 'filters') ? 'integer' : 'exists:shop_goods,id',
+            'variation_ids' => 'required_without:ids|array|min:1',
+            'variation_ids.*' => 'exists:shop_good_variations,id',
             'apply_to' => 'required|in:goods,variations,both',
-            'mode' => 'required|in:copy,percent_increase,percent_decrease,amount_increase,amount_decrease',
-            'value' => 'required_unless:mode,copy|nullable|numeric|min:0',
+            'mode' => 'required|in:copy,percent_increase,percent_decrease,amount_increase,amount_decrease,clear',
+            'value' => 'required_unless:mode,copy,clear|nullable|numeric|min:0',
         ]);
 
         if ($validator->fails()) {
@@ -2790,7 +2792,8 @@ class ShopGoodsController extends Controller
             ], 422);
         }
 
-        $ids = array_values(array_unique(array_map('intval', $payload['ids'])));
+        $ids = array_values(array_unique(array_map('intval', $payload['ids'] ?? [])));
+        $variationIds = array_values(array_unique(array_map('intval', $payload['variation_ids'] ?? [])));
         $mode = $payload['mode'];
         $value = (float) ($payload['value'] ?? 0);
         $applyTo = $payload['apply_to'];
@@ -2799,7 +2802,7 @@ class ShopGoodsController extends Controller
         $cleared = 0;
 
         try {
-            DB::transaction(function () use ($ids, $mode, $value, $applyTo, &$goodsUpdated, &$variationsUpdated, &$cleared) {
+            DB::transaction(function () use ($ids, $variationIds, $mode, $value, $applyTo, &$goodsUpdated, &$variationsUpdated, &$cleared) {
                 if (in_array($applyTo, ['goods', 'both'], true)) {
                     ShopGood::whereIn('id', $ids)
                         ->select(['id', 'price', 'sale_price', 'demping_price', 'show_demping', 'avito_price'])
@@ -2819,7 +2822,7 @@ class ShopGoodsController extends Controller
                 }
 
                 if (in_array($applyTo, ['variations', 'both'], true)) {
-                    ShopGoodVariation::whereIn('good_id', $ids)
+                    ShopGoodVariation::when(! empty($variationIds), fn ($query) => $query->whereIn('id', $variationIds), fn ($query) => $query->whereIn('good_id', $ids))
                         ->select(['id', 'good_id', 'price', 'sale_price', 'demping_price', 'show_demping', 'avito_price'])
                         ->orderBy('id')
                         ->each(function (ShopGoodVariation $variation) use ($mode, $value, &$variationsUpdated, &$cleared) {
@@ -2861,6 +2864,10 @@ class ShopGoodsController extends Controller
      */
     private function calculateFilledAvitoPrice(ShopGood|ShopGoodVariation $item, string $mode, float $value): array
     {
+        if ($mode === 'clear') {
+            return [null, $item->avito_price !== null];
+        }
+
         $basePrice = $this->getEffectivePriceForAvito($item);
         if ($basePrice <= 0) {
             // Пустая цена означает штатный fallback экспорта, а не ошибочную цену 0.
