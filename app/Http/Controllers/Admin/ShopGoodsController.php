@@ -4804,14 +4804,20 @@ class ShopGoodsController extends Controller
 
                 // Очищаем имя файла от недопустимых символов
                 $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $fileName);
+
+                // У поставщиков часто все ссылки заканчиваются одинаково
+                // (например, /image.jpg). Одного имени файла недостаточно:
+                // создаём изолированную папку по нормализованному URL.
+                $sourceHash = substr(hash('sha256', $this->normalizeImageUrl($imageUrl)), 0, 24);
+                $fullPath = rtrim($storagePath, '/').'/source_'.$sourceHash.'/'.$fileName;
             } else {
                 // Используем хеш
                 $hash = hash('sha256', $imageUrl);
                 $fileName = $hash.'.'.$extension;
+                $fullPath = rtrim($storagePath, '/').'/'.$fileName;
             }
 
             // Полный путь для сохранения
-            $fullPath = $storagePath.'/'.$fileName;
             // Получаем путь к фронтенду из FRONTEND_PATH в .env
             $frontendPublicPath = frontend_public_path();
             $storageFullPath = $frontendPublicPath.'/'.ltrim($fullPath, '/');
@@ -4966,6 +4972,11 @@ class ShopGoodsController extends Controller
                     continue;
                 }
 
+                // Один и тот же оригинальный filename у разных ссылок не
+                // должен вести к одному файлу. Хеш нормализованного URL
+                // формирует стабильную папку source_<hash>.
+                $sourceHash = substr(hash('sha256', $this->normalizeImageUrl($imageUrl)), 0, 24);
+
                 $cachedRelativePath = null;
                 try {
                     // В режиме хеш игнорируем кэш Redis, чтобы форсировать обновление если нужно
@@ -4974,7 +4985,10 @@ class ShopGoodsController extends Controller
                         if (is_string($cached) && $cached !== '') {
                             $cachedRelativePath = $cached;
                             $cachedAbsolutePath = $frontendPublicPath.'/'.ltrim($cachedRelativePath, '/');
-                            if (file_exists($cachedAbsolutePath)) {
+                            // Не используем кэш, созданный старой схемой
+                            // (/images/shop/goods/image.jpg): он не уникален.
+                            $usesSourceDirectory = str_contains($cachedRelativePath, '/source_'.$sourceHash.'/');
+                            if ($usesSourceDirectory && file_exists($cachedAbsolutePath)) {
                                 $results[$imageUrl] = $cachedRelativePath;
                                 $skipped[] = $imageUrl;
                                 continue;
@@ -4994,11 +5008,12 @@ class ShopGoodsController extends Controller
                     $originalName = mb_convert_encoding($originalName, 'UTF-8', 'UTF-8');
                     $originalName = preg_replace('/[^\p{L}\p{N}._-]/u', '_', $originalName);
                     $fileName = preg_replace('/[^a-zA-Z0-9._-]/', '_', $originalName).'.'.$extension;
+                    $relativePath = rtrim($storagePath, '/').'/source_'.$sourceHash.'/'.$fileName;
                 } else {
                     $hash = hash('sha256', $imageUrl.$index);
                     $fileName = $hash.'.'.$extension;
+                    $relativePath = rtrim($storagePath, '/').'/'.$fileName;
                 }
-                $relativePath = rtrim($storagePath, '/').'/'.$fileName;
                 $absolutePath = $frontendPublicPath.'/'.ltrim($relativePath, '/');
                 $normalizedAbsolutePath = realpath($absolutePath) ?: $absolutePath;
                 if ($naming === 'original' && file_exists($normalizedAbsolutePath)) {
