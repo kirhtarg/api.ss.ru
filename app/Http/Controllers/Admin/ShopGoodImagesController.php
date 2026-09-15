@@ -835,8 +835,9 @@ class ShopGoodImagesController extends Controller
 
         // Дополнительная валидация: либо good_id, либо variation_id должен быть указан
         $imagesToSkip = []; // Индексы изображений, которые нужно пропустить
+        $preflightSkipped = []; // Причины пропуска для отчёта импорта
 
-        $validator->after(function ($validator) use ($request, &$imagesToSkip) {
+        $validator->after(function ($validator) use ($request, &$imagesToSkip, &$preflightSkipped) {
             $images = $request->input('images', []);
             foreach ($images as $index => $image) {
                 $hasGoodId = !empty($image['good_id']);
@@ -880,9 +881,18 @@ class ShopGoodImagesController extends Controller
                     $fileExists = file_exists($apiPath) || file_exists($frontendFullPath);
 
                     if (!$fileExists) {
-                        // Вместо $validator->errors()->add(...) — просто логируем и добавляем в skip
+                        // Это не ошибка всего пакета: остальные изображения нужно
+                        // обработать. Но причину обязательно возвращаем в отчёт,
+                        // чтобы не создавать впечатление успешной привязки.
                         \Log::warning("Файл изображения не найден — пропускаем его", ['image' => $image]);
                         $imagesToSkip[] = $index;
+                        $preflightSkipped[] = [
+                            'index' => $index,
+                            'good_id' => $image['good_id'] ?? null,
+                            'variation_id' => $image['variation_id'] ?? null,
+                            'file_path' => $image['file_path'],
+                            'message' => 'Файл скачан, но не найден в хранилище при создании связи',
+                        ];
                         continue;
                     }
                 }
@@ -892,6 +902,13 @@ class ShopGoodImagesController extends Controller
                     if (!\DB::table('shop_goods')->where('id', $image['good_id'])->exists()) {
                         \Log::warning('Товар не найден в БД - пропускаем изображение', ['good_id' => $image['good_id'], 'image' => $image]);
                         $imagesToSkip[] = $index;
+                        $preflightSkipped[] = [
+                            'index' => $index,
+                            'good_id' => $image['good_id'],
+                            'variation_id' => null,
+                            'file_path' => $image['file_path'] ?? null,
+                            'message' => 'Файл скачан, но товар для привязки не найден',
+                        ];
                         continue;
                     }
                 }
@@ -899,6 +916,13 @@ class ShopGoodImagesController extends Controller
                     if (!\DB::table('shop_good_variations')->where('id', $image['variation_id'])->exists()) {
                         \Log::warning('Вариация не найдена в БД - пропускаем изображение', ['variation_id' => $image['variation_id'], 'image' => $image]);
                         $imagesToSkip[] = $index;
+                        $preflightSkipped[] = [
+                            'index' => $index,
+                            'good_id' => null,
+                            'variation_id' => $image['variation_id'],
+                            'file_path' => $image['file_path'] ?? null,
+                            'message' => 'Файл скачан, но вариация для привязки не найдена',
+                        ];
                         continue;
                     }
                 }
@@ -932,7 +956,9 @@ class ShopGoodImagesController extends Controller
         try {
             $results = [];
             $errors = [];
-            $skipped = [];
+            // Предварительно исключённые записи ранее не попадали в ответ
+            // вовсе: UI видел успешный запрос, хотя связь не была создана.
+            $skipped = $preflightSkipped;
 
             // Группируем изображения по товарам/вариациям для оптимизации
             $imagesByGood = [];
@@ -1025,7 +1051,7 @@ class ShopGoodImagesController extends Controller
                     'created' => $results,
                     'skipped' => $skipped,
                     'errors' => $errors,
-                    'total' => count($images),
+                    'total' => count($request->input('images', [])),
                     'successful' => count($results),
                     'skipped_count' => count($skipped),
                     'failed' => count($errors),
