@@ -158,8 +158,13 @@ class BulkGoodsImportController extends Controller
 
         }
 
-        // Очищаем логи только для первого батча
-        if ($isFirstBatch) {
+        // Логи относятся ко всему запуску импорта, а не к поставщику.
+        // clear_import_logs передаёт фронтенд перед самым первым запросом.
+        // Fallback сохраняет совместимость со старыми версиями фронтенда.
+        $clearImportLogs = $request->has('clear_import_logs')
+            ? $request->boolean('clear_import_logs')
+            : $isFirstBatch;
+        if ($clearImportLogs) {
             $this->importLogService->clearAllLogs();
         }
 
@@ -1828,6 +1833,25 @@ class BulkGoodsImportController extends Controller
 
                                 continue;
                             }
+                        }
+
+                        // Новый товар без названия создавать нельзя. Это бывает у
+                        // строк-разделов поставщика или при ошибочном маппинге:
+                        // пустое имя порождает одинаковые slug вида "-1130" и
+                        // срывает весь пакет уникальным индексом. Обновление
+                        // уже найденного по SKU товара выше по-прежнему допустимо.
+                        if ($name === '') {
+                            $results['skipped']++;
+                            $sheet = $goodData['_sheet'] ?? 'неизвестно';
+                            $skipItems[] = [
+                                'count' => $count,
+                                'sku' => $sku,
+                                'name' => '',
+                                'sheet' => $sheet,
+                                'reason' => 'Новая карточка не создана: в строке отсутствует сопоставленное название товара.',
+                            ];
+
+                            continue;
                         }
 
                         // Товар действительно не существует - создаем новый (с вариацией или без)
