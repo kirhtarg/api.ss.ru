@@ -598,6 +598,35 @@ class BikeproductsCatalogService
         ];
     }
 
+    /**
+     * Finds rows in a freshly loaded supplier snapshot by the actual source SKU.
+     * Item ids are intentionally volatile: they belong to a snapshot and change
+     * after the file is cleared and loaded again.
+     *
+     * @param array<int, string> $sourceSkus
+     * @return array<int, int>
+     */
+    public function snapshotItemIdsBySourceSkus(SupplierCatalogSnapshot $snapshot, array $sourceSkus): array
+    {
+        $expectedSkus = collect($sourceSkus)
+            ->map(fn ($sku) => $this->normalizeSku((string) $sku))
+            ->filter()
+            ->unique()
+            ->flip();
+
+        if ($expectedSkus->isEmpty()) {
+            return [];
+        }
+
+        return $snapshot->items()
+            ->get(['id', 'external_sku', 'raw_payload'])
+            ->filter(fn (SupplierCatalogItem $item) => $expectedSkus->has($this->normalizeSku($this->sourceSkuForItem($item, $snapshot->supplier_code))))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
     /** @return array{affected: int, skipped: int, message: string, log?: array<int, array<string, mixed>>} */
     public function applyMappedUpdate(SupplierCatalogSnapshot $snapshot, string $scope, array $itemIds, string $imageMode = 'append', array $targets = []): array
     {

@@ -787,28 +787,64 @@ class BikeproductsCatalogController extends Controller
         )]);
     }
 
-    public function applyGoodAction(Request $request, SupplierCatalogSnapshot $snapshot): JsonResponse
+    public function applyGoodAction(Request $request, int $snapshot): JsonResponse
     {
-        if ($response = $this->notReadyResponse($snapshot)) {
-            return $response;
-        }
+        // Do not use implicit model binding here. A supplier file can be cleared
+        // in another browser tab while its already rendered audit is still open.
+        // In that case binding converts a recoverable stale-screen condition into
+        // Laravel's generic 404 before we can identify the current source rows.
         $data = $request->validate([
             'action' => ['required', 'in:create,delete'],
             'ids' => ['required', 'array', 'min:1', 'max:1000'],
             'ids.*' => ['integer', 'distinct'],
+            'supplier_code' => ['nullable', 'string', 'max:80'],
+            'source_skus' => ['nullable', 'array', 'max:1000'],
+            'source_skus.*' => ['string', 'max:255'],
         ]);
+
+        $snapshotModel = SupplierCatalogSnapshot::find($snapshot);
+        $recoveredSnapshot = false;
+        if (! $snapshotModel && $data['action'] === 'create' && ! empty($data['supplier_code']) && ! empty($data['source_skus'])) {
+            $supplierCode = $this->selectedSupplierCode($data['supplier_code']);
+            $snapshotModel = SupplierCatalogSnapshot::query()
+                ->where('supplier_code', $supplierCode)
+                ->where('status', 'ready')
+                ->latest('id')
+                ->first();
+
+            if ($snapshotModel) {
+                $data['ids'] = $this->catalog->snapshotItemIdsBySourceSkus($snapshotModel, $data['source_skus']);
+                $recoveredSnapshot = ! empty($data['ids']);
+            }
+        }
+
+        if (! $snapshotModel || ! $recoveredSnapshot && (int) $snapshotModel->id !== $snapshot && $data['action'] === 'create') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Данные файла были очищены или заменены. Обновите аудит и повторите действие.',
+            ], 409);
+        }
+
+        if ($response = $this->notReadyResponse($snapshotModel)) {
+            return $response;
+        }
 
         $result = $this->runCatalogAction(
             $request,
-            $snapshot,
+            $snapshotModel,
             'goods',
             $data['action'],
             $data['ids'],
-            fn () => $this->catalog->applyGoodAction($snapshot, $data['action'], $data['ids']),
+            fn () => $this->catalog->applyGoodAction($snapshotModel, $data['action'], $data['ids']),
         );
         if ($data['action'] === 'create' && $result['affected'] > 0) {
-            $jobs = $this->dispatchImageSyncJobs($snapshot, $data['ids'], 'append', $result['action_run_id'] ?? null);
+            $jobs = $this->dispatchImageSyncJobs($snapshotModel, $data['ids'], 'append', $result['action_run_id'] ?? null);
             $result['message'] .= ". Скачивание изображений запущено в очереди: {$jobs} задач";
+        }
+
+        if ($recoveredSnapshot) {
+            $result['snapshot'] = $snapshotModel;
+            $result['recovered_from_stale_snapshot'] = true;
         }
 
         return response()->json(['success' => true, 'data' => $result]);
