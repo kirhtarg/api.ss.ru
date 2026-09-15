@@ -794,7 +794,7 @@ class BikeproductsCatalogController extends Controller
         // In that case binding converts a recoverable stale-screen condition into
         // Laravel's generic 404 before we can identify the current source rows.
         $data = $request->validate([
-            'action' => ['required', 'in:create,delete'],
+            'action' => ['required', 'in:create,delete,merge_other_supplier'],
             'ids' => ['required', 'array', 'min:1', 'max:1000'],
             'ids.*' => ['integer', 'distinct'],
             'supplier_code' => ['nullable', 'string', 'max:80'],
@@ -804,7 +804,7 @@ class BikeproductsCatalogController extends Controller
 
         $snapshotModel = SupplierCatalogSnapshot::find($snapshot);
         $recoveredSnapshot = false;
-        if (! $snapshotModel && $data['action'] === 'create' && ! empty($data['supplier_code']) && ! empty($data['source_skus'])) {
+        if (! $snapshotModel && in_array($data['action'], ['create', 'merge_other_supplier'], true) && ! empty($data['supplier_code']) && ! empty($data['source_skus'])) {
             $supplierCode = $this->selectedSupplierCode($data['supplier_code']);
             $snapshotModel = SupplierCatalogSnapshot::query()
                 ->where('supplier_code', $supplierCode)
@@ -818,7 +818,7 @@ class BikeproductsCatalogController extends Controller
             }
         }
 
-        if (! $snapshotModel || ! $recoveredSnapshot && (int) $snapshotModel->id !== $snapshot && $data['action'] === 'create') {
+        if (! $snapshotModel || ! $recoveredSnapshot && (int) $snapshotModel->id !== $snapshot && in_array($data['action'], ['create', 'merge_other_supplier'], true)) {
             return response()->json([
                 'success' => false,
                 'message' => 'Данные файла были очищены или заменены. Обновите аудит и повторите действие.',
@@ -837,7 +837,7 @@ class BikeproductsCatalogController extends Controller
             $data['ids'],
             fn () => $this->catalog->applyGoodAction($snapshotModel, $data['action'], $data['ids']),
         );
-        if ($data['action'] === 'create' && $result['affected'] > 0) {
+        if (in_array($data['action'], ['create', 'merge_other_supplier'], true) && $result['affected'] > 0) {
             $jobs = $this->dispatchImageSyncJobs($snapshotModel, $data['ids'], 'append', $result['action_run_id'] ?? null);
             $result['message'] .= ". Скачивание изображений запущено в очереди: {$jobs} задач";
         }
