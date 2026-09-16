@@ -66,7 +66,17 @@ class DatabaseBackupService
 
         $metadata = $this->readMetadata($filename);
         $tables = is_array($metadata['tables'] ?? null) ? $metadata['tables'] : [];
-        $groups = is_array($metadata['table_groups'] ?? null) ? $metadata['table_groups'] : $this->summarizeTableGroups($tables);
+        // Нормализуем группы при чтении, чтобы старые манифесты также
+        // показывали shop_orders в отдельной группе «Заказы».
+        $tables = array_map(function (array $table) {
+            $name = (string) ($table['name'] ?? '');
+            if ($name !== '') {
+                $table['group'] = $this->tableGroup($name);
+            }
+            return $table;
+        }, $tables);
+        $groups = $this->summarizeTableGroups($tables);
+        unset($metadata['tables'], $metadata['table_groups']);
 
         return array_merge([
             'filename' => $filename,
@@ -1377,7 +1387,10 @@ class DatabaseBackupService
         foreach ($tables as $table) {
             $name = (string) ($table['name'] ?? '');
             if ($name !== '') {
-                $availableTables[$name] = (string) ($table['group'] ?? $this->tableGroup($name));
+                // Пересчитываем группу по имени таблицы. Это также исправляет
+                // старые манифесты, где shop_orders ещё ошибочно были отмечены
+                // как часть группы «Магазин».
+                $availableTables[$name] = $this->tableGroup($name);
             }
         }
 
@@ -1420,7 +1433,7 @@ class DatabaseBackupService
         }
 
         if ($mode === 'tables' && array_intersect($selectedTables, array_keys(array_filter($availableTables, fn ($group) => $group === 'shop')))) {
-            throw new RuntimeException('Таблицы магазина нельзя восстанавливать по одной: выберите группу «Магазин». Это сохраняет связи товаров, вариаций, изображений и заказов согласованными.');
+            throw new RuntimeException('Таблицы магазина нельзя восстанавливать по одной: выберите группу «Магазин». Это сохраняет связи товаров, вариаций и изображений согласованными. Таблицы заказов вынесены в отдельную группу и не затрагиваются.');
         }
 
         $blockedTables = array_values(array_filter($selectedTables, fn ($table) => ! $this->isPartialRestoreTableAllowed($table)));
@@ -1618,6 +1631,12 @@ class DatabaseBackupService
 
     private function tableGroup(string $table): string
     {
+        // Заказы нельзя включать в выборочное восстановление группы магазина:
+        // восстановление товарных таблиц не должно затирать новые заказы.
+        if (Str::startsWith($table, ['shop_order'])) {
+            return 'orders';
+        }
+
         if (Str::startsWith($table, ['shop_', 'promocode', 'bonus_', 'absent_promocode'])) {
             return 'shop';
         }
@@ -1645,6 +1664,7 @@ class DatabaseBackupService
     {
         return [
             'shop' => 'Магазин',
+            'orders' => 'Заказы (отдельно)',
             'users' => 'Пользователи и доступы',
             'content' => 'Контент и настройки сайта',
             'integrations' => 'Интеграции и импорты',

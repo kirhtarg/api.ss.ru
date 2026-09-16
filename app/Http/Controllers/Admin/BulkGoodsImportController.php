@@ -197,6 +197,11 @@ class BulkGoodsImportController extends Controller
         // Получаем параметры импорта
         $nameTrimSymbol = $request->input('name_trim_symbol');
         $naming = trim((string) $request->input('images_naming', 'hash'));
+        $minPriceInput = $request->input('min_price');
+        $minImportPrice = null;
+        if ($minPriceInput !== null && $minPriceInput !== '' && is_numeric(str_replace(',', '.', (string) $minPriceInput))) {
+            $minImportPrice = (float) str_replace(',', '.', (string) $minPriceInput);
+        }
 
         // Фильтруем пустые строки - оставляем только товары с заполненными SKU и названием
         $goods = [];
@@ -253,6 +258,27 @@ class BulkGoodsImportController extends Controller
             }
             if (array_key_exists('name', $good)) {
                 $good['name'] = $name;
+            }
+
+            // Фильтр минимальной цены применяется к обычной цене строки.
+            // Для строк вариаций учитываем их собственную цену, если она передана.
+            if ($minImportPrice !== null) {
+                $priceValue = array_key_exists('price', $good)
+                    ? $good['price']
+                    : ($good['variation']['price'] ?? null);
+                if ($priceValue !== null && $priceValue !== '' && is_numeric(str_replace(',', '.', (string) $priceValue))) {
+                    $numericPrice = (float) str_replace(',', '.', (string) $priceValue);
+                    if ($numericPrice < $minImportPrice) {
+                        $skippedRows[] = [
+                            'count' => $index + 1,
+                            'sku' => $sku,
+                            'name' => $name,
+                            'sheet' => $sheet,
+                            'reason' => "Цена {$numericPrice} ниже минимальной цены {$minImportPrice}",
+                        ];
+                        continue;
+                    }
+                }
             }
 
             // Добавляем supplier_name из запроса, если указан
