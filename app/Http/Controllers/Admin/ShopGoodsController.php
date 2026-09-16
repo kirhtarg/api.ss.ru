@@ -3202,45 +3202,10 @@ class ShopGoodsController extends Controller
                     ->get();
 
                 $deletedCount = 0;
-                $movedImagesCount = 0;
 
                 foreach ($variationsToDelete as $variation) {
-                    // Если у вариации есть изображения, пытаемся их перенести
-                    if ($variation->images->count() > 0) {
-                        // Находим другие вариации того же товара (любые, кроме тех что будут удалены)
-                        // Приоритет: активные вариации с положительным остатком, затем активные вариации, затем любые другие
-                        $targetVariation = ShopGoodVariation::where('good_id', $variation->good_id)
-                            ->where('id', '!=', $variation->id)
-                            ->whereNotIn('id', $variationIds) // Чсключаем все вариации, которые будут удалены в этом запросе
-                            ->orderByRaw('
-                                CASE
-                                    WHEN is_active = 1 AND (stock_quantity > 0 OR remote_stock_quantity > 0 OR fast_remote_stock_quantity > 0) THEN 1
-                                    WHEN is_active = 1 THEN 2
-                                    ELSE 3
-                                END,
-                                sort_order ASC
-                            ')
-                            ->first();
-
-                        // Если нашли целевую вариацию, перемещаем изображения
-                        if ($targetVariation) {
-                            foreach ($variation->images as $image) {
-                                $image->variation_id = $targetVariation->id;
-                                $image->save();
-                                $movedImagesCount++;
-                            }
-                        } else {
-                            // Если нет других вариаций, отвязываем изображения от вариации (привязываем к товару)
-                            foreach ($variation->images as $image) {
-                                $image->variation_id = null;
-                                $image->save();
-                                $movedImagesCount++;
-                            }
-                        }
-                    }
-                    // Вариации без изображений просто удаляются без дополнительных действий
-
-                    // Удаляем вариацию
+                    // Удаляем вариацию напрямую. Связанные изображения удаляются
+                    // каскадно в БД, без переноса в другие вариации или товар.
                     $variation->delete();
                     $deletedCount++;
                 }
@@ -3248,15 +3213,11 @@ class ShopGoodsController extends Controller
                 DB::commit();
 
                 $message = "Удалено {$deletedCount} вариаций с нулевым остатком";
-                if ($movedImagesCount > 0) {
-                    $message .= ". Перемещено {$movedImagesCount} изображений";
-                }
 
                 return response()->json([
                     'success' => true,
                     'message' => $message,
                     'deleted_count' => $deletedCount,
-                    'moved_images_count' => $movedImagesCount,
                     'variation_ids' => $variationIds,
                 ]);
             }
@@ -3866,6 +3827,15 @@ class ShopGoodsController extends Controller
                         }
                         if (! empty($updateData)) {
                             $good->update($updateData);
+
+                            // Демпинг хранится и на уровне вариации. Остальные
+                            // флаги являются свойствами основного товара и в
+                            // таблице вариаций не имеют отдельных колонок.
+                            if (array_key_exists('show_demping', $updateData)) {
+                                $good->variations()->update([
+                                    'show_demping' => $updateData['show_demping'],
+                                ]);
+                            }
                         }
                         break;
                     case 'update_label':
