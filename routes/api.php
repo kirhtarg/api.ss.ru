@@ -2054,6 +2054,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware([\App\Http\Middleware\CustomCors::class, 'auth:sanctum', 'role:admin,manager'])->prefix('shop')->group(function () {
             Route::get('/ycp/settings', [\App\Http\Controllers\Admin\YcpSettingsController::class, 'show']);
             Route::put('/ycp/settings', [\App\Http\Controllers\Admin\YcpSettingsController::class, 'update']);
+            Route::post('/ycp/test-connection', [\App\Http\Controllers\Admin\YcpSettingsController::class, 'testConnection'])->middleware('throttle:5,1');
             // Очистка дубликатов изображений (перед товарами)
             Route::prefix('images-cleanup')->group(function () {
                 Route::get('/scan', [\App\Http\Controllers\Admin\ImageCleanupController::class, 'scan']);
