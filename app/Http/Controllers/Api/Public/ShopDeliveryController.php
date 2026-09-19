@@ -25,7 +25,12 @@ class ShopDeliveryController extends Controller
             if ($orderWeight > 0) {
                 $deliveryMethods = $deliveryMethods->reject(function ($method) use ($orderWeight, $russianPostMaxWeight) {
                     $maxWeight = (float) ($method->settings['max_weight_kg'] ?? 0);
-                    if (($method->type ?? '') === 'russianpost' && $russianPostMaxWeight > 0) $maxWeight = $russianPostMaxWeight;
+                    $type = strtolower((string) ($method->type ?? ''));
+                    $name = mb_strtolower((string) ($method->name ?? ''));
+                    $isRussianPost = str_contains(preg_replace('/[^a-z]/', '', $type), 'russianpost')
+                        || $type === 'post'
+                        || str_contains($name, 'почта россии');
+                    if ($isRussianPost && $russianPostMaxWeight > 0) $maxWeight = $russianPostMaxWeight;
                     return $maxWeight > 0 && $orderWeight > $maxWeight;
                 })->values();
             }

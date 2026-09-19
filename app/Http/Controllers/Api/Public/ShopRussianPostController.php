@@ -37,6 +37,7 @@ class ShopRussianPostController extends Controller
                 'default_length' => (float) ($settings->default_length ?? 10),
                 'default_width' => (float) ($settings->default_width ?? 10),
                 'default_height' => (float) ($settings->default_height ?? 10),
+                'max_weight_kg' => $settings->max_weight_kg !== null ? (float) $settings->max_weight_kg : null,
                 'tariffs' => $this->enabledTariffProfiles($settings),
                 'cash_on_delivery_enabled' => (bool) $settings->cash_on_delivery_enabled,
                 'create_order_in_account' => (bool) $settings->create_order_in_account,

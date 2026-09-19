@@ -22,10 +22,15 @@ class PromocodeController extends Controller
     public function updatePopupSettings(Request $request): JsonResponse {
         $validator = Validator::make($request->all(), [
             'title'=>'nullable|string|max:255','text'=>'nullable|string|max:2000',
-            'delay_seconds'=>'required|integer|min:60|max:120',
+            'delay_seconds'=>'required|integer|min:5|max:600',
             'promocode_code'=>['required','string','max:32','regex:/^[A-Za-z0-9_-]+$/'],
             'discount_percent'=>'required|integer|min:1|max:90',
             'rotation_enabled'=>'required|boolean','rotation_minutes'=>'required|integer|min:1|max:1440','is_active'=>'required|boolean',
+        ], [
+            'delay_seconds.required' => 'Укажите задержку показа окна в секундах.',
+            'delay_seconds.integer' => 'Задержка должна быть целым числом секунд.',
+            'delay_seconds.min' => 'Минимальная задержка показа — 5 секунд.',
+            'delay_seconds.max' => 'Максимальная задержка показа — 600 секунд.',
         ]);
         if ($validator->fails()) return response()->json(['success'=>false,'message'=>'Проверьте настройки всплывающего промокода','errors'=>$validator->errors()],422);
         $data = $validator->validated();
