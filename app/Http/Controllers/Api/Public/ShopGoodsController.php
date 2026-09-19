@@ -554,6 +554,66 @@ class ShopGoodsController extends Controller
     }
 
     /**
+     * Ограничивает вариации теми, которые реально соответствуют текущей
+     * политике остатков магазина. Используется вместе с выбранными атрибутами,
+     * чтобы атрибут и наличие проверялись на одной и той же вариации.
+     */
+    private function applyVariationInStockCondition($query, int $remoteQ): void
+    {
+        $query->where(function ($stockQuery) use ($remoteQ) {
+            $stockQuery->where('stock_quantity', '>', 0);
+
+            if ($remoteQ === 2 || $remoteQ === 3) {
+                foreach (['remote_stock_quantity', 'fast_remote_stock_quantity'] as $field) {
+                    $stockQuery->orWhere(function ($remoteQuery) use ($field) {
+                        $remoteQuery->whereNotNull($field)
+                            ->where($field, '!=', '')
+                            ->whereRaw('LENGTH(TRIM('.$field.')) > 0')
+                            ->whereRaw("TRIM({$field}) NOT IN ('0', '0.0', '0.00')");
+                    });
+                }
+            }
+        });
+    }
+
+    /**
+     * Главные товарные блоки по требованиям витрины всегда скрывают товары
+     * без остатка: локального или указанного в одном из удалённых складов.
+     */
+    private function applyHomepageAvailabilityFilter($query): void
+    {
+        $query->where(function ($goodsQuery) {
+            $goodsQuery->where(function ($mainGoodQuery) {
+                $mainGoodQuery->whereDoesntHave('variations', fn ($variationQuery) => $variationQuery->where('is_active', true))
+                    ->where(function ($stockQuery) {
+                        $stockQuery->where('stock_quantity', '>', 0);
+                        foreach (['remote_stock_quantity', 'fast_remote_stock_quantity'] as $field) {
+                            $stockQuery->orWhere(function ($remoteQuery) use ($field) {
+                                $remoteQuery->whereNotNull($field)
+                                    ->where($field, '!=', '')
+                                    ->whereRaw('LENGTH(TRIM('.$field.')) > 0')
+                                    ->whereRaw("TRIM({$field}) NOT IN ('0', '0.0', '0.00')");
+                            });
+                        }
+                    });
+            })->orWhereHas('variations', function ($variationQuery) {
+                $variationQuery->where('is_active', true)
+                    ->where(function ($stockQuery) {
+                        $stockQuery->where('stock_quantity', '>', 0);
+                        foreach (['remote_stock_quantity', 'fast_remote_stock_quantity'] as $field) {
+                            $stockQuery->orWhere(function ($remoteQuery) use ($field) {
+                                $remoteQuery->whereNotNull($field)
+                                    ->where($field, '!=', '')
+                                    ->whereRaw('LENGTH(TRIM('.$field.')) > 0')
+                                    ->whereRaw("TRIM({$field}) NOT IN ('0', '0.0', '0.00')");
+                            });
+                        }
+                    });
+            });
+        });
+    }
+
+    /**
      * Переключить избранное для товара
      */
     public function toggleFavorite(Request $request): JsonResponse
@@ -1018,27 +1078,42 @@ class ShopGoodsController extends Controller
                 }
             }
 
-            // Фильтрация по атрибутам вариаций
+            // Фильтрация по атрибутам вариаций. При наличии фильтре все выбранные
+            // значения должны совпасть на одной и той же вариации с остатком.
             if ($request->has('attributes')) {
                 $attributes = $request->input('attributes');
                 // Поддержка формата attributes[id][]=value
                 if (is_array($attributes) && ! empty($attributes)) {
-                    foreach ($attributes as $attributeId => $values) {
-                        if (is_array($values) && ! empty($values)) {
-                            // Фильтруем товары, у которых есть вариация с указанным атрибутом и одним из выбранных значений
-                            $query->whereHas('variations', function ($q) use ($attributeId, $values, $request) {
-                                $q->where('is_active', true)
-                                    ->whereHas('attributeValues', function ($avQ) use ($attributeId, $values) {
-                                        $avQ->where('attribute_id', $attributeId)
+                    $selectedAttributes = collect($attributes)
+                        ->filter(fn ($values) => is_array($values) && $values !== [])
+                        ->all();
+
+                    if ($selectedAttributes !== []) {
+                        $filterByStock = $request->input('stock_filter') === 'in_stock';
+                        $shopRemoteQ = Setting::where('key', 'shop_remote_q')->value('value');
+                        $remoteQ = $shopRemoteQ !== null ? (int) $shopRemoteQ : 1;
+
+                        if ($filterByStock) {
+                            $query->whereHas('variations', function ($variationQuery) use ($selectedAttributes, $remoteQ) {
+                                $variationQuery->where('is_active', true);
+                                foreach ($selectedAttributes as $attributeId => $values) {
+                                    $variationQuery->whereHas('attributeValues', function ($valueQuery) use ($attributeId, $values) {
+                                        $valueQuery->where('attribute_id', $attributeId)
                                             ->whereIn('value', $values);
                                     });
-
-                                // При фильтре «В наличии» наличие должно быть у той же
-                                // вариации, которая соответствует выбранному атрибуту.
-                                if ($request->input('stock_filter') === 'in_stock') {
-                                    $q->where('stock_quantity', '>', 0);
                                 }
+                                $this->applyVariationInStockCondition($variationQuery, $remoteQ);
                             });
+                        } else {
+                            foreach ($selectedAttributes as $attributeId => $values) {
+                                $query->whereHas('variations', function ($variationQuery) use ($attributeId, $values) {
+                                    $variationQuery->where('is_active', true)
+                                        ->whereHas('attributeValues', function ($valueQuery) use ($attributeId, $values) {
+                                            $valueQuery->where('attribute_id', $attributeId)
+                                                ->whereIn('value', $values);
+                                        });
+                                });
+                            }
                         }
                     }
                 }
@@ -1627,10 +1702,11 @@ class ShopGoodsController extends Controller
     {
         try {
             $limit = max(1, min((int) $request->get('limit', 24), 60));
-            $cacheKey = 'public_shop_goods_main_blocks_'.$limit;
+            $cacheKey = 'public_shop_goods_main_blocks_v2_'.$limit;
 
             $data = Cache::remember($cacheKey, 60, function () use ($limit) {
-                // Получаем хиты продаж (featured) - показываем напрямую товары с is_featured = true без дополнительных условий
+                // Хиты продаж показываем только при положительном остатке товара
+                // либо хотя бы одной активной вариации.
                 $featuredQuery = ShopGood::with(['images' => function ($query) {
                     $query->orderBy('sort_order');
                 }, 'categories', 'brands'])
@@ -1638,7 +1714,7 @@ class ShopGoodsController extends Controller
                     ->active() // Только активные товары
                     ->orderBy('created_at', 'desc')
                     ->limit($limit);
-                // Не применяем applyStockFilter - показываем все товары с is_featured = true независимо от настроек показа
+                $this->applyHomepageAvailabilityFilter($featuredQuery);
                 $featured = $featuredQuery->get();
 
                 // Получаем товары со скидками (sale) - показываем напрямую товары с is_sale = true без дополнительных условий
@@ -1649,7 +1725,7 @@ class ShopGoodsController extends Controller
                     ->active() // Только активные товары
                     ->orderBy('created_at', 'desc')
                     ->limit($limit);
-                // Не применяем applyStockFilter - показываем все товары с is_sale = true независимо от настроек показа
+                $this->applyHomepageAvailabilityFilter($saleQuery);
                 $sale = $saleQuery->get();
 
                 // Получаем новинки (new)
@@ -1660,7 +1736,7 @@ class ShopGoodsController extends Controller
                     ->active() // Используем scope метод для правильной фильтрации boolean поля
                     ->orderBy('created_at', 'desc')
                     ->limit($limit);
-                $this->applyStockFilter($newQuery);
+                $this->applyHomepageAvailabilityFilter($newQuery);
                 $new = $newQuery->get();
 
                 return [

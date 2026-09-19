@@ -2453,37 +2453,16 @@ class ProcessExportJob implements ShouldQueue
                 }
                 $fileSize = strlen($xmlContent);
 
-                // Остаточный фид должен содержать все объявления, которые
-                // потенциально присутствуют на Avito, включая товары с нулевым
-                // остатком. Если использовать отфильтрованный набор $goods,
-                // товар после обнуления исчезает из XML и Avito сохраняет его
-                // старый остаток. Для ручной выгрузки выбранных товаров
-                // сохраняем ограничение selected_ids.
+                // Для остатков повторяем условия основного экспорта, но снимаем
+                // именно фильтры по наличию. Иначе товар, остаток которого
+                // обнулился, перестанет попадать в фид и Avito сохранит старый
+                // ненулевой остаток. Остальные условия (активность, категории,
+                // бренд и т. п.) и ограничение selected_ids остаются прежними.
                 try {
-                    // Фид остатков должен включать все товары, которые могли
-                    // ранее попасть на Avito, в том числе отключённые и скрытые.
-                    // Иначе после снятия товара с показа он исчезает из фида, а
-                    // Avito сохраняет его старый остаток. Ограничение selected_ids
-                    // применяется только для ручной выгрузки выбранных товаров.
-                    $stockQuery = ShopGood::query();
-                    $selectedStockIds = data_get($config, 'filters.selected_ids');
-                    if (is_array($selectedStockIds) && $selectedStockIds !== []) {
-                        $selectedStockIds = collect($selectedStockIds)
-                            ->filter(fn ($id) => is_numeric($id) && (int) $id > 0)
-                            ->map(fn ($id) => (int) $id)
-                            ->values()
-                            ->all();
-                        if ($selectedStockIds !== []) {
-                            $stockQuery->whereIn('id', $selectedStockIds);
-                        }
-                    }
-                    $stockGoods = $stockQuery->with('variations')->get();
-                    // Не допускаем тихого формирования пустого stock-фида:
-                    // основной фид уже содержит $goods, поэтому при неожиданно
-                    // пустом втором запросе используем тот же набор товаров.
-                    if ($stockGoods->isEmpty() && $goods->isNotEmpty()) {
-                        $stockGoods = $goods;
-                    }
+                    $stockConfig = $this->avitoStocksExportConfig($config);
+                    $stockGoods = $this->getExportQuery($stockConfig)
+                        ->with('variations')
+                        ->get();
                     $stocksXml = $service->generateStocks($stockGoods);
                     if (!is_string($stocksXml) || trim($stocksXml) === '' ||
                         ($stockGoods->isNotEmpty() && substr_count($stocksXml, '<item>') === 0)) {
@@ -2540,5 +2519,28 @@ class ProcessExportJob implements ShouldQueue
                 'error_message' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * Stock feed eligibility follows the full Avito export, except that stock
+     * filters are removed so an item that just went out of stock still emits
+     * an explicit zero update. Selection and all non-stock export filters stay.
+     */
+    protected function avitoStocksExportConfig(array $config): array
+    {
+        $filters = $config['filters'] ?? [];
+        if (! is_array($filters)) {
+            return $config;
+        }
+
+        foreach (array_keys($filters) as $key) {
+            if (stripos((string) $key, 'stock') !== false || (string) $key === 'in_stock') {
+                unset($filters[$key]);
+            }
+        }
+
+        $config['filters'] = $filters;
+
+        return $config;
     }
 }

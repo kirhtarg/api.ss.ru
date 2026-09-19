@@ -16,6 +16,7 @@ use App\Models\SupplierCatalogActionRun;
 use App\Models\SupplierCatalogItem;
 use App\Models\SupplierCatalogProfile;
 use App\Models\SupplierCatalogSnapshot;
+use App\Support\ProductTextNormalizer;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
@@ -5800,14 +5801,14 @@ class BikeproductsCatalogService
             $value = implode('', array_map(static fn ($part) => method_exists($part, 'getText') ? $part->getText() : (string) $part, $value));
         }
 
-        $value = trim((string) $value);
+        $value = trim(ProductTextNormalizer::normalizeDegreeMark((string) $value));
 
         return $value === '' ? null : $value;
     }
 
     private function nullableString(mixed $value): ?string
     {
-        $value = trim((string) $value);
+        $value = trim(ProductTextNormalizer::normalizeDegreeMark((string) $value));
 
         return $value === '' ? null : $value;
     }

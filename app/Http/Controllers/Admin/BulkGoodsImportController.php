@@ -13,6 +13,7 @@ use App\Models\ShopPropertyValue;
 use App\Models\ShopSupplier;
 use App\Services\GoodsBackupService;
 use App\Services\ImportLogService;
+use App\Support\ProductTextNormalizer;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -191,7 +192,7 @@ class BulkGoodsImportController extends Controller
         // }
 
         // Получаем данные товаров
-        $allGoods = $request->input('goods', []);
+        $allGoods = ProductTextNormalizer::normalizePayload($request->input('goods', []));
 
         // ГАРАНТИРОВАННАЯ ПРОВЕРКА (Удалите после теста)
         // Получаем параметры импорта
