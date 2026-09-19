@@ -995,6 +995,16 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
     });
     Route::get('/public/shop/yandex/pickup-points', [App\Http\Controllers\Api\Public\ShopYandexDeliveryController::class, 'getPickupPoints']);
 
+    // Маршруты Ozon Доставки для магазина
+    Route::options('/public/shop/ozon/pickup-points', function () {
+        return response()->json([], 200);
+    });
+    Route::get('/public/shop/ozon/pickup-points', [App\Http\Controllers\Api\Public\ShopOzonDeliveryController::class, 'pickupPoints']);
+    Route::options('/public/shop/ozon/checkout', function () {
+        return response()->json([], 200);
+    });
+    Route::post('/public/shop/ozon/checkout', [App\Http\Controllers\Api\Public\ShopOzonDeliveryController::class, 'checkout']);
+
     Route::options('/public/shop/yandex/tariffs', function () {
         return response()->json([], 200);
     });
@@ -2456,6 +2466,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::put('/{id}/russianpost/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateRussianPostStatus']);
                 Route::post('/{id}/yandex/order', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'createYandexDeliveryOrder']);
                 Route::put('/{id}/yandex/status', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateYandexDeliveryStatus']);
+                Route::post('/{id}/ozon/order', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'createOzonDeliveryOrder']);
                 Route::post('/{id}/items', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'addItem']);
                 Route::put('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'updateItem']);
                 Route::delete('/{id}/items/{itemId}', [\App\Http\Controllers\Admin\ShopOrdersController::class, 'removeItem']);
@@ -2600,6 +2611,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/settings', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'show']);
                 Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'save']);
                 Route::post('/validate-credentials', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'validateCredentials']);
+                Route::post('/oauth-token', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'refreshOzonToken']);
             });
 
             Route::prefix('ozon-seller')->group(function () {

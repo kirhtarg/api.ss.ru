@@ -19,6 +19,7 @@ use App\Models\UserBonus;
 use App\Models\UserBonusTransaction;
 use App\Services\CdekService;
 use App\Services\DeliveryPackageService;
+use App\Services\OzonDeliveryService;
 use App\Services\TbankPaymentService;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
@@ -2985,6 +2986,38 @@ class ShopOrdersController extends Controller
             Log::error('Ошибка создания заявки Яндекс Доставки: '.$e->getMessage(), ['order_id' => $id]);
 
             return response()->json(['success' => false, 'message' => 'Ошибка создания заявки Яндекс Доставки: '.$e->getMessage()], 500);
+        }
+    }
+
+    public function createOzonDeliveryOrder(Request $request, $id): JsonResponse
+    {
+        try {
+            $order = ShopOrder::findOrFail($id);
+            $metadata = is_array($order->metadata) ? $order->metadata : [];
+            if (! empty($metadata['ozon_order_number'])) {
+                return response()->json(['success' => true, 'message' => 'Заявка Ozon Доставки уже создана', 'data' => ['ozon_order_number' => $metadata['ozon_order_number']]]);
+            }
+
+            $result = app(OzonDeliveryService::class)->createOrder($order);
+            $fresh = $order->fresh();
+            $savedMetadata = is_array($fresh?->metadata) ? $fresh->metadata : [];
+            $externalNumber = $result['order_number'] ?? $savedMetadata['ozon_order_number'] ?? null;
+            ShopOrderLog::createLog($order->id, 'Заявка Ozon Доставки создана', [
+                'action_color' => '#FFFFFF',
+                'action_bg_color' => '#16A34A',
+                'section' => ShopOrderLog::SECTION_DELIVERY,
+                'comment' => $externalNumber ? 'Номер заказа Ozon: '.$externalNumber : 'Заявка успешно передана в Ozon.',
+                'info' => "Заказ № {$order->order_number}",
+            ]);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Заявка Ozon Доставки создана',
+                'data' => ['ozon_order_number' => $externalNumber, 'order' => $this->formatOrderForResponse($fresh->load(['status', 'user', 'paymentMethod', 'deliveryMethod', 'manager']))],
+            ]);
+        } catch (\Throwable $e) {
+            Log::error('Ошибка создания заявки Ozon Доставки: '.$e->getMessage(), ['order_id' => $id]);
+            return response()->json(['success' => false, 'message' => 'Не удалось создать заявку Ozon Доставки: '.$e->getMessage()], 422);
         }
     }
 

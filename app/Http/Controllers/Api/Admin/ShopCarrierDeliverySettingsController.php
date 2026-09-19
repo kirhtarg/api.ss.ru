@@ -133,7 +133,7 @@ class ShopCarrierDeliverySettingsController extends Controller
         $apiToken = trim((string) $request->get('api_token', ''));
 
         if ($apiUrl === '' || $apiToken === '') {
-            return response()->json([
+        return response()->json([
                 'success' => false,
                 'message' => 'Укажите API URL и токен. Для полноценной проверки нужен рабочий URL метода из договора/ЛК службы доставки.',
                 'data' => ['valid' => false],
@@ -163,33 +163,91 @@ class ShopCarrierDeliverySettingsController extends Controller
         }
     }
 
-    private function validateOzonCredentials(Request $request): JsonResponse
+    public function refreshOzonToken(Request $request, string $carrier): JsonResponse
     {
-        $token = trim((string) $request->input('oauth_access_token', ''));
-        $settings = ShopCarrierDeliverySettings::where('carrier', 'ozon')->first();
-        if ($token === '' && $settings) {
-            $token = trim((string) $settings->oauth_access_token);
+        if ($access = $this->checkAccess($request)) {
+            return $access;
+        }
+        if ($carrier !== 'ozon') {
+            return response()->json(['success' => false, 'message' => 'OAuth-токен поддерживается только для Ozon Доставки'], 404);
         }
 
-        if ($token === '') {
+        $settings = ShopCarrierDeliverySettings::firstOrCreate(['carrier' => 'ozon'], ['is_active' => false]);
+        $clientId = trim((string) $request->input('oauth_client_id', $settings->oauth_client_id));
+        $clientSecret = trim((string) $request->input('oauth_client_secret', $settings->oauth_client_secret));
+        if ($clientId === '' || $clientSecret === '') {
+            return response()->json(['success' => false, 'message' => 'Сначала укажите OAuth Client ID и Client Secret Ozon и сохраните настройки.'], 422);
+        }
+
+        try {
+            $tokenResult = $this->requestOzonAccessToken($clientId, $clientSecret);
+            if (! $tokenResult['success']) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $tokenResult['message'],
+                    'data' => ['status' => $tokenResult['status']],
+                ], 422);
+            }
+
+            $settings->oauth_client_id = $clientId;
+            $settings->oauth_client_secret = $clientSecret;
+            $settings->oauth_access_token = $tokenResult['token'];
+            $settings->oauth_expires_at = $tokenResult['expires_at'];
+            $settings->save();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'OAuth-токен Ozon получен и сохранен на сервере.',
+                'data' => [
+                    'has_oauth_access_token' => true,
+                    'oauth_expires_at' => $settings->oauth_expires_at,
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+            return response()->json(['success' => false, 'message' => 'Не удалось подключиться к OAuth API Ozon. Проверьте доступ сервера к xapi.ozon.ru.'], 422);
+        }
+    }
+
+    private function validateOzonCredentials(Request $request): JsonResponse
+    {
+        $settings = ShopCarrierDeliverySettings::where('carrier', 'ozon')->first();
+        $clientId = trim((string) $request->input('oauth_client_id', $settings?->oauth_client_id));
+        $clientSecret = trim((string) $request->input('oauth_client_secret', '')) ?: (string) ($settings?->oauth_client_secret ?? '');
+        if (! $settings || $clientId === '' || $clientSecret === '') {
             return response()->json([
                 'success' => false,
-                'message' => 'Укажите OAuth access token Ozon Delivery. Обычный Api-Key Seller API для Ozon Логистики не подходит.',
+                'message' => 'Укажите OAuth Client ID и Client Secret Ozon Доставки. Токен сайт получит автоматически.',
                 'data' => ['valid' => false],
             ], 422);
         }
 
+        $tokenResult = $this->requestOzonAccessToken($clientId, $clientSecret);
+        if (! $tokenResult['success']) {
+            return response()->json([
+                'success' => false,
+                'message' => $tokenResult['message'],
+                'data' => ['valid' => false, 'status' => $tokenResult['status'], 'response' => $tokenResult['response']],
+            ], 422);
+        }
+        $token = $tokenResult['token'];
+        $settings->oauth_client_id = $clientId;
+        $settings->oauth_client_secret = $clientSecret;
+        $settings->oauth_access_token = $token;
+        $settings->oauth_expires_at = $tokenResult['expires_at'];
+        $settings->save();
+
         try {
-            $url = 'https://api-seller.ozon.ru/v1/seller/ozon-logistics/info';
+        $url = 'https://api-delivery.ozon.ru/v1/delivery-point/list';
             $response = Http::withToken($token)
                 ->acceptJson()
                 ->asJson()
                 ->timeout(20)
-                ->post($url, []);
+                ->post($url, ['pagination' => ['cursor' => null, 'limit' => 1]]);
             $data = $response->json();
-            $enabled = (bool) data_get($data, 'ozon_logistics_enabled', false);
+            $enabled = $response->successful() && is_array(data_get($data, 'delivery_points'));
             $message = $response->successful()
-                ? ($enabled ? 'Ozon Доставка подключена и доступна для этого OAuth-токена.' : 'OAuth-токен принят, но Ozon Доставка не включена в кабинете.')
+                ? ($enabled ? 'OAuth-токен действителен, API Ozon Доставки доступен.' : 'Ozon ответил, но формат списка пунктов выдачи неожиданный.')
                 : (data_get($data, 'message') ?? data_get($data, 'error.message') ?? $response->body());
 
             return response()->json([
@@ -199,9 +257,10 @@ class ShopCarrierDeliverySettingsController extends Controller
                     'valid' => $response->successful() && $enabled,
                     'status' => $response->status(),
                     'url' => $url,
-                    'ozon_logistics_enabled' => $enabled,
-                    'available_schemas' => array_values((array) data_get($data, 'available_schemas', [])),
-                    'response' => $data,
+                    'api_accessible' => $enabled,
+                    'response' => $response->successful()
+                        ? ['delivery_points_count' => count((array) data_get($data, 'delivery_points', [])), 'next_cursor' => data_get($data, 'next_cursor')]
+                        : $data,
                 ],
             ], $response->successful() && $enabled ? 200 : 422);
         } catch (\Throwable $e) {
@@ -213,9 +272,35 @@ class ShopCarrierDeliverySettingsController extends Controller
         }
     }
 
+    private function requestOzonAccessToken(string $clientId, string $clientSecret): array
+    {
+        $response = Http::acceptJson()->asJson()->timeout(20)->post('https://xapi.ozon.ru/oauth/token', [
+            'client_id' => $clientId,
+            'client_secret' => $clientSecret,
+            'grant_type' => 'client_credentials',
+            'scope' => ['delivery-api.all'],
+        ]);
+        $body = $response->json();
+        $token = trim((string) data_get($body, 'access_token', ''));
+        if (! $response->successful() || $token === '') {
+            $message = data_get($body, 'message') ?? data_get($body, 'error_description') ?? data_get($body, 'error') ?? 'Ozon не вернул access_token';
+            if (is_array($body)) {
+                unset($body['access_token'], $body['client_secret']);
+            }
+            return ['success' => false, 'status' => $response->status(), 'message' => 'Не удалось получить OAuth-токен Ozon: '.$message, 'response' => $body];
+        }
+        $expires = data_get($body, 'expires_in');
+        $expiresAt = is_numeric($expires) ? now()->setTimestamp((int) $expires) : null;
+
+        return ['success' => true, 'token' => $token, 'expires_at' => $expiresAt, 'status' => $response->status()];
+    }
+
     private function settingsPayload(ShopCarrierDeliverySettings $settings): array
     {
-        return array_merge($settings->toArray(), [
+        $payload = $settings->toArray();
+        unset($payload['oauth_client_secret'], $payload['oauth_access_token']);
+
+        return array_merge($payload, [
             'has_oauth_client_secret' => filled($settings->oauth_client_secret),
             'has_oauth_access_token' => filled($settings->oauth_access_token),
         ]);
@@ -573,10 +658,4 @@ class ShopCarrierDeliverySettingsController extends Controller
         return null;
     }
 }
-
-
-
-
-
-
 

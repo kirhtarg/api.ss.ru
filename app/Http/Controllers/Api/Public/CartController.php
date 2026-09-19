@@ -22,6 +22,7 @@ use App\Services\NotificationService;
 use App\Services\TelegramService;
 use App\Services\ShopDeliveryActivitySyncService;
 use App\Services\DeliveryPackageService;
+use App\Services\OzonDeliveryService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -1279,6 +1280,12 @@ class CartController extends Controller
                     'yandex_pickup_point_id' => $request->get('yandex_pickup_point_id'),
                     'yandex_delivery_address' => $request->get('yandex_delivery_address'),
                     'yandex_delivery_metadata' => $request->get('yandex_delivery_metadata'),
+                    'ozon_delivery_type' => $request->get('ozon_delivery_type'),
+                    'ozon_delivery_city' => $request->get('ozon_delivery_city'),
+                    'ozon_delivery_point_id' => $request->get('ozon_delivery_point_id'),
+                    'ozon_shipment_method_id' => $request->get('ozon_shipment_method_id'),
+                    'ozon_delivery_point' => $request->get('ozon_delivery_point'),
+                    'ozon_delivery_quote' => $request->get('ozon_delivery_quote'),
                     'base_overtax_amount' => $baseOvertaxAmount,
                     'payment_surcharge_amount' => $paymentSurchargeAmount,
                 ],
@@ -2159,6 +2166,30 @@ class CartController extends Controller
             $isYandexDelivery = ! empty($metadata['yandex_delivery_type'])
                 || (str_contains($shippingMethod, 'яндекс') && ! str_contains($shippingMethod, 'пэй'))
                 || str_contains($shippingMethod, 'yandex');
+            $isOzonDelivery = ! empty($metadata['ozon_delivery_type'])
+                || str_contains($shippingMethod, 'озон')
+                || str_contains($shippingMethod, 'ozon');
+
+            if ($isOzonDelivery) {
+                $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('ozon') === false
+                    ? null
+                    : ShopCarrierDeliverySettings::getActive('ozon');
+                if (! $settings) {
+                    $this->logExternalDeliveryCreationError($order, 'Ozon Доставка', 'Активные настройки Ozon Доставки не найдены.');
+                    return;
+                }
+
+                $result = app(OzonDeliveryService::class)->createOrder($order);
+                $ozonOrderNumber = $result['order_number'] ?? null;
+                ShopOrderLog::createLog($order->id, 'Заявка Ozon Доставки создана', [
+                    'action_color' => '#FFFFFF',
+                    'action_bg_color' => '#16A34A',
+                    'section' => ShopOrderLog::SECTION_DELIVERY,
+                    'comment' => $ozonOrderNumber ? 'Номер заказа Ozon: '.$ozonOrderNumber : 'Заявка успешно создана в Ozon.',
+                    'info' => "Заказ № {$order->order_number}",
+                ]);
+                return;
+            }
 
             if ($isDellin) {
                 $settings = app(ShopDeliveryActivitySyncService::class)->getMethodActive('dellin') === false
