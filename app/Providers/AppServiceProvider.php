@@ -7,6 +7,7 @@ use App\Models\ShopOrder;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Observers\PartnerShopOrderObserver;
+use App\Observers\ShopGoodSlugAliasObserver;
 use App\Observers\YandexProductsFeedObserver;
 use App\Observers\YandexProductsOfferStateObserver;
 use Illuminate\Support\Facades\Cache;
@@ -36,6 +37,7 @@ class AppServiceProvider extends ServiceProvider
         // Регистрируем VK провайдер для Socialite
         Event::listen(SocialiteWasCalled::class, SocialiteWasCalledListener::class);
         ShopOrder::observe(PartnerShopOrderObserver::class);
+        ShopGood::observe(ShopGoodSlugAliasObserver::class);
         ShopGood::observe(YandexProductsOfferStateObserver::class);
         ShopGoodVariation::observe(YandexProductsOfferStateObserver::class);
         ShopGood::observe(YandexProductsFeedObserver::class);

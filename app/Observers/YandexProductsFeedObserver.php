@@ -11,7 +11,7 @@ class YandexProductsFeedObserver implements ShouldHandleEventsAfterCommit
 {
     private const OFFER_FIELDS = [
         'is_active', 'price', 'sale_price', 'demping_price', 'show_demping',
-        'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity',
+        'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'slug',
     ];
 
     public function created(Model $model): void

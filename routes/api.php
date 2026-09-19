@@ -2038,6 +2038,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Shop management (для пользователей с доступом к shop) - CORS ПЕРВЫЙ!
         Route::middleware([\App\Http\Middleware\CustomCors::class, 'auth:sanctum', 'role:admin,manager'])->prefix('shop')->group(function () {
+            Route::get('/ycp/settings', [\App\Http\Controllers\Admin\YcpSettingsController::class, 'show']);
+            Route::put('/ycp/settings', [\App\Http\Controllers\Admin\YcpSettingsController::class, 'update']);
             // Очистка дубликатов изображений (перед товарами)
             Route::prefix('images-cleanup')->group(function () {
                 Route::get('/scan', [\App\Http\Controllers\Admin\ImageCleanupController::class, 'scan']);

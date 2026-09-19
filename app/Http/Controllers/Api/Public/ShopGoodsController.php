@@ -1906,8 +1906,9 @@ class ShopGoodsController extends Controller
         try {
             // Обработка slug с учетом суффиксов из параметров сайта
             $slug = $this->normalizeSlug($slug);
+            $requestedSlug = $slug;
 
-            $good = ShopGood::with([
+            $goodQuery = ShopGood::with([
                 'variations' => function ($query) {
                     $query->where('is_active', true)
                         ->select('*') // Включаем все поля, включая remote_stock_quantity
@@ -1944,10 +1945,25 @@ class ShopGoodsController extends Controller
                 'label' => function ($query) {
                     $query->select('id', 'name', 'color');
                 },
-            ])
+            ]);
+            $good = (clone $goodQuery)
                 ->where('slug', $slug)
                 ->where('is_active', true)
                 ->first();
+
+            $slugAliasRedirect = false;
+            if (! $good && \Illuminate\Support\Facades\Schema::hasTable('shop_good_slug_aliases')) {
+                $alias = \Illuminate\Support\Facades\DB::table('shop_good_slug_aliases')
+                    ->where('slug', $requestedSlug)
+                    ->first(['good_id']);
+                if ($alias) {
+                    $good = (clone $goodQuery)
+                        ->where('id', $alias->good_id)
+                        ->where('is_active', true)
+                        ->first();
+                    $slugAliasRedirect = (bool) $good;
+                }
+            }
 
             if (! $good) {
                 return response()->json([
@@ -1996,6 +2012,7 @@ class ShopGoodsController extends Controller
             // Добавляем поле is_favorite к товару и нормализуем свойства
             $goodData = $good->toArray();
             $goodData['is_favorite'] = $isFavorite;
+            $goodData['slug_alias_redirect'] = $slugAliasRedirect;
             // Явно добавляем is_preorder, если его нет (для совместимости)
             if (! isset($goodData['is_preorder'])) {
                 $goodData['is_preorder'] = $good->is_preorder ?? 0;

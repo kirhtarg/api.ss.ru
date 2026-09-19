@@ -11,6 +11,8 @@ use Illuminate\Support\Facades\Log;
 
 class YmlFeedService
 {
+    private ?bool $ycpCheckoutEnabled = null;
+
     /**
      * Returns the exact availability and price state used by the public YML
      * offer. The Products API uses the same aggregate main-good offer IDs.
@@ -65,6 +67,9 @@ class YmlFeedService
             if (!$handle) {
                 throw new \Exception("Не удалось открыть временный файл для записи: $temporaryFullPath");
             }
+
+            $this->ycpCheckoutEnabled = DB::table('settings')
+                ->where('group', 'ycp')->where('key', 'enabled')->value('value') === '1';
 
             fwrite($handle, '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL);
             fwrite($handle, '<yml_catalog date="' . date('Y-m-d H:i') . '">' . PHP_EOL);
@@ -277,6 +282,12 @@ class YmlFeedService
         }
 
         fwrite($handle, '                <currencyId>RUR</currencyId>' . PHP_EOL);
+
+        // YCP checkout availability is explicitly opt-in and independent from
+        // the existing Yandex Products API and Seller API integrations.
+        if ($this->ycpCheckoutEnabled === true) {
+            fwrite($handle, '                <param name="is_checkout_enabled">true</param>' . PHP_EOL);
+        }
 
         // Категория (берем первую из списка)
         if ($good->categories->isNotEmpty()) {
