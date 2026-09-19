@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\ShopCarrierDeliverySettings;
+use App\Services\OzonDeliveryService;
 use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -238,17 +239,29 @@ class ShopCarrierDeliverySettingsController extends Controller
         $settings->save();
 
         try {
-        $url = 'https://api-delivery.ozon.ru/v1/delivery-point/list';
-            $response = Http::withToken($token)
-                ->acceptJson()
-                ->asJson()
-                ->timeout(20)
-                ->post($url, ['pagination' => ['cursor' => null, 'limit' => 1]]);
+            $url = 'https://api-delivery.ozon.ru/v1/delivery-point/list';
+            $response = app(OzonDeliveryService::class)->requestWithToken(
+                $token,
+                '/v1/delivery-point/list',
+                ['pagination' => ['cursor' => null, 'limit' => 1]]
+            );
             $data = $response->json();
             $enabled = $response->successful() && is_array(data_get($data, 'delivery_points'));
-            $message = $response->successful()
-                ? ($enabled ? 'OAuth-токен действителен, API Ozon Доставки доступен.' : 'Ozon ответил, но формат списка пунктов выдачи неожиданный.')
-                : (data_get($data, 'message') ?? data_get($data, 'error.message') ?? $response->body());
+            $suggestions = [];
+            if ($response->status() === 401) {
+                $message = 'OAuth-токен получен, но Ozon Delivery API его не принял (401). Проверьте настройки приватного приложения и доступ к Ozon Доставке.';
+                $suggestions = [
+                    'Client ID и Client Secret должны быть созданы именно в приложении Ozon Доставки, а не взяты из Seller API или другого приложения.',
+                    'В приложении должен быть включен доступ delivery-api.all (либо полный набор прав Ozon Delivery API), после изменения прав выпустите токен заново кнопкой «Получить OAuth-токен».',
+                    'Проверьте, что подключение Ozon Доставки для бизнеса активно для кабинета и по нему заключен/активирован договор. Seller API Api-Key сюда не подходит.',
+                ];
+            } elseif ($response->successful()) {
+                $message = $enabled
+                    ? 'OAuth-токен принят, API Ozon Доставки доступен.'
+                    : 'Ozon ответил, но формат списка пунктов выдачи неожиданный.';
+            } else {
+                $message = data_get($data, 'message') ?? data_get($data, 'error.message') ?? $response->body();
+            }
 
             return response()->json([
                 'success' => $response->successful() && $enabled,
@@ -258,6 +271,9 @@ class ShopCarrierDeliverySettingsController extends Controller
                     'status' => $response->status(),
                     'url' => $url,
                     'api_accessible' => $enabled,
+                    'oauth_token_obtained' => true,
+                    'oauth_scope_requested' => 'delivery-api.all',
+                    'suggestions' => $suggestions,
                     'response' => $response->successful()
                         ? ['delivery_points_count' => count((array) data_get($data, 'delivery_points', [])), 'next_cursor' => data_get($data, 'next_cursor')]
                         : $data,
@@ -658,4 +674,3 @@ class ShopCarrierDeliverySettingsController extends Controller
         return null;
     }
 }
-

@@ -4,8 +4,11 @@ namespace App\Services;
 
 use App\Models\ShopCarrierDeliverySettings;
 use App\Models\ShopOrder;
+use GuzzleHttp\Psr7\Uri;
+use GuzzleHttp\Psr7\UriResolver;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Http\Client\Response;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -64,8 +67,7 @@ class OzonDeliveryService
             $headers['Idempotency-Key'] = $idempotencyKey;
         }
 
-        $response = Http::withHeaders($headers)->acceptJson()->asJson()->timeout(30)
-            ->post(self::API_URL.'/'.ltrim($path, '/'), $payload);
+        $response = $this->requestWithToken($token, $path, $payload, $headers);
         $body = $response->json();
         if (! $response->successful()) {
             $message = data_get($body, 'message') ?? data_get($body, 'error.message') ?? data_get($body, 'error') ?? $response->body();
@@ -76,6 +78,75 @@ class OzonDeliveryService
         }
 
         return $body;
+    }
+
+    /**
+     * Send an API request and complete Ozon's same-origin testcookie challenge
+     * when present. The redirect response must not be followed as a normal
+     * browser redirect: Ozon expects the original POST body and challenge
+     * cookie to be replayed together.
+     */
+    public function requestWithToken(string $token, string $path, array $payload = [], array $headers = []): Response
+    {
+        $url = self::API_URL.'/'.ltrim($path, '/');
+        $headers = array_merge(['Authorization' => 'Bearer '.$token, 'Accept' => 'application/json'], $headers);
+        $cookies = [];
+
+        for ($attempt = 0; $attempt < 4; $attempt++) {
+            if ($cookies) {
+                $headers['Cookie'] = implode('; ', array_map(
+                    static fn ($name, $value) => $name.'='.$value,
+                    array_keys($cookies),
+                    array_values($cookies)
+                ));
+            }
+
+            $response = Http::withHeaders($headers)
+                ->acceptJson()
+                ->asJson()
+                ->timeout(30)
+                ->withOptions(['allow_redirects' => false])
+                ->post($url, $payload);
+
+            if (! in_array($response->status(), [302, 307], true)) {
+                return $response;
+            }
+
+            foreach ($response->toPsrResponse()->getHeader('Set-Cookie') as $cookieHeader) {
+                $cookiePair = trim(explode(';', (string) $cookieHeader, 2)[0]);
+                if ($cookiePair === '' || ! str_contains($cookiePair, '=')) {
+                    continue;
+                }
+                [$name, $value] = explode('=', $cookiePair, 2);
+                $cookies[trim($name)] = trim($value);
+            }
+
+            $location = trim((string) $response->header('Location'));
+            if ($location !== '') {
+                $url = $this->resolveSameOriginUrl($url, $location);
+            }
+
+            if (! $cookies && $location === '') {
+                return $response;
+            }
+        }
+
+        throw new RuntimeException('Ozon API не завершил проверку testcookie после нескольких попыток.');
+    }
+
+    private function resolveSameOriginUrl(string $currentUrl, string $location): string
+    {
+        $base = parse_url(self::API_URL);
+        $target = (string) UriResolver::resolve(new Uri($currentUrl), new Uri($location));
+        $targetParts = parse_url($target);
+        if (! $targetParts ||
+            strtolower((string) ($targetParts['scheme'] ?? '')) !== strtolower((string) ($base['scheme'] ?? 'https')) ||
+            strtolower((string) ($targetParts['host'] ?? '')) !== strtolower((string) ($base['host'] ?? '')) ||
+            (int) ($targetParts['port'] ?? 443) !== (int) ($base['port'] ?? 443)) {
+            throw new RuntimeException('Ozon API вернул небезопасный redirect за пределы api-delivery.ozon.ru.');
+        }
+
+        return $target;
     }
 
     public function getPickupPoints(string $city): array
