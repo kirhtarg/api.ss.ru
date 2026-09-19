@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Promocode;
 use App\Models\ShopCategory;
 use App\Models\ShopGood;
+use App\Models\ShopPromocodePopupSetting;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -13,6 +14,15 @@ use Illuminate\Validation\Rule;
 
 class PromocodeController extends Controller
 {
+    public function popupSettings(): JsonResponse {
+        $s = ShopPromocodePopupSetting::with('promocode')->first() ?: ShopPromocodePopupSetting::create(['delay_seconds'=>90]);
+        return response()->json(['success'=>true,'data'=>$s]);
+    }
+    public function updatePopupSettings(Request $request): JsonResponse {
+        $data = $request->validate(['title'=>'nullable|string|max:255','text'=>'nullable|string','delay_seconds'=>'required|integer|min:60|max:120','promocode_id'=>'nullable|exists:promocodes,id','is_active'=>'boolean']);
+        $s = ShopPromocodePopupSetting::first() ?: new ShopPromocodePopupSetting(); $s->fill($data); $s->save(); $s->load('promocode');
+        return response()->json(['success'=>true,'data'=>$s]);
+    }
     /**
      * Получить список промокодов
      */

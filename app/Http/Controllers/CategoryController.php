@@ -14,6 +14,18 @@ use Illuminate\Support\Facades\Validator;
 
 class CategoryController extends Controller
 {
+    public function alsoBoughtCategories($id): JsonResponse
+    {
+        $category = \App\Models\ShopCategory::findOrFail($id);
+        return response()->json(['success'=>true, 'data'=>$category->alsoBoughtCategories()->select('shop_categories.id','shop_categories.name','shop_categories.slug')->get()]);
+    }
+    public function syncAlsoBoughtCategories(Request $request, $id): JsonResponse
+    {
+        $data = $request->validate(['category_ids'=>'array', 'category_ids.*'=>'integer|exists:shop_categories,id']);
+        $category = \App\Models\ShopCategory::findOrFail($id);
+        $category->alsoBoughtCategories()->sync(array_values(array_diff($data['category_ids'] ?? [], [(int) $id])));
+        return $this->alsoBoughtCategories($id);
+    }
     /**
      * Получить список всех категорий
      */

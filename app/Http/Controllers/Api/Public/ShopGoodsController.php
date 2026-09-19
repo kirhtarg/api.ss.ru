@@ -1076,7 +1076,11 @@ class ShopGoodsController extends Controller
                 }
             }
 
-            // Сортировка
+            // Сортировка: при поиске приоритет у совпадений в названии.
+            if ($request->filled('search') && ! $request->boolean('random')) {
+                $searchTerm = mb_strtolower(trim((string) $request->input('search')));
+                $query->orderByRaw("CASE WHEN LOWER(name) = ? THEN 0 WHEN LOWER(name) LIKE ? THEN 1 WHEN LOWER(name) LIKE ? THEN 2 ELSE 3 END", [$searchTerm, $searchTerm.'%', '%'.$searchTerm.'%']);
+            }
             if ($request->has('random') && $request->input('random')) {
                 $query->inRandomOrder();
             } else {
@@ -2641,4 +2645,3 @@ class ShopGoodsController extends Controller
         ];
     }
 }
-

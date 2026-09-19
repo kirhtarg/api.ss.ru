@@ -60,6 +60,11 @@ class ShopCategory extends Model
     {
         return $this->belongsToMany(\App\Models\ShopGood::class, 'shop_good_categories', 'category_id', 'good_id');
     }
+    // Категории, товары из которых рекомендуются вместе с товарами этой категории.
+    public function alsoBoughtCategories(): BelongsToMany
+    {
+        return $this->belongsToMany(self::class, 'shop_category_related_categories', 'category_id', 'related_category_id');
+    }
 
     // Отношение к экстра-меню
     public function extraMenu()

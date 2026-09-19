@@ -12,12 +12,20 @@ class ShopDeliveryController extends Controller
     /**
      * Получить список активных способов доставки
      */
-    public function index(): JsonResponse
+    public function index(\Illuminate\Http\Request $request): JsonResponse
     {
         try {
             $deliveryMethods = ShopDeliveryMethod::active()
                 ->ordered()
                 ->get();
+
+            $orderWeight = (float) $request->query('weight', 0);
+            if ($orderWeight > 0) {
+                $deliveryMethods = $deliveryMethods->reject(function ($method) use ($orderWeight) {
+                    $maxWeight = (float) ($method->settings['max_weight_kg'] ?? 0);
+                    return $maxWeight > 0 && $orderWeight > $maxWeight;
+                })->values();
+            }
 
             // Проверяем наличие адресов для самовывоза
             $hasPickupAddresses = ContactAddress::where('is_delivery', true)->exists();

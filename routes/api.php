@@ -704,6 +704,7 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
         return response()->json([], 200);
     });
     Route::get('/public/shop/categories/{id}/children', [App\Http\Controllers\Api\Public\ShopCategoriesController::class, 'getChildren']);
+    Route::get('/public/shop/categories/{id}/also-bought-categories', [App\Http\Controllers\CategoryController::class, 'alsoBoughtCategories']);
 
     // Batch endpoint для получения подкатегорий нескольких категорий одним запросом
     Route::options('/public/shop/categories/children/batch', function () {
@@ -754,6 +755,10 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/promocodes/check', [App\Http\Controllers\PromocodeController::class, 'check']);
+    Route::get('/public/shop/promocodes/popup', function () {
+        $s = \App\Models\ShopPromocodePopupSetting::with('promocode')->where('is_active', true)->whereHas('promocode', fn ($q) => $q->where('is_active', true))->first();
+        return response()->json(['success'=>true,'data'=>$s]);
+    });
 
     Route::options('/public/shop/promocodes/create-absent', function () {
         return response()->json([], 200);
@@ -1960,6 +1965,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('/tree', [\App\Http\Controllers\CategoryController::class, 'tree']);
             // Оптимизированный endpoint для получения характеристик нескольких категорий (должен быть перед /{id})
             Route::get('/properties/batch', [\App\Http\Controllers\CategoryController::class, 'getCategoriesProperties']);
+            Route::get('/{id}/also-bought-categories', [\App\Http\Controllers\CategoryController::class, 'alsoBoughtCategories']);
             Route::get('/{id}', [\App\Http\Controllers\CategoryController::class, 'show']);
             Route::get('/{id}/properties', [\App\Http\Controllers\CategoryController::class, 'getProperties']);
             Route::put('/{id}/properties', [\App\Http\Controllers\CategoryController::class, 'syncProperties']);
@@ -1970,6 +1976,7 @@ Route::middleware('auth:sanctum')->group(function () {
             // Батч-операции с категориями - должны быть ПЕРЕД маршрутом /{id}
             Route::put('/add-to-parent', [\App\Http\Controllers\CategoryController::class, 'addToParent']);
             Route::put('/batch-update', [\App\Http\Controllers\CategoryController::class, 'batchUpdate']);
+            Route::put('/{id}/also-bought-categories', [\App\Http\Controllers\CategoryController::class, 'syncAlsoBoughtCategories']);
 
             Route::post('/', [\App\Http\Controllers\CategoryController::class, 'store']);
             Route::put('/{id}', [\App\Http\Controllers\CategoryController::class, 'update']);
@@ -2472,6 +2479,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/', [\App\Http\Controllers\Admin\PromocodeController::class, 'index']);
                 Route::get('/select-data', [\App\Http\Controllers\Admin\PromocodeController::class, 'getSelectData']);
                 Route::get('/search-items', [\App\Http\Controllers\Admin\PromocodeController::class, 'searchItems']);
+                Route::get('/popup/settings', [\App\Http\Controllers\Admin\PromocodeController::class, 'popupSettings']);
+                Route::put('/popup/settings', [\App\Http\Controllers\Admin\PromocodeController::class, 'updatePopupSettings']);
                 Route::get('/{id}/stats', [\App\Http\Controllers\Admin\PromocodeController::class, 'stats']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\PromocodeController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\PromocodeController::class, 'store']);
