@@ -26,6 +26,7 @@ class ShopRussianPostSettings extends Model
         'sender_postal_code',
         'sender_postoffice_code',
         'default_weight',
+        'max_weight_kg',
         'default_length',
         'default_width',
         'default_height',
@@ -37,6 +38,7 @@ class ShopRussianPostSettings extends Model
 
     protected $casts = [
         'default_weight' => 'decimal:2',
+        'max_weight_kg' => 'decimal:2',
         'default_length' => 'decimal:2',
         'default_width' => 'decimal:2',
         'default_height' => 'decimal:2',

@@ -755,10 +755,7 @@ Route::middleware(['cors', 'throttle:public'])->group(function () {
         return response()->json([], 200);
     });
     Route::post('/public/shop/promocodes/check', [App\Http\Controllers\PromocodeController::class, 'check']);
-    Route::get('/public/shop/promocodes/popup', function () {
-        $s = \App\Models\ShopPromocodePopupSetting::with('promocode')->where('is_active', true)->whereHas('promocode', fn ($q) => $q->where('is_active', true))->first();
-        return response()->json(['success'=>true,'data'=>$s]);
-    });
+    Route::get('/public/shop/promocodes/popup', [\App\Http\Controllers\Admin\PromocodeController::class, 'publicPopup']);
 
     Route::options('/public/shop/promocodes/create-absent', function () {
         return response()->json([], 200);

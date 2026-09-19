@@ -11,17 +11,71 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
+use Illuminate\Support\Facades\Validator;
 
 class PromocodeController extends Controller
 {
     public function popupSettings(): JsonResponse {
-        $s = ShopPromocodePopupSetting::with('promocode')->first() ?: ShopPromocodePopupSetting::create(['delay_seconds'=>90]);
+        $s = ShopPromocodePopupSetting::first() ?: ShopPromocodePopupSetting::create(['delay_seconds'=>90]);
         return response()->json(['success'=>true,'data'=>$s]);
     }
     public function updatePopupSettings(Request $request): JsonResponse {
-        $data = $request->validate(['title'=>'nullable|string|max:255','text'=>'nullable|string','delay_seconds'=>'required|integer|min:60|max:120','promocode_id'=>'nullable|exists:promocodes,id','is_active'=>'boolean']);
-        $s = ShopPromocodePopupSetting::first() ?: new ShopPromocodePopupSetting(); $s->fill($data); $s->save(); $s->load('promocode');
+        $validator = Validator::make($request->all(), [
+            'title'=>'nullable|string|max:255','text'=>'nullable|string|max:2000',
+            'delay_seconds'=>'required|integer|min:60|max:120',
+            'promocode_code'=>['required','string','max:32','regex:/^[A-Za-z0-9_-]+$/'],
+            'discount_percent'=>'required|integer|min:1|max:90',
+            'rotation_enabled'=>'required|boolean','rotation_minutes'=>'required|integer|min:1|max:1440','is_active'=>'required|boolean',
+        ]);
+        if ($validator->fails()) return response()->json(['success'=>false,'message'=>'Проверьте настройки всплывающего промокода','errors'=>$validator->errors()],422);
+        $data = $validator->validated();
+        $data['promocode_code'] = strtoupper($data['promocode_code']);
+        $existingSettings = ShopPromocodePopupSetting::first();
+        $codeIsOwnedElsewhere = Promocode::where('code', $data['promocode_code'])
+            ->when($existingSettings?->promocode_id, fn ($query, $id) => $query->where('id', '!=', $id))
+            ->exists();
+        if ($codeIsOwnedElsewhere) {
+            return response()->json(['success'=>false,'message'=>'Этот промокод уже используется. Укажите другой код.','errors'=>['promocode_code'=>['Промокод должен быть уникальным.']]],422);
+        }
+        $basePromo = Promocode::updateOrCreate(['code'=>$data['promocode_code']], [
+            'name'=>'Всплывающий промокод','description'=>'Автоматически создан для всплывающего окна на странице товара',
+            'type'=>'percentage','value'=>$data['discount_percent'],'is_active'=>$data['is_active'] && !$data['rotation_enabled'],
+            'min_order_amount'=>null,'max_discount_amount'=>null,'usage_limit'=>null,'usage_limit_per_user'=>null,
+            'starts_at'=>null,'expires_at'=>null,'applicable_categories'=>null,'applicable_goods'=>null,'applicable_variations'=>null,'user_id'=>null,
+        ]);
+        Promocode::where('name', 'Всплывающий промокод (ротация)')->where('is_active', true)->update(['is_active'=>false]);
+        $data['promocode_id'] = $basePromo->id;
+        $s = $existingSettings ?: new ShopPromocodePopupSetting(); $s->fill($data); $s->save();
         return response()->json(['success'=>true,'data'=>$s]);
+    }
+
+    public function publicPopup(): JsonResponse {
+        $settings = ShopPromocodePopupSetting::where('is_active', true)->first();
+        if (!$settings || !$settings->promocode_code) return response()->json(['success'=>true,'data'=>null]);
+        $code = $settings->promocode_code;
+        $validUntil = null;
+        if ($settings->rotation_enabled) {
+            $seconds = max(60, (int)$settings->rotation_minutes * 60);
+            $now = Carbon::now();
+            $slot = (int) floor($now->timestamp / $seconds);
+            $slotStart = Carbon::createFromTimestamp($slot * $seconds);
+            $validUntil = Carbon::createFromTimestamp(($slot + 1) * $seconds);
+            $suffix = strtoupper(substr(hash_hmac('sha256', $settings->id.':'.$slot, (string) config('app.key')), 0, 6));
+            $code = $settings->promocode_code.'-'.$suffix;
+            Promocode::updateOrCreate(['code'=>$code], [
+                'name'=>'Всплывающий промокод (ротация)','description'=>'Промокод из всплывающего окна, действует до '.$validUntil->toDateTimeString(),
+                'type'=>'percentage','value'=>$settings->discount_percent,'is_active'=>true,'starts_at'=>$slotStart,'expires_at'=>$validUntil,
+                'min_order_amount'=>null,'max_discount_amount'=>null,'usage_limit'=>null,'usage_limit_per_user'=>null,
+                'applicable_categories'=>null,'applicable_goods'=>null,'applicable_variations'=>null,'user_id'=>null,
+            ]);
+        }
+        $promocode = Promocode::where('code',$code)->first();
+        return response()->json(['success'=>true,'data'=>[
+            'title'=>$settings->title,'text'=>$settings->text,'delay_seconds'=>$settings->delay_seconds,
+            'rotation_enabled'=>(bool)$settings->rotation_enabled,'rotation_minutes'=>(int)$settings->rotation_minutes,
+            'promocode'=>$promocode ? ['code'=>$promocode->code,'discount_percent'=>$settings->discount_percent] : null,
+            'valid_until'=>$validUntil?->toIso8601String(),
+        ]]);
     }
     /**
      * Получить список промокодов

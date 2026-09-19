@@ -84,7 +84,7 @@ class CategoryController extends Controller
 
             // Один агрегированный запрос вместо отдельного count для каждой
             // категории. На публичном каталоге это устраняет N+1-запросы.
-            $categories = $query->withCount('properties')->get();
+            $categories = $query->withCount('properties')->withCount(['alsoBoughtCategories as also_bought_count'])->get();
 
             return response()->json([
                 'success' => true,

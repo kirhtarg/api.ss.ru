@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Public;
 use App\Http\Controllers\Controller;
 use App\Models\ContactAddress;
 use App\Models\ShopDeliveryMethod;
+use App\Models\ShopRussianPostSettings;
 use Illuminate\Http\JsonResponse;
 
 class ShopDeliveryController extends Controller
@@ -20,9 +21,11 @@ class ShopDeliveryController extends Controller
                 ->get();
 
             $orderWeight = (float) $request->query('weight', 0);
+            $russianPostMaxWeight = (float) (ShopRussianPostSettings::query()->value('max_weight_kg') ?? 0);
             if ($orderWeight > 0) {
-                $deliveryMethods = $deliveryMethods->reject(function ($method) use ($orderWeight) {
+                $deliveryMethods = $deliveryMethods->reject(function ($method) use ($orderWeight, $russianPostMaxWeight) {
                     $maxWeight = (float) ($method->settings['max_weight_kg'] ?? 0);
+                    if (($method->type ?? '') === 'russianpost' && $russianPostMaxWeight > 0) $maxWeight = $russianPostMaxWeight;
                     return $maxWeight > 0 && $orderWeight > $maxWeight;
                 })->values();
             }
