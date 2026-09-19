@@ -103,6 +103,18 @@ class StockReservationServiceTest extends TestCase
         $this->assertDatabaseCount('shop_stock_reservations', 0);
     }
 
+    public function test_expired_ycp_reservation_is_released_by_the_same_scheduler(): void
+    {
+        $service = app(StockReservationService::class);
+        $order = $this->order('ORDER-YCP-EXPIRED');
+        $service->reserveForOrder($order, $this->items(), 30, 'YCP');
+        ShopStockReservation::query()->update(['reserved_until' => now()->subMinute()]);
+
+        $this->assertSame(1, $service->releaseExpired());
+        $this->assertSame(0, $this->stock->fresh()->reserved_quantity);
+        $this->assertDatabaseCount('shop_stock_reservations', 0);
+    }
+
     public function test_expired_non_partner_reservation_is_not_touched(): void
     {
         $this->stock->update(['reserved_quantity' => 1]);

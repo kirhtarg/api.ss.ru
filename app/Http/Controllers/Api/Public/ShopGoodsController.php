@@ -1965,6 +1965,23 @@ class ShopGoodsController extends Controller
                 }
             }
 
+            // Старые ссылки на вариант товара часто заканчивались его SKU,
+            // хотя отдельной карточки с таким slug в каталоге не существует.
+            // Разрешаем такую ссылку по точному SKU вариации и направляем на
+            // канонический URL основного товара.
+            if (! $good && preg_match('/-([a-z0-9][a-z0-9._]*)$/i', $requestedSlug, $skuMatch)) {
+                $variation = ShopGoodVariation::query()
+                    ->whereRaw('UPPER(sku) = ?', [mb_strtoupper($skuMatch[1])])
+                    ->first(['id', 'good_id']);
+                if ($variation) {
+                    $good = (clone $goodQuery)
+                        ->where('id', $variation->good_id)
+                        ->where('is_active', true)
+                        ->first();
+                    $slugAliasRedirect = (bool) $good;
+                }
+            }
+
             if (! $good) {
                 return response()->json([
                     'success' => false,

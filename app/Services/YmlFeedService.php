@@ -108,6 +108,7 @@ class YmlFeedService
 
             // Загружаем товары порциями для экономии памяти
             $query = ShopGood::active()->with([
+                'stock',
                 'categories:id,name',
                 'brands:id,name',
                 'images:id,good_id,file_path,alt_text,is_main,sort_order',
@@ -130,7 +131,7 @@ class YmlFeedService
                         'is_active'
                     )
                         ->where('is_active', true)
-                        ->with('images:id,variation_id,file_path,alt_text,is_main,sort_order');
+                        ->with(['images:id,variation_id,file_path,alt_text,is_main,sort_order', 'stock']);
                 },
             ]);
 
@@ -285,7 +286,7 @@ class YmlFeedService
 
         // YCP checkout availability is explicitly opt-in and independent from
         // the existing Yandex Products API and Seller API integrations.
-        if ($this->ycpCheckoutEnabled === true) {
+        if ($this->ycpCheckoutEnabled === true && $this->hasYcpReservableStock($good)) {
             fwrite($handle, '                <param name="is_checkout_enabled">true</param>' . PHP_EOL);
         }
 
@@ -482,6 +483,26 @@ class YmlFeedService
         }
 
         return $this->getItemStockValue($good);
+    }
+
+    private function hasYcpReservableStock(ShopGood $good): bool
+    {
+        if ($good->relationLoaded('variations') && $good->variations->isNotEmpty()) {
+            return $good->variations->contains(function ($variation): bool {
+                if (! $variation->is_active) return false;
+                $stocks = $variation->relationLoaded('stock') ? $variation->stock : collect();
+                $quantity = $stocks->isNotEmpty()
+                    ? $stocks->sum(fn ($stock) => max(0, (int) $stock->quantity - (int) $stock->reserved_quantity))
+                    : max(0, (int) $variation->stock_quantity);
+                return $quantity > 0;
+            });
+        }
+
+        $stocks = $good->relationLoaded('stock') ? $good->stock->whereNull('variation_id') : collect();
+        $quantity = $stocks->isNotEmpty()
+            ? $stocks->sum(fn ($stock) => max(0, (int) $stock->quantity - (int) $stock->reserved_quantity))
+            : max(0, (int) $good->stock_quantity);
+        return $quantity > 0;
     }
 
     private function getItemStockValue($item): int

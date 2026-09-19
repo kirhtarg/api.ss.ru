@@ -13,6 +13,18 @@ use Illuminate\Support\Facades\Route;
 
 // CORS уже настроен в OPTIONS обработчике выше
 
+// Yandex Commerce Protocol public API. Authentication is a dedicated bearer token,
+// separate from storefront/admin authentication.
+Route::prefix('v1')->middleware([\App\Http\Middleware\AuthenticateYcp::class])->group(function () {
+    Route::get('/warehouses', [\App\Http\Controllers\Api\Public\YcpController::class, 'warehouses']);
+    Route::post('/checkout/basket/check', [\App\Http\Controllers\Api\Public\YcpController::class, 'basketCheck']);
+    Route::post('/checkout/delivery/options', [\App\Http\Controllers\Api\Public\YcpController::class, 'deliveryOptions']);
+    Route::post('/checkout', [\App\Http\Controllers\Api\Public\YcpController::class, 'checkout']);
+    Route::post('/checkout/placed', [\App\Http\Controllers\Api\Public\YcpController::class, 'placed']);
+    Route::post('/checkout/cancel', [\App\Http\Controllers\Api\Public\YcpController::class, 'cancelCheckout']);
+    Route::post('/order/cancel', [\App\Http\Controllers\Api\Public\YcpController::class, 'cancelOrder']);
+});
+
 // Статус технического обслуживания без чтения БД.
 Route::get('/public/maintenance-status', function (\App\Services\DatabaseRestoreMaintenanceService $maintenance) {
     return response()->json([

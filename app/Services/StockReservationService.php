@@ -14,16 +14,18 @@ use Symfony\Component\HttpKernel\Exception\UnprocessableEntityHttpException;
 
 class StockReservationService
 {
-    public function reserveForOrder(ShopOrder $order, array $items, int $ttlMinutes = 30): array
+    public function reserveForOrder(ShopOrder $order, array $items, int $ttlMinutes = 30, string $source = 'Partner API', ?int $warehouseId = null): array
     {
         $this->releaseExpired();
         $reservationIds = [];
 
+        $source = in_array($source, ['Partner API', 'YCP'], true) ? $source : 'Partner API';
         Log::info('Stock reservation started', [
             'order_id' => $order->id,
             'order_number' => $order->order_number,
             'item_count' => count($items),
             'ttl_minutes' => $ttlMinutes,
+            'warehouse_id' => $warehouseId,
         ]);
 
         foreach ($items as $item) {
@@ -35,12 +37,13 @@ class StockReservationService
                     fn ($query, $variationId) => $query->where('variation_id', $variationId),
                     fn ($query) => $query->whereNull('variation_id'),
                 )
+                ->when($warehouseId, fn ($query) => $query->where('warehouse_id', $warehouseId))
                 ->orderBy('warehouse_id')
                 ->lockForUpdate()
                 ->get();
 
             if ($stocks->isEmpty()) {
-                $stocks = collect([$this->initializeStock($item)]);
+                $stocks = collect([$this->initializeStock($item, $warehouseId)]);
             }
 
             foreach ($stocks as $stock) {
@@ -59,7 +62,7 @@ class StockReservationService
                     'reserved_until' => now()->addMinutes(max(1, $ttlMinutes)),
                     'reservation_type' => 'order',
                     'reference_id' => (string) $order->id,
-                    'notes' => 'Partner API order '.$order->order_number,
+                    'notes' => $source.' order '.$order->order_number,
                 ]);
                 $reservationIds[] = $reservation->id;
                 $quantityRemaining -= $reserved;
@@ -104,7 +107,10 @@ class StockReservationService
             $references = ShopStockReservation::query()
                 ->expired()
                 ->where('reservation_type', 'order')
-                ->where('notes', 'like', 'Partner API order %')
+                ->where(function ($query) {
+                    $query->where('notes', 'like', 'Partner API order %')
+                        ->orWhere('notes', 'like', 'YCP order %');
+                })
                 ->lockForUpdate()
                 ->distinct()
                 ->pluck('reference_id');
@@ -122,7 +128,10 @@ class StockReservationService
     {
         $reservations = ShopStockReservation::query()
             ->where('reservation_type', 'order')
-            ->where('notes', 'like', 'Partner API order %')
+            ->where(function ($query) {
+                $query->where('notes', 'like', 'Partner API order %')
+                    ->orWhere('notes', 'like', 'YCP order %');
+            })
             ->where('reference_id', $referenceId)
             ->lockForUpdate()
             ->get();
@@ -168,9 +177,10 @@ class StockReservationService
         return $reservations->count();
     }
 
-    private function initializeStock(array $item): ShopStock
+    private function initializeStock(array $item, ?int $warehouseId = null): ShopStock
     {
-        $warehouse = ShopWarehouse::query()->active()->default()->first()
+        $warehouse = ($warehouseId ? ShopWarehouse::query()->active()->find($warehouseId) : null)
+            ?? ShopWarehouse::query()->active()->default()->first()
             ?? ShopWarehouse::query()->active()->ordered()->first();
         if (! $warehouse) {
             throw new UnprocessableEntityHttpException('No active warehouse is configured for stock reservation');
