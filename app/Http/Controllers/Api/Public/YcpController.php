@@ -7,6 +7,7 @@ use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\ShopOrder;
 use App\Models\ShopOrderLog;
+use App\Models\ShopDeliveryStatus;
 use App\Models\ShopOrderStatus;
 use App\Models\ShopPaymentStatus;
 use App\Models\ShopStock;
@@ -168,7 +169,8 @@ class YcpController extends Controller
             'customer.email' => ['nullable', 'email', 'max:255'],
             'delivery' => ['required', 'array'],
             'delivery.delivery_method' => ['required', 'string', 'max:100'],
-            'delivery.service_type' => ['nullable', 'string', 'max:100'],
+            'delivery.service_type' => ['required', 'string', 'max:100'],
+            'delivery.ycp_delivery_option_id' => ['nullable', 'string', 'max:150'],
             'delivery.price' => ['required', 'numeric', 'min:0'],
             'delivery.address' => ['nullable'],
             'delivery.delivery_date_interval' => ['nullable', 'array'],
@@ -220,13 +222,22 @@ class YcpController extends Controller
                     if ($available < (int) $item['quantity']) throw new ConflictHttpException('Insufficient stock at selected warehouse');
                 }
                 $subtotal = round(array_sum(array_column($items, 'total')), 2);
-                $serviceType = (string) ($data['delivery']['service_type'] ?? '');
-                $serviceMethodId = ctype_digit($serviceType) ? (int) $serviceType : null;
-                if (! $serviceMethodId && preg_match('/^ss-delivery-(\d+)-/', $serviceType, $serviceMatch)) {
+                $serviceType = (string) $data['delivery']['service_type'];
+                $deliveryOptionId = (string) ($data['delivery']['ycp_delivery_option_id'] ?? '');
+                $serviceMethodId = null;
+                if (ctype_digit($deliveryOptionId)) {
+                    $serviceMethodId = (int) $deliveryOptionId;
+                } elseif (preg_match('/^ss-delivery-(\d+)-/', $deliveryOptionId, $serviceMatch)) {
                     $serviceMethodId = (int) $serviceMatch[1];
                 }
+                $localMethodType = match ($serviceType) {
+                    'cdek' => 'cdek',
+                    'russian_post' => 'post',
+                    'self_pickup' => 'pickup',
+                    default => $data['delivery']['delivery_method'],
+                };
                 $deliveryMethod = \App\Models\ShopDeliveryMethod::query()->active()->find($serviceMethodId)
-                    ?? \App\Models\ShopDeliveryMethod::query()->active()->where('type', $data['delivery']['delivery_method'])->first()
+                    ?? \App\Models\ShopDeliveryMethod::query()->active()->where('type', $localMethodType)->first()
                     ?? \App\Models\ShopDeliveryMethod::getDefault();
                 if (! $deliveryMethod) {
                     throw new ConflictHttpException('Selected delivery method is unavailable');
@@ -323,6 +334,102 @@ class YcpController extends Controller
         return response()->json(null, 200);
     }
 
+    public function delivered(Request $request): JsonResponse
+    {
+        if ($this->settingsData()['delivery_mode'] !== 'yandex') {
+            return response()->json(['error' => 'Yandex-managed delivery is disabled'], 409);
+        }
+
+        $orderId = (string) $request->query('order_id', '');
+        if ($orderId === '') return response()->json(['error' => 'order_id is required'], 400);
+        $data = $request->validate([
+            'purchased_items' => ['required', 'array'],
+            'purchased_items.*.id' => ['required', 'string', 'max:100'],
+            'purchased_items.*.quantity' => ['required', 'integer', 'min:0'],
+        ]);
+
+        $session = YcpCheckoutSession::query()->where('ycp_order_id', $orderId)->first();
+        if (! $session || ! $session->shop_order_id) return response()->json(['error' => 'Order not found'], 404);
+
+        $result = DB::transaction(function () use ($session, $data): array {
+            $order = ShopOrder::query()->lockForUpdate()->find($session->shop_order_id);
+            if (! $order) return ['error' => 'Order not found'];
+            if ($order->status?->is_cancelled || $session->status === 'order_cancelled') return ['error' => 'Order is cancelled'];
+
+            $purchased = collect($data['purchased_items'])->groupBy('id')->map(fn ($rows) => (int) $rows->sum('quantity'));
+            $orderedItems = collect($order->items ?? [])->groupBy(function (array $item): string {
+                return ! empty($item['variation_id']) ? 'variation_'.$item['variation_id'] : 'good_'.$item['good_id'];
+            })->map(fn ($rows) => array_replace($rows->first(), ['quantity' => (int) $rows->sum('quantity')]));
+            $allowedIds = [];
+            foreach ($orderedItems as $offerId => $item) {
+                $merchantId = (string) (! empty($item['variation_id']) ? $item['variation_id'] : $item['good_id']);
+                $allowedIds[] = $offerId;
+                $allowedIds[] = $merchantId;
+                $deliveredCount = (int) ($purchased->get($offerId) ?? $purchased->get($merchantId) ?? 0);
+                $quantity = (int) ($item['quantity'] ?? 0);
+                if ($deliveredCount > $quantity) return ['error' => 'Delivered quantity exceeds ordered quantity'];
+            }
+            if ($purchased->keys()->diff($allowedIds)->isNotEmpty()) return ['error' => 'Delivered items do not match the order'];
+
+            $metadata = $order->metadata ?? [];
+            $statuses = $metadata['ycp_delivery_statuses'] ?? [];
+            if (! is_array($statuses) || $statuses === []) $statuses = [['status' => 'new', 'timestamp' => $order->created_at?->timestamp ?? now()->timestamp]];
+            if (end($statuses)['status'] !== 'delivered') {
+                $statuses[] = ['status' => 'delivered', 'timestamp' => now()->timestamp];
+            }
+            $metadata['ycp_delivery_statuses'] = $statuses;
+            $metadata['ycp_purchased_items'] = $data['purchased_items'];
+            $order->update([
+                'delivery_status_id' => ShopDeliveryStatus::query()->where('name', 'delivered')->value('id') ?? $order->delivery_status_id,
+                'metadata' => $metadata,
+            ]);
+            $session->update(['status' => 'delivered']);
+            ShopOrderLog::createLog($order->id, 'Заказ доставлен (YCP)', [
+                'user_name' => 'Yandex Commerce Protocol', 'section' => ShopOrderLog::SECTION_DELIVERY,
+                'info' => 'Заказ № '.$order->order_number,
+            ]);
+            return ['success' => true];
+        }, 3);
+
+        if (isset($result['error'])) return response()->json(['error' => $result['error']], 409);
+        return response()->json(null, 200);
+    }
+
+    public function order(Request $request): JsonResponse
+    {
+        $orderId = (string) $request->query('order_id', '');
+        if ($orderId === '') return response()->json(['error' => 'order_id is required'], 400);
+        $session = YcpCheckoutSession::query()->where('ycp_order_id', $orderId)->first();
+        $order = $session?->shop_order_id ? ShopOrder::query()->find($session->shop_order_id) : null;
+        if (! $order) return response()->json(['error' => 'Order not found'], 404);
+
+        $metadata = $order->metadata ?? [];
+        $statuses = $metadata['ycp_delivery_statuses'] ?? null;
+        if (! is_array($statuses) || $statuses === []) {
+            $statuses = [['status' => 'new', 'timestamp' => $order->created_at?->timestamp ?? now()->timestamp]];
+            $deliveryStatus = $order->deliveryStatus?->name;
+            $mappedStatus = match ($deliveryStatus) {
+                'transferred_to_courier' => 'in_progress',
+                'in_transit' => 'in_progress',
+                'at_pickup_point' => 'arrived_to_pickup_point',
+                'delivered' => 'delivered',
+                'cancelled' => 'cancelled',
+                default => null,
+            };
+            if ($mappedStatus) $statuses[] = ['status' => $mappedStatus, 'timestamp' => $order->updated_at?->timestamp ?? now()->timestamp];
+        }
+        $items = collect($order->items ?? [])->map(function (array $item) use ($metadata): array {
+            $id = ! empty($item['variation_id']) ? 'variation_'.$item['variation_id'] : 'good_'.$item['good_id'];
+            $delivered = collect($metadata['ycp_purchased_items'] ?? [])->first(fn (array $purchased) => in_array((string) ($purchased['id'] ?? ''), [$id, (string) ($item['variation_id'] ?? $item['good_id'])], true));
+            $quantity = (int) ($item['quantity'] ?? 0);
+            return ['id' => $id, 'quantity' => $quantity, 'refused_count' => max(0, $quantity - (int) ($delivered['quantity'] ?? $quantity))];
+        })->values();
+        $response = ['items' => $items, 'delivery_statuses' => $statuses];
+        $trackingUrl = $metadata['tracking_url'] ?? null;
+        if (is_string($trackingUrl) && filter_var($trackingUrl, FILTER_VALIDATE_URL)) $response['tracking_url'] = $trackingUrl;
+        return response()->json($response);
+    }
+
     private function cancelBySession(string $sessionId, string $status): void
     {
         DB::transaction(function () use ($sessionId, $status): void {
@@ -333,6 +440,12 @@ class YcpController extends Controller
             $cancelled = ShopOrderStatus::query()->where('is_active', true)->where('is_cancelled', true)->value('id');
             if ($cancelled) $order->update(['status_id' => $cancelled]);
             $this->reservations->releaseForOrder($order);
+            $metadata = $order->metadata ?? [];
+            $statuses = $metadata['ycp_delivery_statuses'] ?? [];
+            if (! is_array($statuses) || $statuses === []) $statuses = [['status' => 'new', 'timestamp' => $order->created_at?->timestamp ?? now()->timestamp]];
+            if (end($statuses)['status'] !== 'cancelled') $statuses[] = ['status' => 'cancelled', 'timestamp' => now()->timestamp];
+            $metadata['ycp_delivery_statuses'] = $statuses;
+            $order->update(['metadata' => $metadata]);
             $session->update(['status' => $status]);
         }, 3);
     }

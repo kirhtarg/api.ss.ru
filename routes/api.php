@@ -22,7 +22,9 @@ Route::prefix('v1')->middleware([\App\Http\Middleware\AuthenticateYcp::class])->
     Route::post('/checkout', [\App\Http\Controllers\Api\Public\YcpController::class, 'checkout']);
     Route::post('/checkout/placed', [\App\Http\Controllers\Api\Public\YcpController::class, 'placed']);
     Route::post('/checkout/cancel', [\App\Http\Controllers\Api\Public\YcpController::class, 'cancelCheckout']);
+    Route::post('/order/delivered', [\App\Http\Controllers\Api\Public\YcpController::class, 'delivered']);
     Route::post('/order/cancel', [\App\Http\Controllers\Api\Public\YcpController::class, 'cancelOrder']);
+    Route::get('/order', [\App\Http\Controllers\Api\Public\YcpController::class, 'order']);
 });
 
 // Статус технического обслуживания без чтения БД.
