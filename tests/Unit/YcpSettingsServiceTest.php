@@ -3,6 +3,7 @@
 namespace Tests\Unit;
 
 use App\Services\YcpSettingsService;
+use App\Models\Setting;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -40,6 +41,14 @@ class YcpSettingsServiceTest extends TestCase
     {
         $service = app(YcpSettingsService::class);
 
+        Setting::create([
+            'key' => 'enabled',
+            'name' => 'Existing global enabled setting',
+            'value' => '1',
+            'type' => 'boolean',
+            'group' => 'general',
+        ]);
+
         self::assertSame('merchant', $service->get()['delivery_mode']);
 
         $saved = $service->save([
@@ -51,5 +60,7 @@ class YcpSettingsServiceTest extends TestCase
         self::assertTrue($saved['enabled']);
         self::assertSame('merchant', $saved['delivery_mode']);
         self::assertSame(str_repeat('a', 64), $saved['access_token']);
+        self::assertSame('1', Setting::query()->where('key', 'enabled')->value('value'));
+        self::assertSame(3, Setting::query()->where('group', 'ycp')->count());
     }
 }

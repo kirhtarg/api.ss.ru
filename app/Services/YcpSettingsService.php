@@ -10,7 +10,7 @@ class YcpSettingsService
     public function get(): array
     {
         $settings = Setting::query()->where('group', 'ycp')->pluck('value', 'key');
-        $encrypted = (string) ($settings['access_token'] ?? '');
+        $encrypted = (string) ($settings['ycp_access_token'] ?? $settings['access_token'] ?? '');
         $token = '';
         if ($encrypted !== '') {
             try {
@@ -21,10 +21,10 @@ class YcpSettingsService
             }
         }
 
-        $deliveryMode = $settings['delivery_mode'] ?? 'merchant';
+        $deliveryMode = $settings['ycp_delivery_mode'] ?? $settings['delivery_mode'] ?? 'merchant';
 
         return [
-            'enabled' => ($settings['enabled'] ?? '0') === '1',
+            'enabled' => ($settings['ycp_enabled'] ?? $settings['enabled'] ?? '0') === '1',
             'access_token' => $token,
             'delivery_mode' => in_array($deliveryMode, ['merchant', 'yandex'], true)
                 ? $deliveryMode : 'merchant',
@@ -38,15 +38,15 @@ class YcpSettingsService
         $token = trim((string) ($data['access_token'] ?? '')) ?: $current['access_token'];
 
         Setting::updateOrCreate(
-            ['group' => 'ycp', 'key' => 'enabled'],
+            ['group' => 'ycp', 'key' => 'ycp_enabled'],
             ['name' => 'YCP enabled', 'value' => $data['enabled'] ? '1' : '0', 'type' => 'boolean']
         );
         Setting::updateOrCreate(
-            ['group' => 'ycp', 'key' => 'access_token'],
+            ['group' => 'ycp', 'key' => 'ycp_access_token'],
             ['name' => 'YCP access token', 'value' => $token !== '' ? Crypt::encryptString($token) : '', 'type' => 'string']
         );
         Setting::updateOrCreate(
-            ['group' => 'ycp', 'key' => 'delivery_mode'],
+            ['group' => 'ycp', 'key' => 'ycp_delivery_mode'],
             ['name' => 'YCP delivery calculation mode', 'value' => $data['delivery_mode'] ?? 'merchant', 'type' => 'string']
         );
 
