@@ -58,4 +58,22 @@ class OzonDeliveryServiceTest extends TestCase
 
         Http::assertSentCount(1);
     }
+
+    public function test_pickup_point_search_text_supports_nested_address_fields(): void
+    {
+        $service = app(OzonDeliveryService::class);
+        $method = new \ReflectionMethod($service, 'pickupPointSearchText');
+        $method->setAccessible(true);
+
+        $searchText = $method->invoke($service, [
+            'delivery_point_id' => 123,
+            'address' => ['city' => 'Санкт-Петербург', 'street' => 'Невский проспект'],
+            'location' => ['region' => 'Ленинградская область'],
+        ]);
+
+        self::assertStringContainsString('санкт-петербург', $searchText);
+        self::assertStringContainsString('невский проспект', $searchText);
+        self::assertStringContainsString('ленинградская область', $searchText);
+        self::assertStringNotContainsString('123', $searchText);
+    }
 }

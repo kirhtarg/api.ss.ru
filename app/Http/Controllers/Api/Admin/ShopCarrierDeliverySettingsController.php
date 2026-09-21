@@ -243,10 +243,12 @@ class ShopCarrierDeliverySettingsController extends Controller
             $response = app(OzonDeliveryService::class)->requestWithToken(
                 $token,
                 '/v1/delivery-point/list',
-                ['pagination' => ['cursor' => null, 'limit' => 1]]
+                ['pagination' => ['cursor' => null, 'limit' => 100]]
             );
             $data = $response->json();
-            $enabled = $response->successful() && is_array(data_get($data, 'delivery_points'));
+            $deliveryPoints = data_get($data, 'delivery_points');
+            $pointListValid = $response->successful() && is_array($deliveryPoints);
+            $enabled = $pointListValid && count($deliveryPoints) > 0;
             $suggestions = [];
             if ($response->status() === 401) {
                 $message = 'OAuth-токен получен, но Ozon Delivery API его не принял (401). Проверьте настройки приватного приложения и доступ к Ozon Доставке.';
@@ -258,7 +260,9 @@ class ShopCarrierDeliverySettingsController extends Controller
             } elseif ($response->successful()) {
                 $message = $enabled
                     ? 'OAuth-токен принят, API Ozon Доставки доступен.'
-                    : 'Ozon ответил, но формат списка пунктов выдачи неожиданный.';
+                    : ($pointListValid
+                        ? 'Ozon принял запрос, но вернул пустой список пунктов выдачи. Проверьте, что пункты выдачи подключены и доступны для вашего кабинета Ozon Доставки.'
+                        : 'Ozon ответил, но формат списка пунктов выдачи неожиданный.');
             } else {
                 $message = data_get($data, 'message') ?? data_get($data, 'error.message') ?? $response->body();
             }
@@ -270,12 +274,21 @@ class ShopCarrierDeliverySettingsController extends Controller
                     'valid' => $response->successful() && $enabled,
                     'status' => $response->status(),
                     'url' => $url,
-                    'api_accessible' => $enabled,
+                    'api_accessible' => $response->successful(),
+                    'has_pickup_points' => $enabled,
                     'oauth_token_obtained' => true,
                     'oauth_scope_requested' => 'delivery-api.all',
                     'suggestions' => $suggestions,
                     'response' => $response->successful()
-                        ? ['delivery_points_count' => count((array) data_get($data, 'delivery_points', [])), 'next_cursor' => data_get($data, 'next_cursor')]
+                        ? [
+                            'delivery_points_count' => is_array($deliveryPoints) ? count($deliveryPoints) : null,
+                            'sample_delivery_point_ids' => array_slice(array_values(array_filter(array_map(
+                                static fn ($point) => is_array($point) ? ($point['delivery_point_id'] ?? null) : null,
+                                is_array($deliveryPoints) ? $deliveryPoints : []
+                            ))), 0, 5),
+                            'sample_delivery_point_fields' => isset($deliveryPoints[0]) && is_array($deliveryPoints[0]) ? array_keys($deliveryPoints[0]) : [],
+                            'next_cursor' => data_get($data, 'next_cursor'),
+                        ]
                         : $data,
                 ],
             ], $response->successful() && $enabled ? 200 : 422);

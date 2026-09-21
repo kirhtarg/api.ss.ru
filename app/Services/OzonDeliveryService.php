@@ -153,7 +153,8 @@ class OzonDeliveryService
     {
         $settings = $this->getActiveSettings();
         $needle = mb_strtolower(trim($city));
-        $points = Cache::remember('ozon_delivery:points:v2:'.sha1($needle), now()->addHours(4), function () use ($settings, $needle): array {
+        $cacheKey = 'ozon_delivery:points:v3:'.sha1($needle);
+        $points = Cache::remember($cacheKey, now()->addHours(4), function () use ($settings): array {
             $summaries = [];
             $cursor = null;
             $seen = [];
@@ -162,12 +163,10 @@ class OzonDeliveryService
                     'pagination' => ['cursor' => $cursor, 'limit' => 100],
                 ]);
                 foreach ((array) data_get($body, 'delivery_points', []) as $point) {
-                    $searchableAddress = mb_strtolower(implode(' ', [
-                        (string) ($point['city'] ?? ''),
-                        (string) ($point['name'] ?? ''),
-                        (string) ($point['full_address'] ?? $point['address'] ?? ''),
-                    ]));
-                    if (! empty($point['delivery_point_id']) && ($needle === '' || mb_stripos($searchableAddress, $needle) !== false)) {
+                    // The list endpoint may return only a compact summary without
+                    // city/address fields. Keep every ID and filter only after
+                    // enriching it through /delivery-point/info below.
+                    if (! empty($point['delivery_point_id'])) {
                         $summaries[(string) $point['delivery_point_id']] = $point;
                     }
                 }
@@ -194,12 +193,43 @@ class OzonDeliveryService
             return $all;
         });
 
+        // Do not let an early empty response hide newly activated pickup points
+        // for the full cache TTL. The v3 key also invalidates the older cache.
+        if ($points === []) {
+            Cache::forget($cacheKey);
+        }
+
         return array_values(array_filter($points, function (array $point) use ($needle): bool {
-            if (in_array($point['is_active'] ?? true, [false, 0, '0', 'false'], true)) return false;
-            $address = mb_strtolower((string) ($point['full_address'] ?? ''));
-            $name = mb_strtolower((string) ($point['name'] ?? ''));
-            return $needle === '' || mb_stripos($address, $needle) !== false || mb_stripos($name, $needle) !== false;
+            if (in_array($point['is_active'] ?? true, [false, 0, '0', 'false'], true)) {
+                return false;
+            }
+
+            return $needle === '' || mb_stripos($this->pickupPointSearchText($point), $needle) !== false;
         }));
+    }
+
+    private function pickupPointSearchText(array $point): string
+    {
+        $values = [];
+        $appendScalars = static function ($value) use (&$values, &$appendScalars): void {
+            if (is_scalar($value)) {
+                $values[] = (string) $value;
+                return;
+            }
+            if (is_array($value)) {
+                foreach ($value as $nested) {
+                    $appendScalars($nested);
+                }
+            }
+        };
+
+        foreach (['city', 'name', 'full_address', 'address', 'location', 'region', 'settlement'] as $key) {
+            if (array_key_exists($key, $point)) {
+                $appendScalars($point[$key]);
+            }
+        }
+
+        return mb_strtolower(implode(' ', $values));
     }
 
     public function calculateCheckout(ShopCarrierDeliverySettings $settings, array $requestData): array
