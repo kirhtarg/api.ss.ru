@@ -11,6 +11,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Throwable;
 
 class SyncOzonDeliveryPickupPointsJob implements ShouldQueue
@@ -34,15 +35,23 @@ class SyncOzonDeliveryPickupPointsJob implements ShouldQueue
             $seenCursors = [];
             $pageCount = 0;
             $pointCount = 0;
+            $totalPoints = 0;
+            $pageLimit = 100;
 
             do {
                 if (++$pageCount > 10000) {
                     throw new \RuntimeException('Синхронизация остановлена: превышен защитный лимит страниц Ozon.');
                 }
 
-                $page = $ozon->request($settings, '/v1/delivery-point/list', [
-                    'pagination' => ['cursor' => $cursor, 'limit' => 100],
-                ], timeoutSeconds: 60);
+                $pageResult = $this->fetchPointListPage($ozon, $settings, $cursor, $pageLimit);
+                $page = $pageResult['page'];
+                $pageLimit = $pageResult['limit'];
+                $reportedTotal = data_get($page, 'delivery_points_count')
+                    ?? data_get($page, 'total_count')
+                    ?? data_get($page, 'total');
+                if (is_numeric($reportedTotal) && (int) $reportedTotal > 0) {
+                    $totalPoints = max($totalPoints, (int) $reportedTotal);
+                }
                 $summaries = collect((array) data_get($page, 'delivery_points', []))
                     ->filter(fn ($point) => is_array($point) && ! empty($point['delivery_point_id']))
                     ->keyBy(fn ($point) => (string) $point['delivery_point_id']);
@@ -81,7 +90,11 @@ class SyncOzonDeliveryPickupPointsJob implements ShouldQueue
                 }
 
                 $pointCount += count($rows);
-                $run->update(['pages_synced' => $pageCount, 'points_synced' => $pointCount]);
+                $run->update([
+                    'pages_synced' => $pageCount,
+                    'points_synced' => $pointCount,
+                    'total_points' => $totalPoints > 0 ? $totalPoints : null,
+                ]);
                 $nextCursor = data_get($page, 'next_cursor');
                 if (! is_string($nextCursor) || trim($nextCursor) === '' || isset($seenCursors[$nextCursor])) {
                     break;
@@ -94,7 +107,8 @@ class SyncOzonDeliveryPickupPointsJob implements ShouldQueue
                 throw new \RuntimeException('Ozon вернул пустой каталог ПВЗ. Существующий локальный справочник сохранен.');
             }
 
-            DB::transaction(function () use ($run, $pageCount, $pointCount): void {
+            $totalPoints = $totalPoints > 0 ? $totalPoints : $pointCount;
+            DB::transaction(function () use ($run, $pageCount, $pointCount, $totalPoints): void {
                 ShopOzonDeliveryPoint::query()
                     ->where(function ($query) use ($run): void {
                         $query->whereNull('last_sync_run_id')->orWhere('last_sync_run_id', '!=', $run->id);
@@ -104,6 +118,7 @@ class SyncOzonDeliveryPickupPointsJob implements ShouldQueue
                     'status' => 'completed',
                     'pages_synced' => $pageCount,
                     'points_synced' => $pointCount,
+                    'total_points' => $totalPoints,
                     'finished_at' => now(),
                 ]);
             });
@@ -132,9 +147,7 @@ class SyncOzonDeliveryPickupPointsJob implements ShouldQueue
             return array_values(array_filter((array) data_get($response, 'delivery_points', []), static fn ($point) => is_array($point) && ! empty($point['delivery_point_id'])
             ));
         } catch (Throwable $exception) {
-            $message = mb_strtolower($exception->getMessage());
-            $isTimeout = str_contains($message, 'curl error 28') || str_contains($message, 'operation timed out') || str_contains($message, 'timed out');
-            if (! $isTimeout || count($ids) <= 1) {
+            if (! $this->isTimeoutException($exception) || count($ids) <= 1) {
                 throw $exception;
             }
 
@@ -145,6 +158,43 @@ class SyncOzonDeliveryPickupPointsJob implements ShouldQueue
                 $this->fetchPointDetails($ozon, $settings, array_slice($ids, $middle))
             );
         }
+    }
+
+    protected function fetchPointListPage(OzonDeliveryService $ozon, $settings, ?string $cursor, int $preferredLimit): array
+    {
+        $limits = array_values(array_unique(array_filter(
+            [$preferredLimit, 50, 25, 10, 5, 1],
+            static fn (int $limit): bool => $limit > 0 && $limit <= $preferredLimit
+        )));
+
+        foreach ($limits as $limit) {
+            try {
+                $page = $ozon->request($settings, '/v1/delivery-point/list', [
+                    'pagination' => ['cursor' => $cursor, 'limit' => $limit],
+                ], timeoutSeconds: 60);
+
+                return ['page' => $page, 'limit' => $limit];
+            } catch (Throwable $exception) {
+                if (! $this->isTimeoutException($exception) || $limit === end($limits)) {
+                    throw $exception;
+                }
+
+                Log::warning('Ozon Delivery pickup-point list timed out; retrying with smaller page size.', [
+                    'requested_limit' => $limit,
+                    'next_limit' => $limits[array_search($limit, $limits, true) + 1] ?? null,
+                    'message' => mb_substr($exception->getMessage(), 0, 500),
+                ]);
+            }
+        }
+
+        throw new \RuntimeException('Ozon не вернул страницу списка ПВЗ.');
+    }
+
+    private function isTimeoutException(Throwable $exception): bool
+    {
+        $message = mb_strtolower($exception->getMessage());
+
+        return str_contains($message, 'curl error 28') || str_contains($message, 'operation timed out') || str_contains($message, 'timed out');
     }
 
     private function searchText(array $point): string

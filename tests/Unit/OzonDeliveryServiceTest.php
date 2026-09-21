@@ -135,4 +135,25 @@ class OzonDeliveryServiceTest extends TestCase
         self::assertCount(4, $points);
         self::assertSame([1, 2, 3, 4], array_column($points, 'delivery_point_id'));
     }
+
+    public function test_pickup_point_sync_retries_a_timed_out_list_page_with_a_smaller_limit(): void
+    {
+        $settings = new \App\Models\ShopCarrierDeliverySettings(['carrier' => 'ozon']);
+        $ozon = \Mockery::mock(OzonDeliveryService::class);
+        $ozon->shouldReceive('request')
+            ->once()
+            ->with($settings, '/v1/delivery-point/list', ['pagination' => ['cursor' => null, 'limit' => 100]], null, 60)
+            ->andThrow(new \Illuminate\Http\Client\ConnectionException('cURL error 28: Operation timed out'));
+        $ozon->shouldReceive('request')
+            ->once()
+            ->with($settings, '/v1/delivery-point/list', ['pagination' => ['cursor' => null, 'limit' => 50]], null, 60)
+            ->andReturn(['delivery_points' => [['delivery_point_id' => 1]], 'next_cursor' => 'next']);
+
+        $job = new \App\Jobs\SyncOzonDeliveryPickupPointsJob(1);
+        $method = new \ReflectionMethod($job, 'fetchPointListPage');
+        $result = $method->invoke($job, $ozon, $settings, null, 100);
+
+        self::assertSame(50, $result['limit']);
+        self::assertSame('next', $result['page']['next_cursor']);
+    }
 }
