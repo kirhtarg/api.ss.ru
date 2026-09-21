@@ -21,11 +21,13 @@ class YcpSettingsService
             }
         }
 
+        $deliveryMode = $settings['delivery_mode'] ?? 'merchant';
+
         return [
             'enabled' => ($settings['enabled'] ?? '0') === '1',
             'access_token' => $token,
-            'delivery_mode' => in_array(($settings['delivery_mode'] ?? 'merchant'), ['merchant', 'yandex'], true)
-                ? $settings['delivery_mode'] : 'merchant',
+            'delivery_mode' => in_array($deliveryMode, ['merchant', 'yandex'], true)
+                ? $deliveryMode : 'merchant',
             'api_url' => rtrim(config('app.url'), '/').'/api/v1',
         ];
     }
