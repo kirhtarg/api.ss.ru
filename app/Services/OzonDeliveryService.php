@@ -3,19 +3,21 @@
 namespace App\Services;
 
 use App\Models\ShopCarrierDeliverySettings;
-use App\Models\ShopOzonDeliveryPoint;
 use App\Models\ShopOrder;
+use App\Models\ShopOzonDeliveryPoint;
 use GuzzleHttp\Psr7\Uri;
 use GuzzleHttp\Psr7\UriResolver;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Http\Client\Response;
+use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Str;
 use RuntimeException;
 
 class OzonDeliveryService
 {
     private const API_URL = 'https://api-delivery.ozon.ru';
+
     private const TOKEN_URL = 'https://xapi.ozon.ru/oauth/token';
+
     private const SCOPE = 'delivery-api.all';
 
     public function getActiveSettings(): ShopCarrierDeliverySettings
@@ -78,7 +80,7 @@ class OzonDeliveryService
         return ['token' => $token, 'expires_at' => $expiresAt];
     }
 
-    public function request(ShopCarrierDeliverySettings $settings, string $path, array $payload = [], ?string $idempotencyKey = null): array
+    public function request(ShopCarrierDeliverySettings $settings, string $path, array $payload = [], ?string $idempotencyKey = null, int $timeoutSeconds = 30): array
     {
         $token = $this->accessToken($settings);
         $headers = ['Authorization' => 'Bearer '.$token, 'Accept' => 'application/json'];
@@ -86,7 +88,7 @@ class OzonDeliveryService
             $headers['Idempotency-Key'] = $idempotencyKey;
         }
 
-        $response = $this->requestWithToken($token, $path, $payload, $headers);
+        $response = $this->requestWithToken($token, $path, $payload, $headers, $timeoutSeconds);
         $body = $response->json();
         if (! $response->successful()) {
             $message = data_get($body, 'message') ?? data_get($body, 'error.message') ?? data_get($body, 'error') ?? $response->body();
@@ -105,7 +107,7 @@ class OzonDeliveryService
      * browser redirect: Ozon expects the original POST body and challenge
      * cookie to be replayed together.
      */
-    public function requestWithToken(string $token, string $path, array $payload = [], array $headers = []): Response
+    public function requestWithToken(string $token, string $path, array $payload = [], array $headers = [], int $timeoutSeconds = 30): Response
     {
         $url = self::API_URL.'/'.ltrim($path, '/');
         $headers = array_merge(['Authorization' => 'Bearer '.$token, 'Accept' => 'application/json'], $headers);
@@ -123,7 +125,7 @@ class OzonDeliveryService
             $response = Http::withHeaders($headers)
                 ->acceptJson()
                 ->asJson()
-                ->timeout(30)
+                ->timeout(max(1, $timeoutSeconds))
                 ->withOptions(['allow_redirects' => false])
                 ->post($url, $payload);
 
@@ -203,6 +205,7 @@ class OzonDeliveryService
         $appendScalars = static function ($value) use (&$values, &$appendScalars): void {
             if (is_scalar($value)) {
                 $values[] = (string) $value;
+
                 return;
             }
             if (is_array($value)) {
@@ -330,12 +333,16 @@ class OzonDeliveryService
 
     private function makePostings(array $packages, int $shipmentMethodId, float $totalValue, array $items, ?array $cutoffs): array
     {
-        if ($shipmentMethodId <= 0) throw new RuntimeException('Не выбран метод доставки Ozon.');
+        if ($shipmentMethodId <= 0) {
+            throw new RuntimeException('Не выбран метод доставки Ozon.');
+        }
         $packageValues = array_fill(0, count($packages), 0.0);
         foreach ($packages as $packageIndex => $package) {
             foreach ((array) ($package['items'] ?? []) as $packageItem) {
                 $itemIndex = (int) ($packageItem['item_index'] ?? -1);
-                if (! isset($items[$itemIndex])) continue;
+                if (! isset($items[$itemIndex])) {
+                    continue;
+                }
                 $item = $items[$itemIndex];
                 $price = (float) ($item['final_price'] ?? $item['price'] ?? $item['unit_price'] ?? 0);
                 $quantity = max(1, (int) ($packageItem['quantity'] ?? 1));
@@ -371,11 +378,16 @@ class OzonDeliveryService
     private function normalizePhone(string $phone): string
     {
         $digits = preg_replace('/\D+/', '', $phone) ?? '';
-        if (strlen($digits) === 11 && str_starts_with($digits, '8')) $digits = '7'.substr($digits, 1);
-        if (strlen($digits) === 10) $digits = '7'.$digits;
+        if (strlen($digits) === 11 && str_starts_with($digits, '8')) {
+            $digits = '7'.substr($digits, 1);
+        }
+        if (strlen($digits) === 10) {
+            $digits = '7'.$digits;
+        }
         if (strlen($digits) !== 11 || ! str_starts_with($digits, '7')) {
             throw new RuntimeException('Для доставки Ozon нужен корректный российский номер телефона.');
         }
+
         return '+'.$digits;
     }
 }

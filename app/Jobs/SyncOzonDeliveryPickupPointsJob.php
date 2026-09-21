@@ -42,18 +42,14 @@ class SyncOzonDeliveryPickupPointsJob implements ShouldQueue
 
                 $page = $ozon->request($settings, '/v1/delivery-point/list', [
                     'pagination' => ['cursor' => $cursor, 'limit' => 100],
-                ]);
+                ], timeoutSeconds: 60);
                 $summaries = collect((array) data_get($page, 'delivery_points', []))
                     ->filter(fn ($point) => is_array($point) && ! empty($point['delivery_point_id']))
                     ->keyBy(fn ($point) => (string) $point['delivery_point_id']);
                 $detailsById = collect();
 
-                foreach ($summaries->keys()->chunk(100) as $ids) {
-                    $details = $ozon->request($settings, '/v1/delivery-point/info', [
-                        'delivery_point_ids' => $ids->map(fn ($id) => (int) $id)->values()->all(),
-                    ]);
-                    $detailsById = $detailsById->merge(collect((array) data_get($details, 'delivery_points', []))
-                        ->filter(fn ($point) => is_array($point) && ! empty($point['delivery_point_id']))
+                foreach ($summaries->keys()->chunk(10) as $ids) {
+                    $detailsById = $detailsById->merge(collect($this->fetchPointDetails($ozon, $settings, $ids->map(fn ($id) => (int) $id)->values()->all()))
                         ->keyBy(fn ($point) => (string) $point['delivery_point_id']));
                 }
 
@@ -118,6 +114,36 @@ class SyncOzonDeliveryPickupPointsJob implements ShouldQueue
                 'finished_at' => now(),
             ]);
             throw $exception;
+        }
+    }
+
+    /**
+     * Ozon's info endpoint may time out on a large batch. Start with small
+     * groups, and split a timed-out request recursively so one slow response
+     * doesn't discard the whole directory synchronization.
+     */
+    protected function fetchPointDetails(OzonDeliveryService $ozon, $settings, array $ids): array
+    {
+        try {
+            $response = $ozon->request($settings, '/v1/delivery-point/info', [
+                'delivery_point_ids' => $ids,
+            ], timeoutSeconds: 60);
+
+            return array_values(array_filter((array) data_get($response, 'delivery_points', []), static fn ($point) => is_array($point) && ! empty($point['delivery_point_id'])
+            ));
+        } catch (Throwable $exception) {
+            $message = mb_strtolower($exception->getMessage());
+            $isTimeout = str_contains($message, 'curl error 28') || str_contains($message, 'operation timed out') || str_contains($message, 'timed out');
+            if (! $isTimeout || count($ids) <= 1) {
+                throw $exception;
+            }
+
+            $middle = (int) ceil(count($ids) / 2);
+
+            return array_merge(
+                $this->fetchPointDetails($ozon, $settings, array_slice($ids, 0, $middle)),
+                $this->fetchPointDetails($ozon, $settings, array_slice($ids, $middle))
+            );
         }
     }
 
