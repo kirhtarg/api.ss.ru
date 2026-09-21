@@ -54,13 +54,24 @@ class YcpSettingsServiceTest extends TestCase
         $saved = $service->save([
             'enabled' => true,
             'access_token' => str_repeat('a', 64),
+            'api_token' => 'ycp-issued-api-secret',
             'delivery_mode' => 'merchant',
         ]);
 
         self::assertTrue($saved['enabled']);
         self::assertSame('merchant', $saved['delivery_mode']);
         self::assertSame(str_repeat('a', 64), $saved['access_token']);
+        self::assertSame('ycp-issued-api-secret', $saved['api_token']);
+        self::assertNotSame('ycp-issued-api-secret', Setting::query()->where('key', 'ycp_api_token')->value('value'));
         self::assertSame('1', Setting::query()->where('key', 'enabled')->value('value'));
-        self::assertSame(3, Setting::query()->where('group', 'ycp')->count());
+        self::assertSame(4, Setting::query()->where('group', 'ycp')->count());
+
+        $savedAgain = $service->save([
+            'enabled' => true,
+            'access_token' => '',
+            'api_token' => '',
+            'delivery_mode' => 'merchant',
+        ]);
+        self::assertSame('ycp-issued-api-secret', $savedAgain['api_token']);
     }
 }

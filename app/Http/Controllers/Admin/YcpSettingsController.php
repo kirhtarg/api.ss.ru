@@ -19,8 +19,12 @@ class YcpSettingsController extends Controller
             'configured' => $data['access_token'] !== '',
             'access_token_masked' => $data['access_token'] !== '' ? '********' : '',
             'access_token' => '',
+            'api_token_configured' => $data['api_token'] !== '',
+            'api_token_masked' => $data['api_token'] !== '' ? '********' : '',
+            'api_token' => '',
             'delivery_mode' => $data['delivery_mode'],
             'api_url' => $data['api_url'],
+            'cabinet_api_url' => rtrim(config('app.url'), '/'),
         ]]);
     }
 
@@ -29,6 +33,7 @@ class YcpSettingsController extends Controller
         $data = $request->validate([
             'enabled' => ['required', 'boolean'],
             'access_token' => ['nullable', 'string', 'min:24', 'max:512'],
+            'api_token' => ['nullable', 'string', 'max:2048'],
             'delivery_mode' => ['required', 'in:merchant,yandex'],
         ]);
         $current = $settings->get();
@@ -42,8 +47,12 @@ class YcpSettingsController extends Controller
             'configured' => $saved['access_token'] !== '',
             'access_token_masked' => $saved['access_token'] !== '' ? '********' : '',
             'access_token' => '',
+            'api_token_configured' => $saved['api_token'] !== '',
+            'api_token_masked' => $saved['api_token'] !== '' ? '********' : '',
+            'api_token' => '',
             'delivery_mode' => $saved['delivery_mode'],
             'api_url' => $saved['api_url'],
+            'cabinet_api_url' => rtrim(config('app.url'), '/'),
         ]]);
     }
 
