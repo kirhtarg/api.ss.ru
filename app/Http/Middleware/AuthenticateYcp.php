@@ -13,7 +13,8 @@ class AuthenticateYcp
     public function handle(Request $request, Closure $next): Response
     {
         $settings = app(YcpSettingsService::class)->get();
-        $provided = (string) $request->bearerToken();
+        // Some gateway/proxy implementations can leave whitespace around the bearer value.
+        $provided = trim((string) $request->bearerToken());
         $matchesSiteToken = $provided !== ''
             && $settings['access_token'] !== ''
             && hash_equals($settings['access_token'], $provided);
@@ -39,6 +40,9 @@ class AuthenticateYcp
                 'bearer_present' => $provided !== '',
                 'matches_site_token' => $matchesSiteToken,
                 'matches_ycp_api_token' => $matchesYcpApiToken,
+                'provided_token_fingerprint' => $provided === '' ? null : substr(hash('sha256', $provided), 0, 12),
+                'site_token_fingerprint' => $settings['access_token'] === '' ? null : substr(hash('sha256', $settings['access_token']), 0, 12),
+                'ycp_api_token_fingerprint' => $settings['api_token'] === '' ? null : substr(hash('sha256', $settings['api_token']), 0, 12),
             ]);
 
             return response()->json(['error' => 'Unauthorized'], 401);

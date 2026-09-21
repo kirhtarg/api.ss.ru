@@ -96,7 +96,7 @@ class YcpSettingsController extends Controller
 
         return response()->json([
             'success' => true,
-            'message' => 'Соединение установлено: API доступен, токен принят, ответ YCP корректен.',
+            'message' => 'Локальная проверка пройдена: API сайта доступен и принимает сохранённый на сайте API-токен. Эта проверка не подтверждает, какой токен кабинет YCP отправляет сайту; для этого используйте проверку подключения в кабинете YCP.',
             'data' => ['warehouses_count' => (int) $payload['total_count']],
         ]);
     }
