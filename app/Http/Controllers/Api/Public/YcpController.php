@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\Public;
 
 use App\Http\Controllers\Controller;
+use App\Models\Contact;
+use App\Models\ContactAddress;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
 use App\Models\ShopOrder;
@@ -10,7 +12,6 @@ use App\Models\ShopOrderLog;
 use App\Models\ShopDeliveryStatus;
 use App\Models\ShopOrderStatus;
 use App\Models\ShopPaymentStatus;
-use App\Models\ShopStock;
 use App\Models\ShopWarehouse;
 use App\Models\YcpCheckoutSession;
 use App\Services\OrderCalculationService;
@@ -27,6 +28,8 @@ use Symfony\Component\HttpKernel\Exception\ConflictHttpException;
 
 class YcpController extends Controller
 {
+    private const YCP_RESERVATION_WAREHOUSE_MARKER = '[system:ycp-single-store]';
+
     private ?array $settingsCache = null;
     private ?string $mainSiteUrlCache = null;
 
@@ -41,19 +44,98 @@ class YcpController extends Controller
     public function warehouses(Request $request): JsonResponse
     {
         $pagination = $request->validate(['limit' => ['required', 'integer', 'min:1', 'max:1000'], 'offset' => ['required', 'integer', 'min:0']]);
-        $query = ShopWarehouse::query()->active()->ordered();
-        $total = (clone $query)->count();
-        $warehouses = $query->offset($pagination['offset'])->limit($pagination['limit'])->get();
+        // YCP needs the merchant's actual dispatch location, not a per-location
+        // inventory setup. This shop operates from one store and legacy stock is
+        // stored directly on goods/variations, so expose its primary delivery
+        // address as one logical YCP warehouse.
+        $warehouse = $this->mainStoreWarehouse();
         $yandexDelivery = $this->settingsData()['delivery_mode'] === 'yandex';
-        return response()->json(['warehouses' => $warehouses->map(fn (ShopWarehouse $warehouse) => [
-            'id' => (string) $warehouse->id,
-            'title' => $warehouse->name,
-            'address' => $warehouse->address ?? '',
-            'phone' => $warehouse->phone ?? '',
-            'description' => $warehouse->description ?? '',
+        $warehouses = [];
+        if ($warehouse && $pagination['offset'] === 0) {
+            $warehouse['ycp_delivery_options'] = ['enabled' => $yandexDelivery];
+            $warehouses = [$warehouse];
+        }
+
+        return response()->json(['warehouses' => $warehouses, 'total_count' => $warehouse ? 1 : 0]);
+    }
+
+    /** Build the single logical YCP warehouse from the store's primary public address. */
+    private function mainStoreWarehouse(): ?array
+    {
+        $contact = Contact::getMainContact();
+        if (! $contact) {
+            return null;
+        }
+
+        $address = ContactAddress::query()
+            ->where('id_contact', $contact->id)
+            ->orderByDesc('is_main')
+            ->orderByDesc('is_delivery')
+            ->first();
+        $plainAddress = $this->plainText($address?->address);
+        // Public contact address fields sometimes include opening-hours markup;
+        // keep the actual dispatch address in the protocol's address field.
+        $plainAddress = (string) preg_replace('/\\.\\s*,\\s*/u', ' ', $plainAddress);
+        $plainAddress = trim((string) preg_replace('/\\s*(?:Часы работы|Режим работы)\\s*:.*$/iu', '', $plainAddress), " \t\n\r,;.");
+        if ($plainAddress === '') {
+            return null;
+        }
+
+        return [
+            'id' => 'merchant',
+            'title' => trim((string) ($contact->name ?: 'Основной магазин')),
+            'address' => $plainAddress,
+            'phone' => trim((string) ($contact->mainPhone()?->phone_number ?? '')),
+            'description' => 'Единая точка наличия и отгрузки магазина',
             'self_pickup_options' => ['enabled' => false],
-            'ycp_delivery_options' => ['enabled' => $yandexDelivery],
-        ])->values(), 'total_count' => $total]);
+            'ycp_delivery_options' => ['enabled' => false],
+        ];
+    }
+
+    /**
+     * The current stock reservation subsystem requires a warehouse FK. Keep one
+     * system-managed backing row for the single-store YCP location; merchants do
+     * not configure or manage this row, and YCP always sees the stable ID "merchant".
+     */
+    private function ensureYcpReservationWarehouse(): ShopWarehouse
+    {
+        $warehouse = ShopWarehouse::query()
+            ->where('description', self::YCP_RESERVATION_WAREHOUSE_MARKER)
+            ->first();
+        if ($warehouse) {
+            if (! $warehouse->is_active) {
+                $warehouse->update(['is_active' => true]);
+            }
+
+            return $warehouse;
+        }
+
+        $store = $this->mainStoreWarehouse();
+        if (! $store) {
+            throw new ConflictHttpException('Основной адрес магазина для YCP не настроен');
+        }
+
+        return ShopWarehouse::query()->create([
+            'name' => $store['title'],
+            'description' => self::YCP_RESERVATION_WAREHOUSE_MARKER,
+            'address' => $store['address'],
+            'phone' => $store['phone'],
+            'is_active' => true,
+            'is_default' => false,
+            'sort_order' => 0,
+        ]);
+    }
+
+    private function plainText(?string $value): string
+    {
+        if (! $value) {
+            return '';
+        }
+
+        $value = preg_replace('/<\\s*br\\s*\\/?\\s*>|<\\/?\\s*(?:div|p|li|h[1-6])\\b[^>]*>/iu', ', ', $value);
+        $value = html_entity_decode(strip_tags((string) $value), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        return trim((string) preg_replace('/\\s+/u', ' ', $value), " \t\n\r,;");
     }
 
     public function basketCheck(Request $request): JsonResponse
@@ -188,7 +270,12 @@ class YcpController extends Controller
                 }
 
                 $merchantCalculatesDelivery = $this->settingsData()['delivery_mode'] === 'merchant';
-                $warehouse = $merchantCalculatesDelivery ? null : ShopWarehouse::query()->active()->find($data['warehouse_id']);
+                $warehouse = null;
+                if (! $merchantCalculatesDelivery) {
+                    $warehouse = $data['warehouse_id'] === 'merchant'
+                        ? $this->ensureYcpReservationWarehouse()
+                        : ShopWarehouse::query()->active()->find($data['warehouse_id']);
+                }
                 if (! $merchantCalculatesDelivery && ! $warehouse) {
                     throw new ConflictHttpException('Selected warehouse is unavailable');
                 }
@@ -202,24 +289,11 @@ class YcpController extends Controller
                     }
                 }
                 foreach ($items as $item) {
-                    if ($merchantCalculatesDelivery) {
-                        $good = ShopGood::query()->find($item['good_id']);
-                        $variation = ! empty($item['variation_id']) ? ShopGoodVariation::query()->find($item['variation_id']) : null;
-                        if (! $good || $this->availability->quantity($good, $variation) < (int) $item['quantity']) {
-                            throw new ConflictHttpException('Insufficient available stock');
-                        }
-                        continue;
+                    $good = ShopGood::query()->find($item['good_id']);
+                    $variation = ! empty($item['variation_id']) ? ShopGoodVariation::query()->find($item['variation_id']) : null;
+                    if (! $good || $this->availability->quantity($good, $variation) < (int) $item['quantity']) {
+                        throw new ConflictHttpException('Insufficient available stock');
                     }
-                    $stock = ShopStock::query()->where('good_id', $item['good_id'])->where('warehouse_id', $warehouse->id)
-                        ->when($item['variation_id'], fn ($q) => $q->where('variation_id', $item['variation_id']), fn ($q) => $q->whereNull('variation_id'))->first();
-                    $legacy = ShopStock::query()->where('good_id', $item['good_id'])
-                        ->when($item['variation_id'], fn ($q) => $q->where('variation_id', $item['variation_id']), fn ($q) => $q->whereNull('variation_id'))->exists();
-                    $available = $stock
-                        ? max(0, $stock->quantity - $stock->reserved_quantity)
-                        : (! $legacy && ($warehouse->is_default || ShopWarehouse::query()->active()->count() === 1)
-                            ? max(0, (int) ($item['variation_id'] ? ShopGoodVariation::find($item['variation_id'])?->stock_quantity : ShopGood::find($item['good_id'])?->stock_quantity))
-                            : 0);
-                    if ($available < (int) $item['quantity']) throw new ConflictHttpException('Insufficient stock at selected warehouse');
                 }
                 $subtotal = round(array_sum(array_column($items, 'total')), 2);
                 $serviceType = (string) $data['delivery']['service_type'];
@@ -246,6 +320,7 @@ class YcpController extends Controller
                 if ($merchantCalculatesDelivery && $deliveryMethod->type !== 'cdek') {
                     $deliveryPrice = (float) $deliveryMethod->getDeliveryCost($subtotal);
                 }
+                $reservationWarehouse = $warehouse ?? $this->ensureYcpReservationWarehouse();
                 $orderNumber = $this->generateOrderNumber();
                 $order = ShopOrder::create([
                     'order_number' => $orderNumber,
@@ -262,9 +337,9 @@ class YcpController extends Controller
                     'shipping_method' => $data['delivery']['service_display_name'] ?? $deliveryMethod->name,
                     'shipping_method_id' => $deliveryMethod->id,
                     'shipping_address' => $this->formatAddress($data['delivery']['address'] ?? null),
-                    'metadata' => ['source' => 'ycp', 'ycp_session_id' => $data['session_id'], 'warehouse_id' => $warehouse?->id, 'delivery' => $data['delivery']],
+                    'metadata' => ['source' => 'ycp', 'ycp_session_id' => $data['session_id'], 'warehouse_id' => $reservationWarehouse->id, 'ycp_warehouse_id' => $data['warehouse_id'], 'delivery' => $data['delivery']],
                 ]);
-                $this->reservations->reserveForOrder($order, $items, 30, 'YCP', $warehouse?->id);
+                $this->reservations->reserveForOrder($order, $items, 30, 'YCP', $reservationWarehouse->id);
                 ShopOrderLog::logOrderCreated($order->id, $data['customer']['full_name'], ShopOrderLog::SECTION_CHECKOUT, $order->order_number, 'Yandex Commerce Protocol');
                 YcpCheckoutSession::updateOrCreate(['session_id' => $data['session_id']], [
                     'shop_order_id' => $order->id,
@@ -526,43 +601,17 @@ class YcpController extends Controller
 
     private function warehouseQuantities(ShopGood $good, ?ShopGoodVariation $variation): array
     {
-        if ($this->settingsData()['delivery_mode'] === 'merchant') {
-            $activeVariations = $good->relationLoaded('variations') ? $good->variations->where('is_active', true) : $good->variations()->where('is_active', true)->with('stock')->get();
-            $quantity = $variation
-                ? $this->availability->quantity($good, $variation)
-                : ($activeVariations->isNotEmpty()
-                    ? (int) $activeVariations->sum(fn ($candidate) => $this->availability->quantity($good, $candidate))
-                    : $this->availability->quantity($good));
-            return [['id' => 'merchant', 'available_quantity' => $quantity]];
-        }
-        $warehouses = ShopWarehouse::query()->active()->ordered()->get();
-        if (! $variation) {
-            $variants = $good->relationLoaded('variations') ? $good->variations->where('is_active', true) : $good->variations()->where('is_active', true)->with('stock')->get();
-            if ($variants->isNotEmpty()) {
-                $defaultWarehouseId = $warehouses->firstWhere('is_default', true)?->id
-                    ?? ($warehouses->count() === 1 ? $warehouses->first()?->id : null);
-                return $warehouses->map(fn ($warehouse) => [
-                    'id' => (string) $warehouse->id,
-                    'available_quantity' => (int) $variants->sum(function ($candidate) use ($warehouse, $defaultWarehouseId): int {
-                        $stockRows = collect($candidate->stock);
-                        if ($stockRows->isEmpty()) {
-                            return (string) $warehouse->id === (string) $defaultWarehouseId ? max(0, (int) $candidate->stock_quantity) : 0;
-                        }
-                        return (int) $stockRows->where('warehouse_id', $warehouse->id)->sum(fn ($row) => max(0, (int) $row->quantity - (int) $row->reserved_quantity));
-                    }),
-                ])->values()->all();
-            }
-        }
-        $stocks = $variation?->stock()->get() ?? $good->stock()->whereNull('variation_id')->get();
-        $legacyQuantity = max(0, (int) ($variation?->stock_quantity ?? $good->stock_quantity));
-        return $warehouses->map(function (ShopWarehouse $warehouse) use ($good, $variation, $stocks, $legacyQuantity, $warehouses): array {
-            $stock = ShopStock::query()->where('warehouse_id', $warehouse->id)->where('good_id', $good->id)
-                ->when($variation, fn ($q) => $q->where('variation_id', $variation->id), fn ($q) => $q->whereNull('variation_id'))->first();
-            $quantity = $stock
-                ? max(0, $stock->quantity - $stock->reserved_quantity)
-                : ($stocks->isEmpty() && ($warehouse->is_default || $warehouses->count() === 1) ? $legacyQuantity : 0);
-            return ['id' => (string) $warehouse->id, 'available_quantity' => $quantity];
-        })->values()->all();
+        $activeVariations = $good->relationLoaded('variations')
+            ? $good->variations->where('is_active', true)
+            : $good->variations()->where('is_active', true)->with('stock')->get();
+        $quantity = $variation
+            ? $this->availability->quantity($good, $variation)
+            : ($activeVariations->isNotEmpty()
+                ? (int) $activeVariations->sum(fn ($candidate) => $this->availability->quantity($good, $candidate))
+                : $this->availability->quantity($good));
+
+        // YCP exposes one stock location for the whole store (see warehouses()).
+        return [['id' => 'merchant', 'available_quantity' => $quantity]];
     }
 
     private function dimensions($model): array
