@@ -29,7 +29,7 @@ class SyncOzonDeliveryPickupPointsJob implements ShouldQueue
         $run->update(['status' => 'running', 'started_at' => now(), 'error_message' => null]);
 
         try {
-            $settings = $ozon->getActiveSettings();
+            $settings = $ozon->getSettingsForPickupPointSync();
             $cursor = null;
             $seenCursors = [];
             $pageCount = 0;

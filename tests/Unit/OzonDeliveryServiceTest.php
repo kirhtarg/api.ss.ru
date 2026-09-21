@@ -96,4 +96,18 @@ class OzonDeliveryServiceTest extends TestCase
         self::assertSame('Москва, улица 1', $points[0]['full_address']);
         self::assertSame(75, $points[74]['delivery_point_id']);
     }
+
+    public function test_pickup_point_sync_settings_do_not_require_delivery_method_to_be_active(): void
+    {
+        $settings = new \App\Models\ShopCarrierDeliverySettings([
+            'carrier' => 'ozon',
+            'is_active' => false,
+            'oauth_client_id' => 'oauth-client-id',
+            'oauth_client_secret' => 'oauth-client-secret',
+        ]);
+        $service = \Mockery::mock(OzonDeliveryService::class)->makePartial()->shouldAllowMockingProtectedMethods();
+        $service->shouldReceive('findSettingsForPickupPointSync')->once()->andReturn($settings);
+
+        self::assertSame($settings, $service->getSettingsForPickupPointSync());
+    }
 }

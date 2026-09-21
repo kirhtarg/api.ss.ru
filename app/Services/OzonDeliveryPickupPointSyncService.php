@@ -48,7 +48,7 @@ class OzonDeliveryPickupPointSyncService
             throw new RuntimeException('Для фоновой синхронизации ПВЗ включите очередь (QUEUE_CONNECTION=database или redis) и запустите queue worker.');
         }
 
-        app(OzonDeliveryService::class)->getActiveSettings();
+        app(OzonDeliveryService::class)->getSettingsForPickupPointSync();
 
         $run = ShopOzonDeliveryPointSyncRun::create([
             'status' => 'queued',

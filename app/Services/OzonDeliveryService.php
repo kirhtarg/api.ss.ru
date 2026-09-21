@@ -31,6 +31,25 @@ class OzonDeliveryService
         return $settings;
     }
 
+    /**
+     * Pickup-point directory maintenance is independent from whether Ozon
+     * delivery is currently offered to customers at checkout.
+     */
+    public function getSettingsForPickupPointSync(): ShopCarrierDeliverySettings
+    {
+        $settings = $this->findSettingsForPickupPointSync();
+        if (! $settings || blank($settings->oauth_client_id) || blank($settings->oauth_client_secret)) {
+            throw new RuntimeException('Для синхронизации ПВЗ заполните OAuth Client ID и Client Secret Ozon Доставки.');
+        }
+
+        return $settings;
+    }
+
+    protected function findSettingsForPickupPointSync(): ?ShopCarrierDeliverySettings
+    {
+        return ShopCarrierDeliverySettings::query()->where('carrier', 'ozon')->first();
+    }
+
     public function refreshAccessToken(?ShopCarrierDeliverySettings $settings = null): array
     {
         $settings ??= $this->getActiveSettings();
