@@ -105,14 +105,27 @@ class ShopOzonSellerController extends Controller
             $roles = (new OzonSellerClient($this->account()))->post('/v1/roles');
             $methods = collect((array) data_get($roles, 'roles', []))
                 ->flatMap(static fn ($role) => (array) ($role['methods'] ?? []))
-                ->map(static fn ($method) => strtolower((string) $method))->unique()->values();
-            $hasMethod = static fn (string $needle) => $methods->contains(static fn ($method) => str_ends_with($method, strtolower($needle)) || $method === strtolower($needle));
+                ->map(static function ($method) {
+                    if (is_array($method)) return (string) ($method['name'] ?? $method['method'] ?? $method['path'] ?? '');
+                    return (string) $method;
+                })->filter()->unique()->values();
+            $methodKey = static fn (string $value) => preg_replace('/[^a-z0-9]+/i', '', strtolower($value));
+            $hasMethod = static function (string $needle) use ($methods, $methodKey): bool {
+                $key = $methodKey($needle);
+                return $methods->contains(static function ($method) use ($key, $methodKey): bool {
+                    $candidate = $methodKey((string) $method);
+                    return $candidate === $key || str_ends_with($candidate, $key)
+                        || ($key === 'v1deliverymap' && str_contains($candidate, 'delivery') && str_contains($candidate, 'map'))
+                        || ($key === 'v1deliverypointinfo' && str_contains($candidate, 'delivery') && str_contains($candidate, 'point') && str_contains($candidate, 'info'));
+                });
+            };
             return response()->json(['success' => true, 'message' => 'Роли API-ключа получены.', 'data' => [
                 'roles' => $roles['roles'] ?? [],
                 'methods_count' => $methods->count(),
                 'delivery_map' => $hasMethod('/v1/delivery/map'),
                 'delivery_point_info' => $hasMethod('/v1/delivery/point/info'),
                 'delivery_access' => $hasMethod('/v1/delivery/map') && $hasMethod('/v1/delivery/point/info'),
+                'delivery_methods_found' => $methods->filter(static fn ($method) => str_contains(strtolower((string) $method), 'delivery'))->take(50)->values(),
                 'expires_at' => $roles['expires_at'] ?? null,
             ]]);
         } catch (\Throwable $e) {

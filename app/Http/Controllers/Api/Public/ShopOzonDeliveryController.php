@@ -30,7 +30,7 @@ class ShopOzonDeliveryController extends Controller
                     'right_top' => ['lat' => $lat + $delta, 'long' => $lon + $delta],
                 ], $zoom)]);
             }
-            return response()->json(['success' => true, 'data' => $ozon->getPickupPoints($validated['city'])]);
+            throw new \RuntimeException('Для поиска ПВЗ Ozon нужны координаты выбранного города. Выберите город из списка подсказок.');
         } catch (Throwable $e) {
             Log::warning('Ozon Delivery pickup points request failed', ['message' => $e->getMessage()]);
             return response()->json(['success' => false, 'message' => 'Не удалось загрузить пункты выдачи Ozon: '.$e->getMessage(), 'data' => []], 422);
