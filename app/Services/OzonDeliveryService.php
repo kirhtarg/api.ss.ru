@@ -14,6 +14,8 @@ use RuntimeException;
 
 class OzonDeliveryService
 {
+    private const MAX_CHECKOUT_PICKUP_POINTS = 50;
+
     private const API_URL = 'https://api-delivery.ozon.ru';
 
     private const TOKEN_URL = 'https://xapi.ozon.ru/oauth/token';
@@ -178,6 +180,7 @@ class OzonDeliveryService
         }
 
         return $this->queryLocalPickupPoints($needle)
+            ->take(self::MAX_CHECKOUT_PICKUP_POINTS)
             ->map(static function (ShopOzonDeliveryPoint $row): array {
                 $point = is_array($row->point_data) ? $row->point_data : [];
                 $point['delivery_point_id'] = (int) $row->delivery_point_id;
@@ -196,6 +199,7 @@ class OzonDeliveryService
             ->where('is_active', true)
             ->where('search_text', 'like', '%'.$needle.'%')
             ->orderBy('name')
+            ->limit(self::MAX_CHECKOUT_PICKUP_POINTS)
             ->get();
     }
 

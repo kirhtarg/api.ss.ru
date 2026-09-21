@@ -76,7 +76,7 @@ class OzonDeliveryServiceTest extends TestCase
         self::assertStringNotContainsString('123', $searchText);
     }
 
-    public function test_pickup_point_search_returns_every_local_match_without_calling_ozon(): void
+    public function test_pickup_point_search_returns_at_most_50_local_matches_without_calling_ozon(): void
     {
         $rows = collect(range(1, 75))->map(fn (int $id) => new \App\Models\ShopOzonDeliveryPoint([
             'delivery_point_id' => $id,
@@ -92,9 +92,9 @@ class OzonDeliveryServiceTest extends TestCase
         Http::preventStrayRequests();
         $points = $service->getPickupPoints('Москва');
 
-        self::assertCount(75, $points);
+        self::assertCount(50, $points);
         self::assertSame('Москва, улица 1', $points[0]['full_address']);
-        self::assertSame(75, $points[74]['delivery_point_id']);
+        self::assertSame(50, $points[49]['delivery_point_id']);
     }
 
     public function test_pickup_point_sync_settings_do_not_require_delivery_method_to_be_active(): void
