@@ -37,8 +37,8 @@ class YcpSettingsController extends Controller
             'delivery_mode' => ['required', 'in:merchant,yandex'],
         ]);
         $current = $settings->get();
-        if ($data['enabled'] && trim((string) ($data['access_token'] ?? $current['access_token'])) === '') {
-            return response()->json(['success' => false, 'message' => 'Для включения YCP необходимо указать токен доступа'], 422);
+        if ($data['enabled'] && trim((string) ($data['api_token'] ?? $current['api_token'])) === '') {
+            return response()->json(['success' => false, 'message' => 'Для включения YCP необходимо сохранить API-токен из кабинета YCP'], 422);
         }
 
         $saved = $settings->save($data);
@@ -62,13 +62,13 @@ class YcpSettingsController extends Controller
         if (! $config['enabled']) {
             return response()->json(['success' => false, 'message' => 'Сначала включите YCP и сохраните настройки']);
         }
-        if ($config['access_token'] === '') {
-            return response()->json(['success' => false, 'message' => 'Токен YCP не сохранён']);
+        if ($config['api_token'] === '') {
+            return response()->json(['success' => false, 'message' => 'API-токен из кабинета YCP не сохранён']);
         }
 
         try {
             $response = Http::acceptJson()
-                ->withToken($config['access_token'])
+                ->withToken($config['api_token'])
                 ->connectTimeout(3)
                 ->timeout(7)
                 ->get($config['api_url'].'/warehouses', ['limit' => 1, 'offset' => 0]);
@@ -83,7 +83,7 @@ class YcpSettingsController extends Controller
         }
 
         if ($response->status() === 401) {
-            return response()->json(['success' => false, 'message' => 'API доступен, но токен отклонён. Сверьте токен в настройках сайта и кабинете YCP.']);
+            return response()->json(['success' => false, 'message' => 'API доступен, но сохранённый API-токен отклонён. Сверьте его с активным API-токеном в кабинете YCP.']);
         }
         if (! $response->successful()) {
             return response()->json(['success' => false, 'message' => 'API ответил с HTTP '.$response->status().'. Проверьте настройки YCP и доступность метода складов.']);

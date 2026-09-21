@@ -21,7 +21,7 @@ class AuthenticateYcp
             && $settings['api_token'] !== ''
             && hash_equals($settings['api_token'], $provided);
 
-        if (! $settings['enabled'] || $settings['access_token'] === '' || ! $matchesSiteToken) {
+        if (! $settings['enabled'] || $settings['api_token'] === '' || ! $matchesYcpApiToken) {
             $authorization = (string) $request->header('Authorization', '');
             $scheme = str_contains($authorization, ' ')
                 ? strtolower((string) strtok($authorization, ' '))
@@ -34,6 +34,7 @@ class AuthenticateYcp
                 'user_agent' => substr((string) $request->userAgent(), 0, 200),
                 'enabled' => $settings['enabled'],
                 'site_token_configured' => $settings['access_token'] !== '',
+                'ycp_api_token_configured' => $settings['api_token'] !== '',
                 'authorization_scheme' => $scheme,
                 'bearer_present' => $provided !== '',
                 'matches_site_token' => $matchesSiteToken,
