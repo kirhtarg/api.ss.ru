@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\ShopCarrierDeliverySettings;
 use App\Models\ShopOrder;
 use App\Models\ShopOzonDeliveryPoint;
+use App\Models\ShopOzonAccount;
+use App\Services\Ozon\OzonSellerClient;
 use GuzzleHttp\Psr7\Uri;
 use GuzzleHttp\Psr7\UriResolver;
 use Illuminate\Http\Client\Response;
@@ -191,6 +193,44 @@ class OzonDeliveryService
                 return $point;
             })
             ->all();
+    }
+
+    /** Load points for the visible map area through Seller API DeliveryAPI. */
+    public function getPickupPointsByViewport(array $viewport, int $zoom = 12): array
+    {
+        $account = ShopOzonAccount::query()->where('is_active', true)->first();
+        if (! $account || blank($account->client_id) || blank($account->api_key)) {
+            throw new RuntimeException('Для поиска ПВЗ на карте заполните Client-Id и Api-Key Ozon Seller API.');
+        }
+        $seller = new OzonSellerClient($account);
+        $map = $seller->post('/v1/delivery/map', [
+            'viewport' => $viewport,
+            'zoom' => max(1, min(20, $zoom)),
+        ]);
+        $ids = collect((array) data_get($map, 'clusters', []))
+            ->flatMap(static fn ($cluster) => (array) ($cluster['map_point_ids'] ?? []))
+            ->filter(static fn ($id) => (string) $id !== '')
+            ->map(static fn ($id) => (string) $id)->unique()->values()->all();
+        if (! $ids) return [];
+
+        $details = $seller->post('/v1/delivery/point/info', ['map_point_ids' => array_slice($ids, 0, 500)]);
+        return collect((array) data_get($details, 'points', []))->map(static function ($row): ?array {
+            $method = (array) ($row['delivery_method'] ?? []);
+            if (($row['enabled'] ?? true) === false || ! $method) return null;
+            $coords = (array) ($method['coordinates'] ?? []);
+            $id = $method['map_point_id'] ?? null;
+            if ($id === null) return null;
+            $typeId = data_get($method, 'delivery_type.id');
+            return [
+                'delivery_point_id' => (int) $id,
+                'name' => (string) ($method['name'] ?? 'Пункт выдачи Ozon'),
+                'full_address' => (string) ($method['address'] ?? ''),
+                'address' => (string) ($method['address'] ?? ''),
+                'location' => ['latitude' => (float) ($coords['lat'] ?? 0), 'longitude' => (float) ($coords['long'] ?? 0)],
+                'shipment_method_ids' => $typeId !== null ? [(int) $typeId] : [],
+                'point_data' => $method,
+            ];
+        })->filter()->values()->all();
     }
 
     protected function queryLocalPickupPoints(string $needle)

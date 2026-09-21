@@ -15,8 +15,21 @@ class ShopOzonDeliveryController extends Controller
 {
     public function pickupPoints(Request $request, OzonDeliveryService $ozon): JsonResponse
     {
-        $validated = $request->validate(['city' => 'required|string|min:2|max:255']);
+        $validated = $request->validate([
+            'city' => 'required|string|min:2|max:255',
+            'latitude' => 'nullable|numeric|between:-90,90', 'longitude' => 'nullable|numeric|between:-180,180',
+            'zoom' => 'nullable|integer|between:1,20',
+        ]);
         try {
+            if (isset($validated['latitude'], $validated['longitude'])) {
+                $lat = (float) $validated['latitude']; $lon = (float) $validated['longitude'];
+                $zoom = (int) ($validated['zoom'] ?? 12);
+                $delta = $zoom >= 14 ? 0.12 : 0.25;
+                return response()->json(['success' => true, 'data' => $ozon->getPickupPointsByViewport([
+                    'left_bottom' => ['lat' => $lat - $delta, 'long' => $lon - $delta],
+                    'right_top' => ['lat' => $lat + $delta, 'long' => $lon + $delta],
+                ], $zoom)]);
+            }
             return response()->json(['success' => true, 'data' => $ozon->getPickupPoints($validated['city'])]);
         } catch (Throwable $e) {
             Log::warning('Ozon Delivery pickup points request failed', ['message' => $e->getMessage()]);

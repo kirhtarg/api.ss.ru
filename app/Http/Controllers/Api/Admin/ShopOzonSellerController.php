@@ -99,6 +99,27 @@ class ShopOzonSellerController extends Controller
         }
     }
 
+    public function roles()
+    {
+        try {
+            $roles = (new OzonSellerClient($this->account()))->post('/v1/roles');
+            $methods = collect((array) data_get($roles, 'roles', []))
+                ->flatMap(static fn ($role) => (array) ($role['methods'] ?? []))
+                ->map(static fn ($method) => strtolower((string) $method))->unique()->values();
+            $hasMethod = static fn (string $needle) => $methods->contains(static fn ($method) => str_ends_with($method, strtolower($needle)) || $method === strtolower($needle));
+            return response()->json(['success' => true, 'message' => 'Роли API-ключа получены.', 'data' => [
+                'roles' => $roles['roles'] ?? [],
+                'methods_count' => $methods->count(),
+                'delivery_map' => $hasMethod('/v1/delivery/map'),
+                'delivery_point_info' => $hasMethod('/v1/delivery/point/info'),
+                'delivery_access' => $hasMethod('/v1/delivery/map') && $hasMethod('/v1/delivery/point/info'),
+                'expires_at' => $roles['expires_at'] ?? null,
+            ]]);
+        } catch (\Throwable $e) {
+            return $this->ozonRequestError($e);
+        }
+    }
+
     public function warehouses()
     {
         try {
