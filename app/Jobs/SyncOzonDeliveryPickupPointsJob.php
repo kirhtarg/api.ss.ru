@@ -48,7 +48,7 @@ class SyncOzonDeliveryPickupPointsJob implements ShouldQueue
                     ->keyBy(fn ($point) => (string) $point['delivery_point_id']);
                 $detailsById = collect();
 
-                foreach ($summaries->keys()->chunk(10) as $ids) {
+                foreach ($summaries->keys()->chunk(100) as $ids) {
                     $detailsById = $detailsById->merge(collect($this->fetchPointDetails($ozon, $settings, $ids->map(fn ($id) => (int) $id)->values()->all()))
                         ->keyBy(fn ($point) => (string) $point['delivery_point_id']));
                 }
