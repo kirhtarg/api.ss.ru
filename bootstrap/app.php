@@ -47,6 +47,8 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withSchedule(function (\Illuminate\Console\Scheduling\Schedule $schedule) {
+        $schedule->command('ozon:sync-delivery-pickup-points')->dailyAt('02:40')->withoutOverlapping();
+
         try {
             $settings = \Illuminate\Support\Facades\DB::table('settings')
                 ->where('group', 'shop')

@@ -2612,6 +2612,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/settings', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'save']);
                 Route::post('/validate-credentials', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'validateCredentials']);
                 Route::post('/oauth-token', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'refreshOzonToken']);
+                Route::get('/pickup-points/sync-status', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'pickupPointSyncStatus']);
+                Route::post('/pickup-points/sync', [\App\Http\Controllers\Api\Admin\ShopCarrierDeliverySettingsController::class, 'startPickupPointSync']);
             });
 
             Route::prefix('ozon-seller')->group(function () {

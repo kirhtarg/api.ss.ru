@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\ShopCarrierDeliverySettings;
 use App\Services\OzonDeliveryService;
+use App\Services\OzonDeliveryPickupPointSyncService;
 use App\Services\ShopDeliveryActivitySyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -32,6 +33,40 @@ class ShopCarrierDeliverySettingsController extends Controller
             'success' => true,
             'data' => $this->settingsPayload($settings),
         ]);
+    }
+
+    public function pickupPointSyncStatus(Request $request, string $carrier, OzonDeliveryPickupPointSyncService $sync): JsonResponse
+    {
+        if ($access = $this->checkAccess($request)) {
+            return $access;
+        }
+        if ($carrier !== 'ozon') {
+            return response()->json(['success' => false, 'message' => 'Локальный справочник ПВЗ поддерживается только для Ozon'], 404);
+        }
+
+        return response()->json(['success' => true, 'data' => $sync->status()]);
+    }
+
+    public function startPickupPointSync(Request $request, string $carrier, OzonDeliveryPickupPointSyncService $sync): JsonResponse
+    {
+        if ($access = $this->checkAccess($request)) {
+            return $access;
+        }
+        if ($carrier !== 'ozon') {
+            return response()->json(['success' => false, 'message' => 'Локальный справочник ПВЗ поддерживается только для Ozon'], 404);
+        }
+
+        try {
+            $run = $sync->start($request->user()?->id);
+
+            return response()->json([
+                'success' => true,
+                'message' => $run->status === 'queued' || $run->status === 'running' ? 'Синхронизация ПВЗ запущена или уже выполняется.' : 'Справочник ПВЗ уже актуален.',
+                'data' => $sync->status(),
+            ]);
+        } catch (\Throwable $exception) {
+            return response()->json(['success' => false, 'message' => $exception->getMessage(), 'data' => $sync->status()], 422);
+        }
     }
 
     public function save(Request $request, string $carrier): JsonResponse

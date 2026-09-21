@@ -3,10 +3,10 @@
 namespace App\Services;
 
 use App\Models\ShopCarrierDeliverySettings;
+use App\Models\ShopOzonDeliveryPoint;
 use App\Models\ShopOrder;
 use GuzzleHttp\Psr7\Uri;
 use GuzzleHttp\Psr7\UriResolver;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Str;
@@ -151,61 +151,31 @@ class OzonDeliveryService
 
     public function getPickupPoints(string $city): array
     {
-        $settings = $this->getActiveSettings();
         $needle = mb_strtolower(trim($city));
-        $cacheKey = 'ozon_delivery:points:v3:'.sha1($needle);
-        $points = Cache::remember($cacheKey, now()->addHours(4), function () use ($settings): array {
-            $summaries = [];
-            $cursor = null;
-            $seen = [];
-            for ($page = 0; $page < 50; $page++) {
-                $body = $this->request($settings, '/v1/delivery-point/list', [
-                    'pagination' => ['cursor' => $cursor, 'limit' => 100],
-                ]);
-                foreach ((array) data_get($body, 'delivery_points', []) as $point) {
-                    // The list endpoint may return only a compact summary without
-                    // city/address fields. Keep every ID and filter only after
-                    // enriching it through /delivery-point/info below.
-                    if (! empty($point['delivery_point_id'])) {
-                        $summaries[(string) $point['delivery_point_id']] = $point;
-                    }
-                }
-
-                $nextCursor = data_get($body, 'next_cursor');
-                if (! is_string($nextCursor) || $nextCursor === '' || isset($seen[$nextCursor])) {
-                    break;
-                }
-                $seen[$nextCursor] = true;
-                $cursor = $nextCursor;
-            }
-
-            $all = [];
-            foreach (array_chunk(array_values($summaries), 100) as $chunk) {
-                $ids = array_values(array_map(fn ($point) => (int) $point['delivery_point_id'], $chunk));
-                $details = $this->request($settings, '/v1/delivery-point/info', ['delivery_point_ids' => $ids]);
-                $byId = collect((array) data_get($details, 'delivery_points', []))->keyBy(fn ($point) => (string) ($point['delivery_point_id'] ?? ''));
-                foreach ($chunk as $summary) {
-                    $detail = $byId->get((string) $summary['delivery_point_id'], []);
-                    $all[] = array_merge($summary, $detail);
-                }
-            }
-
-            return $all;
-        });
-
-        // Do not let an early empty response hide newly activated pickup points
-        // for the full cache TTL. The v3 key also invalidates the older cache.
-        if ($points === []) {
-            Cache::forget($cacheKey);
+        if (mb_strlen($needle) < 2) {
+            return [];
         }
 
-        return array_values(array_filter($points, function (array $point) use ($needle): bool {
-            if (in_array($point['is_active'] ?? true, [false, 0, '0', 'false'], true)) {
-                return false;
-            }
+        return $this->queryLocalPickupPoints($needle)
+            ->map(static function (ShopOzonDeliveryPoint $row): array {
+                $point = is_array($row->point_data) ? $row->point_data : [];
+                $point['delivery_point_id'] = (int) $row->delivery_point_id;
+                $point['name'] = $row->name;
+                $point['full_address'] = $row->full_address;
+                $point['shipment_method_ids'] = $row->shipment_method_ids ?? [];
 
-            return $needle === '' || mb_stripos($this->pickupPointSearchText($point), $needle) !== false;
-        }));
+                return $point;
+            })
+            ->all();
+    }
+
+    protected function queryLocalPickupPoints(string $needle)
+    {
+        return ShopOzonDeliveryPoint::query()
+            ->where('is_active', true)
+            ->where('search_text', 'like', '%'.$needle.'%')
+            ->orderBy('name')
+            ->get();
     }
 
     private function pickupPointSearchText(array $point): string
