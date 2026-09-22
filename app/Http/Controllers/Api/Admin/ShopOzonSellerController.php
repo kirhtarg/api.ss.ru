@@ -140,7 +140,12 @@ class ShopOzonSellerController extends Controller
             $warehouses = collect();
             $cursor = '';
             for ($page = 0; $page < 20; $page++) {
-                $response = $client->post('/v2/warehouse/list', ['limit' => 100, 'cursor' => $cursor]);
+                // FBS/rFBS warehouses are returned by v1/warehouse/list.  The
+                // old v2 endpoint is a warehouse-details method and may return
+                // an empty/partial structure, which left a stale Warehouse ID
+                // in settings and made /v2/products/stocks fail with
+                // "can't find warehouses for companyID".
+                $response = $client->post('/v1/warehouse/list', $page === 0 ? [] : ['limit' => 100, 'cursor' => $cursor]);
                 $rawItems = data_get($response, 'warehouses', data_get($response, 'result.warehouses', data_get($response, 'result', [])));
                 $warehouses->push(...(is_array($rawItems) ? $rawItems : []));
 

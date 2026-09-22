@@ -64,6 +64,9 @@ class OzonSellerClient
         $data = $response->json();
         if (! $response->successful()) {
             $message = data_get($data, 'message') ?? data_get($data, 'error.message') ?? $response->body();
+            if ($response->status() === 404 && str_contains(mb_strtolower((string) $message), 'cant find warehouses')) {
+                $message = 'Ozon не нашёл склад для этого Client-Id. Обновите список складов в настройках Ozon Seller и выберите склад из полученного списка (старый Warehouse ID может относиться к другому кабинету или схеме доставки).';
+            }
             throw new RuntimeException("Ozon {$path}: HTTP {$response->status()}: ".mb_substr((string) $message, 0, 1000));
         }
         return is_array($data) ? $data : [];
