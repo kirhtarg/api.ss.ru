@@ -39,7 +39,12 @@ class OzonPostProductSyncScheduler
         );
 
         if ($stockRun->wasRecentlyCreated) {
-            ProcessOzonSyncRunJob::dispatch($stockRun->id)->delay(now()->addSeconds(15));
+            // Ozon does not allow updating the same offer stock immediately after
+            // importing the card.  A short delay causes every automatically
+            // created stock run to be rejected with "Stock is updated too
+            // frequently".  Give Ozon enough time to finish the import and
+            // release the offer stock lock.
+            ProcessOzonSyncRunJob::dispatch($stockRun->id)->delay(now()->addSeconds(120));
         }
 
         return $stockRun;

@@ -134,7 +134,17 @@ class ProcessOzonSyncRunJob implements ShouldQueue
         if ($run->mode === 'prices') {
             $response = $client->post('/v1/product/import/prices', ['prices' => array_map(fn ($entry) => $builder->pricePayload($entry['good'], $entry['variation'], $account, $entry['mapping']), $valid)]);
         } else {
-            $response = $client->post('/v2/products/stocks', ['stocks' => array_map(fn ($entry) => $builder->stock($entry['good'], $entry['variation'], $account, $entry['mapping']), $valid)]);
+            $stockPayload = ['stocks' => array_map(fn ($entry) => $builder->stock($entry['good'], $entry['variation'], $account, $entry['mapping']), $valid)];
+            $response = $client->post('/v2/products/stocks', $stockPayload);
+
+            // This is a transient Ozon business error (not an invalid payload).
+            // It is returned when an offer was updated recently.  Retry the
+            // identical request after a pause instead of immediately recording
+            // a permanent error for every offer in the batch.
+            for ($retry = 0; $retry < 2 && $this->containsStockFrequencyError($response); $retry++) {
+                sleep(60 * ($retry + 1));
+                $response = $client->post('/v2/products/stocks', $stockPayload);
+            }
         }
         foreach ($valid as $entry) {
             $errors = $this->responseErrorsForOffer($response, $entry['built']['offer_id']);
@@ -193,6 +203,13 @@ class ProcessOzonSyncRunJob implements ShouldQueue
         }
 
         return $errors->all();
+    }
+
+    private function containsStockFrequencyError(array $response): bool
+    {
+        $text = mb_strtolower((string) json_encode($response, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+        return str_contains($text, 'stock is updated too frequently')
+            || str_contains($text, 'updated too frequently');
     }
 
     private function increment(ShopOzonSyncRun $run, bool $success): void
