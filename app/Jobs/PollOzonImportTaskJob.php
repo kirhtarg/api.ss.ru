@@ -14,8 +14,10 @@ use Illuminate\Foundation\Queue\Queueable;
 class PollOzonImportTaskJob implements ShouldQueue
 {
     use Queueable;
-    public int $tries = 12;
-    public int $backoff = 15;
+    // Product moderation can legitimately take longer than a few minutes.
+    // Do not turn the intermediate `moderating` status into a fake failure.
+    public int $tries = 60;
+    public int $backoff = 60;
 
     public function __construct(public int $runId, public string $taskId) {}
 
@@ -26,25 +28,29 @@ class PollOzonImportTaskJob implements ShouldQueue
         $response = $client->post('/v1/product/import/info', ['task_id' => (int) $this->taskId]);
         $results = collect(data_get($response, 'result.items', data_get($response, 'items', [])));
         if ($results->isEmpty()) {
-            $this->release(15);
+            $this->release(60);
             return;
         }
 
         $items = ShopOzonSyncItem::where('run_id', $run->id)->where('task_id', $this->taskId)->where('status', 'submitted')->get();
         $hasPendingItems = $items->contains(function ($item) use ($results) {
             $result = $results->first(fn ($row) => (string) data_get($row, 'offer_id') === $item->offer_id);
-            return in_array(strtolower((string) data_get($result, 'status')), ['pending', 'processing'], true);
+            return $this->isIntermediateStatus(data_get($result, 'status'));
         });
         if ($hasPendingItems) {
-            $this->release(15);
+            $this->release(60);
             return;
         }
 
         foreach ($items as $item) {
             $result = $results->first(fn ($row) => (string) data_get($row, 'offer_id') === $item->offer_id);
-            $errors = collect(data_get($result, 'errors', []))->filter()->values()->all();
+            $errors = collect(data_get($result, 'errors', data_get($result, 'error', [])))->filter()->values()->all();
             if (! $result) $errors[] = ['message' => 'Ozon не вернул результат для offer_id '.$item->offer_id];
-            $success = $result && empty($errors) && strtolower((string) data_get($result, 'status')) === 'imported';
+            $status = strtolower(trim((string) data_get($result, 'status')));
+            $success = $result && empty($errors) && $status === 'imported';
+            if ($result && ! $success && empty($errors)) {
+                $errors[] = ['message' => 'Ozon завершил обработку со статусом: '.($status !== '' ? $status : 'неизвестный статус').'.'];
+            }
             $item->update(['status' => $success ? 'completed' : 'failed', 'response_payload' => $result, 'errors' => $errors ?: null]);
             $bindingData = ['good_id' => $item->good_id, 'variation_id' => $item->variation_id, 'is_variation' => (bool) $item->variation_id, 'status' => $success ? 'synced' : 'error', 'product_id' => data_get($result, 'product_id'), 'errors' => $errors ?: null, 'last_synced_at' => now()];
             if ($sku = $this->ozonSku($result)) $bindingData['sku'] = $sku;
@@ -70,5 +76,13 @@ class PollOzonImportTaskJob implements ShouldQueue
         }
 
         return null;
+    }
+
+    private function isIntermediateStatus(mixed $status): bool
+    {
+        return in_array(strtolower(trim((string) $status)), [
+            'pending', 'processing', 'queued', 'moderating', 'moderation',
+            'in_moderation', 'awaiting_moderation',
+        ], true);
     }
 }
