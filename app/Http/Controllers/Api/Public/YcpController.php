@@ -51,7 +51,9 @@ class YcpController extends Controller
         $warehouse = $this->mainStoreWarehouse();
         $yandexDelivery = $this->settingsData()['delivery_mode'] === 'yandex';
         $warehouses = [];
-        if ($warehouse && $pagination['offset'] === 0) {
+        // Query parameters can remain strings after validation (for example, "0").
+        // Cast explicitly so the first page includes the logical store warehouse.
+        if ($warehouse && (int) $pagination['offset'] === 0) {
             $warehouse['ycp_delivery_options'] = ['enabled' => $yandexDelivery];
             $warehouses = [$warehouse];
         }
