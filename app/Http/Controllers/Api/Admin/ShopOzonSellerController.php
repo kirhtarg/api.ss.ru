@@ -473,6 +473,8 @@ class ShopOzonSellerController extends Controller
             'variation_attribute_mappings.*.local_attribute_name' => 'nullable|string|max:255',
             'variation_attribute_mappings.*.ozon_attribute_id' => 'required|integer',
             'variation_attribute_mappings.*.ozon_attribute_name' => 'nullable|string|max:500',
+            'variation_attribute_mappings.*.mapping_confidence' => 'nullable|numeric|min:0|max:100',
+            'variation_attribute_mappings.*.mapping_origin' => 'nullable|string|max:255',
             'variation_attribute_mappings.*.uses_dictionary' => 'nullable|boolean',
             'variation_attribute_mappings.*.dictionary_map' => 'nullable|array',
             'dimension_settings' => 'nullable|array',
