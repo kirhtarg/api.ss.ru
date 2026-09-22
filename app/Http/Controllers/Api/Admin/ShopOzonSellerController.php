@@ -138,22 +138,18 @@ class ShopOzonSellerController extends Controller
         try {
             $client = new OzonSellerClient($this->account());
             $warehouses = collect();
-            $cursor = '';
-            for ($page = 0; $page < 20; $page++) {
-                // FBS/rFBS warehouses are returned by v1/warehouse/list.  The
-                // old v2 endpoint is a warehouse-details method and may return
-                // an empty/partial structure, which left a stale Warehouse ID
-                // in settings and made /v2/products/stocks fail with
-                // "can't find warehouses for companyID".
-                $response = $client->post('/v1/warehouse/list', $page === 0 ? [] : ['limit' => 100, 'cursor' => $cursor]);
-                $rawItems = data_get($response, 'warehouses', data_get($response, 'result.warehouses', data_get($response, 'result', [])));
-                $warehouses->push(...(is_array($rawItems) ? $rawItems : []));
-
-                $hasNext = (bool) data_get($response, 'has_next', data_get($response, 'result.has_next', false));
-                $nextCursor = (string) data_get($response, 'cursor', data_get($response, 'result.cursor', ''));
-                if (! $hasNext || $nextCursor === '' || $nextCursor === $cursor) break;
-                $cursor = $nextCursor;
+            $account = $this->account();
+            $warehouseId = trim((string) ($account->warehouse_id ?? ''));
+            if ($warehouseId === '') {
+                return response()->json(['success' => true, 'data' => [], 'message' => 'Укажите Warehouse ID из кабинета Ozon, затем обновите проверку склада.']);
             }
+
+            // In the current Seller API v2/warehouse/list is a details method,
+            // not a paginated list.  Validate the configured warehouse directly.
+            $response = $client->post('/v2/warehouse/list', ['warehouse_id' => (int) $warehouseId]);
+            $rawItems = data_get($response, 'warehouses', data_get($response, 'result.warehouses', data_get($response, 'result', [])));
+            if (is_array($rawItems) && array_key_exists('warehouse_id', $rawItems)) $rawItems = [$rawItems];
+            $warehouses->push(...(is_array($rawItems) ? $rawItems : []));
 
             $items = $warehouses->map(function ($item) {
                 $id = data_get($item, 'warehouse_id', data_get($item, 'id'));

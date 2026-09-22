@@ -47,7 +47,10 @@ class PollOzonImportTaskJob implements ShouldQueue
             $errors = collect(data_get($result, 'errors', data_get($result, 'error', [])))->filter()->values()->all();
             if (! $result) $errors[] = ['message' => 'Ozon не вернул результат для offer_id '.$item->offer_id];
             $status = strtolower(trim((string) data_get($result, 'status')));
-            $success = $result && empty($errors) && $status === 'imported';
+            // Ozon may return `skipped` when the offer already contains the
+            // submitted data and no card rewrite is needed.  It is not an
+            // import failure; the offer can still continue to stock syncing.
+            $success = $result && empty($errors) && in_array($status, ['imported', 'skipped'], true);
             if ($result && ! $success && empty($errors)) {
                 $errors[] = ['message' => 'Ozon завершил обработку со статусом: '.($status !== '' ? $status : 'неизвестный статус').'.'];
             }
