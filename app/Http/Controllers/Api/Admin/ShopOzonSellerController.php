@@ -72,7 +72,19 @@ class ShopOzonSellerController extends Controller
             unset($data['api_key']);
         }
 
+        $previousWarehouseId = trim((string) ($account->warehouse_id ?? ''));
         $account->fill($data)->save();
+        $newWarehouseId = trim((string) ($account->warehouse_id ?? ''));
+        // Category profiles may contain an explicit warehouse override. When the
+        // account warehouse is replaced, migrate overrides that pointed to the
+        // previous account warehouse; otherwise stock payloads would continue
+        // sending the stale ID and Ozon would return "warehouse not found".
+        if ($newWarehouseId !== '' && $newWarehouseId !== $previousWarehouseId && $previousWarehouseId !== '') {
+            ShopOzonCategoryMapping::query()
+                ->where('account_id', $account->id)
+                ->where('warehouse_id', $previousWarehouseId)
+                ->update(['warehouse_id' => $newWarehouseId]);
+        }
         return response()->json(['success' => true, 'message' => 'Настройки сохранены.', 'data' => array_merge($account->toArray(), ['has_api_key' => true])]);
     }
 
