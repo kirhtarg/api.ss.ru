@@ -17,14 +17,18 @@ class PromocodeController extends Controller
 {
     public function popupSettings(): JsonResponse {
         $s = ShopPromocodePopupSetting::first() ?: ShopPromocodePopupSetting::create(['delay_seconds'=>90]);
-        return response()->json(['success'=>true,'data'=>$s]);
+        $data = $s->toArray();
+        $data['promocode_name'] = $s->promocode?->name;
+        return response()->json(['success'=>true,'data'=>$data]);
     }
     public function updatePopupSettings(Request $request): JsonResponse {
         $validator = Validator::make($request->all(), [
             'title'=>'nullable|string|max:255','text'=>'nullable|string|max:2000',
             'delay_seconds'=>'required|integer|min:5|max:600',
-            'promocode_code'=>['required','string','max:32','regex:/^[A-Za-z0-9_-]+$/'],
-            'discount_percent'=>'required|integer|min:1|max:90',
+            'promocode_mode'=>'nullable|in:generated,existing',
+            'promocode_id'=>'nullable|integer|exists:promocodes,id',
+            'promocode_code'=>['nullable','string','max:32','regex:/^[A-Za-z0-9_-]+$/'],
+            'discount_percent'=>'nullable|integer|min:1|max:90',
             'rotation_enabled'=>'required|boolean','rotation_minutes'=>'required|integer|min:1|max:1440','is_active'=>'required|boolean',
         ], [
             'delay_seconds.required' => 'Укажите задержку показа окна в секундах.',
@@ -34,8 +38,37 @@ class PromocodeController extends Controller
         ]);
         if ($validator->fails()) return response()->json(['success'=>false,'message'=>'Проверьте настройки всплывающего промокода','errors'=>$validator->errors()],422);
         $data = $validator->validated();
-        $data['promocode_code'] = strtoupper($data['promocode_code']);
+        $mode = $data['promocode_mode'] ?? (!empty($data['promocode_id']) ? 'existing' : 'generated');
+        $data['promocode_mode'] = $mode;
         $existingSettings = ShopPromocodePopupSetting::first();
+
+        if ($mode === 'existing') {
+            $selected = Promocode::find($data['promocode_id'] ?? null);
+            if (!$selected || !$selected->is_active) {
+                return response()->json(['success'=>false,'message'=>'Выберите активный существующий промокод.','errors'=>['promocode_id'=>['Промокод не найден или отключён.']]],422);
+            }
+            if ($selected->type !== 'percentage') {
+                return response()->json(['success'=>false,'message'=>'Для всплывающего окна можно выбрать только процентный промокод.','errors'=>['promocode_id'=>['Тип промокода должен быть «Процент».']]],422);
+            }
+            $data['promocode_code'] = strtoupper((string) $selected->code);
+            $data['discount_percent'] = (int) $selected->value;
+            $data['promocode_id'] = $selected->id;
+            $s = $existingSettings ?: new ShopPromocodePopupSetting();
+            $s->fill($data);
+            $s->save();
+            $fresh = $s->fresh();
+            $result = $fresh->toArray();
+            $result['promocode_name'] = $selected->name;
+            return response()->json(['success'=>true,'data'=>$result]);
+        }
+
+        if (blank($data['promocode_code'] ?? null)) {
+            return response()->json(['success'=>false,'message'=>'Укажите или сгенерируйте промокод.','errors'=>['promocode_code'=>['Поле обязательно для нового промокода.']]],422);
+        }
+        if (empty($data['discount_percent'])) {
+            return response()->json(['success'=>false,'message'=>'Укажите размер скидки.','errors'=>['discount_percent'=>['Поле обязательно для нового промокода.']]],422);
+        }
+        $data['promocode_code'] = strtoupper($data['promocode_code']);
         $codeIsOwnedElsewhere = Promocode::where('code', $data['promocode_code'])
             ->when($existingSettings?->promocode_id, fn ($query, $id) => $query->where('id', '!=', $id))
             ->exists();
