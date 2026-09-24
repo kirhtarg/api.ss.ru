@@ -10,6 +10,7 @@ class RobotsController extends Controller
 {
     public function getRobots(Request $request)
     {
+        $catalogFilterParamLine = 'Clean-param: attributes&stock_filter&page&sort&price_from&price_to&search /catalog/';
         $disk = Storage::disk('public');
         $filePath = 'exports/robots.txt';
 
@@ -19,6 +20,7 @@ class RobotsController extends Controller
                 'User-agent: *',
                 'Disallow:',
                 'Clean-param: etext&utm_source&utm_medium&utm_campaign&utm_content&utm_term&yclid&ymclid&gclid&fbclid&from&roistat&openstat /',
+                $catalogFilterParamLine,
                 'Sitemap: '.($request->getSchemeAndHttpHost() ?: 'http://localhost:3000').'/sitemap.xml',
             ].implode("\n");
 
@@ -30,6 +32,11 @@ class RobotsController extends Controller
         }
 
         $file = $disk->get($filePath);
+        if (! str_contains($file, $catalogFilterParamLine)) {
+            $file = str_contains($file, "\nSitemap:")
+                ? str_replace("\nSitemap:", "\n{$catalogFilterParamLine}\nSitemap:", $file)
+                : rtrim($file)."\n{$catalogFilterParamLine}\n";
+        }
 
         return response($file, 200)
             ->header('Content-Type', 'text/plain; charset=utf-8')
