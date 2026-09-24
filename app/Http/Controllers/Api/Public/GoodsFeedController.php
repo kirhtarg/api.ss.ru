@@ -13,6 +13,22 @@ class GoodsFeedController extends Controller
         return $this->getGoodsFeed($request);
     }
 
+    public function getDolyameProductsFeed(Request $request)
+    {
+        $fileName = 'exports/dolyame-products-feed.xml';
+        $disk = Storage::disk('public');
+
+        if (!$disk->exists($fileName)) {
+            return response('<?xml version="1.0" encoding="UTF-8"?><yml_catalog><shop><offers></offers></shop></yml_catalog>', 404)
+                ->header('Content-Type', 'application/xml; charset=utf-8');
+        }
+
+        return response()->file($disk->path($fileName), [
+            'Content-Type' => 'application/xml; charset=utf-8',
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+        ]);
+    }
+
     public function getGoodsFeed(Request $request)
     {
         $fileName = 'exports/goods_feed.xml';

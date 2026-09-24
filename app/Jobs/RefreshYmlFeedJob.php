@@ -28,5 +28,12 @@ class RefreshYmlFeedJob implements ShouldQueue, ShouldBeUniqueUntilProcessing
         if (! ($result['success'] ?? false)) {
             throw new \RuntimeException($result['message'] ?? 'Не удалось обновить YML-фид.');
         }
+
+        // Dolyame использует тот же каталог и те же цены, но его вариант YML
+        // дополнительно содержит товары с нулевым остатком.
+        $dolyameResult = $service->generateDolyame();
+        if (! ($dolyameResult['success'] ?? false)) {
+            throw new \RuntimeException($dolyameResult['message'] ?? 'Не удалось обновить фид Dolyame.');
+        }
     }
 }

@@ -104,6 +104,14 @@ class ShopImportExportController extends Controller
         ], 500);
     }
 
+    /** Generate the Dolyame-compatible copy of the shared YML catalogue. */
+    public function exportDolyameYml(Request $request, \App\Services\YmlFeedService $ymlService): JsonResponse
+    {
+        $result = $ymlService->generateDolyame();
+
+        return response()->json($result, ((bool) ($result['success'] ?? false)) ? 200 : 500);
+    }
+
 
     /**
      * Получение статуса YML фида

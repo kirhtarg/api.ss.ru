@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Log;
 class YmlFeedService
 {
     private ?bool $ycpCheckoutEnabled = null;
+    private bool $includeUnavailableOffers = false;
 
     /**
      * Returns the exact availability and price state used by the public YML
@@ -39,7 +40,7 @@ class YmlFeedService
      * 
      * @return array
      */
-    public function generate()
+    public function generate(bool $includeUnavailableOffers = false, string $outputFilename = 'goods_feed.xml')
     {
         $handle = null;
         $temporaryFullPath = null;
@@ -49,7 +50,8 @@ class YmlFeedService
             ini_set('memory_limit', '512M');
             set_time_limit(300);
 
-            $filename = 'goods_feed.xml';
+            $filename = trim($outputFilename) !== '' ? basename($outputFilename) : 'goods_feed.xml';
+            $this->includeUnavailableOffers = $includeUnavailableOffers;
             $filepath = 'exports/' . $filename;
 
             // Создаем директорию если не существует
@@ -192,6 +194,17 @@ class YmlFeedService
         }
     }
 
+    /**
+     * Dolyame принимает тот же YML-формат, но требует видеть и временно
+     * отсутствующие товары. Генерация использует абсолютно те же цены,
+     * изображения и категории, что и основной фид, но пишет отдельный файл,
+     * чтобы не менять правила выгрузки для Яндекса.
+     */
+    public function generateDolyame(): array
+    {
+        return $this->generate(true, 'dolyame-products-feed.xml');
+    }
+
     private function getMainSiteUrl(): string
     {
         static $cached = null;
@@ -262,11 +275,11 @@ class YmlFeedService
         // товарных предложениях Яндекса и создавать проверку "нет в наличии".
         // Для товаров с вариациями остаток хранится в вариациях.
         $stock = $this->getOfferStockValue($good);
-        if ($stock <= 0) {
+        if (!$this->includeUnavailableOffers && $stock <= 0) {
             return false;
         }
 
-        $available = 'true';
+        $available = ($good->is_active && $stock > 0) ? 'true' : 'false';
         $logisticsData = $this->getOfferLogisticsData($good, $priceData['item'] ?? null);
 
         fwrite($handle, '            <offer id="' . $good->id . '" available="' . $available . '">' . PHP_EOL);
@@ -329,6 +342,13 @@ class YmlFeedService
         $name = htmlspecialchars($good->name);
         $name = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\x{2028}\x{2029}]/u', '', $name);
         fwrite($handle, '                <name>' . $name . '</name>' . PHP_EOL);
+
+        // Идентификатор артикула помогает Dolyame сопоставить offer с
+        // карточкой и остаётся совместимым с форматом Яндекс.Маркета.
+        $vendorCode = trim((string) ($good->sku ?? $good->id));
+        if ($vendorCode !== '') {
+            fwrite($handle, '                <vendorCode>' . htmlspecialchars($vendorCode, ENT_QUOTES | ENT_XML1, 'UTF-8') . '</vendorCode>' . PHP_EOL);
+        }
 
         // Бренд
         if ($good->brands->isNotEmpty()) {

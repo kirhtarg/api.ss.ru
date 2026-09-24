@@ -59,7 +59,8 @@ return Application::configure(basePath: dirname(__DIR__))
             $frequency = $settings['yml_feed_regeneration_frequency'] ?? 'daily';
             $time = $settings['yml_feed_regeneration_time'] ?? '03:00';
 
-            $event = $schedule->command('shop:generate-yml');
+            // Один запуск обновляет обычный Яндекс-фид и Dolyame-фид.
+            $event = $schedule->command('shop:generate-yml --dolyame');
 
             switch ($frequency) {
                 case 'hourly':
@@ -75,7 +76,7 @@ return Application::configure(basePath: dirname(__DIR__))
             }
         } catch (\Exception $e) {
             // Резервный вариант, если БД недоступна
-            $schedule->command('shop:generate-yml')->dailyAt('03:00');
+            $schedule->command('shop:generate-yml --dolyame')->dailyAt('03:00');
         }
 
         try {

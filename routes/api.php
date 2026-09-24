@@ -444,6 +444,7 @@ Route::get('/public/get-sitemap', [\App\Http\Controllers\Api\Public\SitemapContr
 // Маршрут для получения goods_feed.xml
 Route::get('/public/get-goods-feed', [\App\Http\Controllers\Api\Public\GoodsFeedController::class, 'getGoodsFeed']);
 Route::get('/public/yandex-products-feed.xml', [\App\Http\Controllers\Api\Public\GoodsFeedController::class, 'getYandexProductsFeed']);
+Route::get('/public/dolyame-products-feed.xml', [\App\Http\Controllers\Api\Public\GoodsFeedController::class, 'getDolyameProductsFeed']);
 
 // Маршрут для публичного скачивания фида Авито
 Route::get('/public/avito/feed/{filename}', [\App\Http\Controllers\Admin\AvitoController::class, 'downloadPublicFeed']);
@@ -2180,6 +2181,7 @@ Route::middleware('auth:sanctum')->group(function () {
                     Route::post('/export/csv', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportCsv']);
                     Route::post('/export/excel', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportExcel']);
                     Route::post('/export/yml', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportYml']);
+                    Route::post('/export/dolyame-yml', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'exportDolyameYml']);
                     Route::get('/export/yml/status', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYmlStatus']);
                     Route::post('/export/yml/schedule', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'updateYmlSchedule']);
                     Route::get('/export/yml/yandex-products/settings', [\App\Http\Controllers\Admin\ShopImportExportController::class, 'getYandexProductsSettings']);

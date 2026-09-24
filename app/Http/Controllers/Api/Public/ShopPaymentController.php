@@ -31,6 +31,21 @@ class ShopPaymentController extends Controller
             ->orderBy('sort_order')
             ->get();
 
+        // Не отдаём браузеру логины, пароли, ключи и сертификаты платёжных
+        // шлюзов. Для промо-виджета Долями достаточно только публичного
+        // site ID и признака включения сниппета.
+        $paymentMethods->each(function (ShopPaymentMethod $method): void {
+            if ($method->type !== 'tbank_dolyame') {
+                return;
+            }
+            $settings = is_array($method->settings) ? $method->settings : [];
+            $method->setAttribute('settings', [
+                'dolyame_snippet_enabled' => filter_var($settings['dolyame_snippet_enabled'] ?? false, FILTER_VALIDATE_BOOLEAN),
+                'dolyame_site_id' => trim((string) ($settings['dolyame_site_id'] ?? '')),
+                'dolyame_feed_url' => trim((string) ($settings['dolyame_feed_url'] ?? '')),
+            ]);
+        });
+
         return response()->json([
             'success' => true,
             'data' => $paymentMethods,

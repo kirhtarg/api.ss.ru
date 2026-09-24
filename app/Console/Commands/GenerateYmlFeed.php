@@ -12,7 +12,7 @@ class GenerateYmlFeed extends Command
      *
      * @var string
      */
-    protected $signature = 'shop:generate-yml';
+    protected $signature = 'shop:generate-yml {--dolyame : additionally generate the Dolyame YML with unavailable offers}';
 
     /**
      * The console command description.
@@ -32,6 +32,10 @@ class GenerateYmlFeed extends Command
         $this->info('Начало генерации YML фида...');
         
         $result = $ymlService->generate();
+        if ($this->option('dolyame')) {
+            $dolyameResult = $ymlService->generateDolyame();
+            $this->line('Dolyame: '.((bool) ($dolyameResult['success'] ?? false) ? 'готово' : ($dolyameResult['message'] ?? 'ошибка')));
+        }
 
         if ($result['success']) {
             $this->info('YML фид успешно сгенерирован!');
