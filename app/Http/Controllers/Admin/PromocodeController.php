@@ -19,6 +19,7 @@ class PromocodeController extends Controller
         $s = ShopPromocodePopupSetting::first() ?: ShopPromocodePopupSetting::create(['delay_seconds'=>90]);
         $data = $s->toArray();
         $data['promocode_name'] = $s->promocode?->name;
+        $data['promocode'] = $s->promocode ? $this->popupPromocodePayload($s->promocode) : null;
         return response()->json(['success'=>true,'data'=>$data]);
     }
     public function updatePopupSettings(Request $request): JsonResponse {
@@ -47,18 +48,20 @@ class PromocodeController extends Controller
             if (!$selected || !$selected->is_active) {
                 return response()->json(['success'=>false,'message'=>'Выберите активный существующий промокод.','errors'=>['promocode_id'=>['Промокод не найден или отключён.']]],422);
             }
-            if ($selected->type !== 'percentage') {
-                return response()->json(['success'=>false,'message'=>'Для всплывающего окна можно выбрать только процентный промокод.','errors'=>['promocode_id'=>['Тип промокода должен быть «Процент».']]],422);
-            }
             $data['promocode_code'] = strtoupper((string) $selected->code);
-            $data['discount_percent'] = (int) $selected->value;
+            // The selected promo is the source of truth. The legacy settings
+            // field is retained for backwards compatibility but must not be
+            // used to render or apply an existing promo's conditions.
+            $data['discount_percent'] = $selected->type === 'percentage' ? (int) $selected->value : 0;
             $data['promocode_id'] = $selected->id;
+            $data['rotation_enabled'] = false;
             $s = $existingSettings ?: new ShopPromocodePopupSetting();
             $s->fill($data);
             $s->save();
             $fresh = $s->fresh();
             $result = $fresh->toArray();
             $result['promocode_name'] = $selected->name;
+            $result['promocode'] = $this->popupPromocodePayload($selected);
             return response()->json(['success'=>true,'data'=>$result]);
         }
 
@@ -84,7 +87,10 @@ class PromocodeController extends Controller
         Promocode::where('name', 'Всплывающий промокод (ротация)')->where('is_active', true)->update(['is_active'=>false]);
         $data['promocode_id'] = $basePromo->id;
         $s = $existingSettings ?: new ShopPromocodePopupSetting(); $s->fill($data); $s->save();
-        return response()->json(['success'=>true,'data'=>$s]);
+        $result = $s->fresh()->toArray();
+        $result['promocode_name'] = $basePromo->name;
+        $result['promocode'] = $this->popupPromocodePayload($basePromo);
+        return response()->json(['success'=>true,'data'=>$result]);
     }
 
     public function publicPopup(): JsonResponse {
@@ -92,7 +98,7 @@ class PromocodeController extends Controller
         if (!$settings || !$settings->promocode_code) return response()->json(['success'=>true,'data'=>null]);
         $code = $settings->promocode_code;
         $validUntil = null;
-        if ($settings->rotation_enabled) {
+        if ($settings->rotation_enabled && $settings->promocode_mode !== 'existing') {
             $seconds = max(60, (int)$settings->rotation_minutes * 60);
             $now = Carbon::now();
             $slot = (int) floor($now->timestamp / $seconds);
@@ -111,9 +117,77 @@ class PromocodeController extends Controller
         return response()->json(['success'=>true,'data'=>[
             'title'=>$settings->title,'text'=>$settings->text,'delay_seconds'=>$settings->delay_seconds,
             'rotation_enabled'=>(bool)$settings->rotation_enabled,'rotation_minutes'=>(int)$settings->rotation_minutes,
-            'promocode'=>$promocode ? ['code'=>$promocode->code,'discount_percent'=>$settings->discount_percent] : null,
+            'promocode'=>$promocode ? $this->popupPromocodePayload($promocode) : null,
             'valid_until'=>$validUntil?->toIso8601String(),
         ]]);
+    }
+
+    /** @return array<string, mixed> */
+    private function popupPromocodePayload(Promocode $promocode): array
+    {
+        $type = (string) $promocode->type;
+        $value = (float) $promocode->value;
+        $conditions = [];
+        if ($type === 'percentage') {
+            $conditions[] = 'Скидка '.$this->formatPopupNumber($value).'%';
+        } elseif ($type === 'fixed_amount') {
+            $conditions[] = 'Скидка '.$this->formatPopupNumber($value).' ₽';
+        } elseif ($type === 'free_delivery') {
+            $conditions[] = 'Бесплатная доставка';
+        }
+        if ((float) $promocode->min_order_amount > 0) {
+            $conditions[] = 'Минимальная сумма заказа: '.$this->formatPopupNumber((float) $promocode->min_order_amount).' ₽';
+        }
+        if ((float) $promocode->max_discount_amount > 0 && $type === 'percentage') {
+            $conditions[] = 'Максимальная скидка: '.$this->formatPopupNumber((float) $promocode->max_discount_amount).' ₽';
+        }
+        if ($promocode->starts_at) {
+            $conditions[] = 'Действует с '.$promocode->starts_at->format('d.m.Y H:i');
+        }
+        if ($promocode->expires_at) {
+            $conditions[] = 'Действует до '.$promocode->expires_at->format('d.m.Y H:i');
+        }
+        if ((int) $promocode->usage_limit > 0) {
+            $conditions[] = 'Осталось использований: '.max(0, (int) $promocode->usage_limit - (int) $promocode->used_count);
+        }
+        if ((int) $promocode->usage_limit_per_user > 0) {
+            $conditions[] = 'Лимит на одного покупателя: '.$promocode->usage_limit_per_user;
+        }
+        if ($promocode->categories()->exists()) {
+            $conditions[] = 'Действует на выбранные категории товаров';
+        }
+        if ($promocode->goods()->exists()) {
+            $conditions[] = 'Действует на выбранные товары';
+        }
+        if ($promocode->description
+            && ! str_starts_with((string) $promocode->description, 'Автоматически создан для всплывающего окна')
+            && ! str_starts_with((string) $promocode->description, 'Промокод из всплывающего окна')) {
+            $conditions[] = trim((string) $promocode->description);
+        }
+
+        return [
+            'id' => $promocode->id,
+            'code' => $promocode->code,
+            'name' => $promocode->name,
+            'description' => $promocode->description,
+            'type' => $type,
+            'value' => $value,
+            'discount_percent' => $type === 'percentage' ? $value : null,
+            'min_order_amount' => $promocode->min_order_amount !== null ? (float) $promocode->min_order_amount : null,
+            'max_discount_amount' => $promocode->max_discount_amount !== null ? (float) $promocode->max_discount_amount : null,
+            'usage_limit' => $promocode->usage_limit,
+            'used_count' => $promocode->used_count,
+            'usage_limit_per_user' => $promocode->usage_limit_per_user,
+            'starts_at' => $promocode->starts_at?->toIso8601String(),
+            'expires_at' => $promocode->expires_at?->toIso8601String(),
+            'is_active' => (bool) $promocode->is_active,
+            'conditions' => array_values(array_unique($conditions)),
+        ];
+    }
+
+    private function formatPopupNumber(float $value): string
+    {
+        return rtrim(rtrim(number_format($value, 2, '.', ''), '0'), '.');
     }
     /**
      * Получить список промокодов
