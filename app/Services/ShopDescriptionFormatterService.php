@@ -105,18 +105,30 @@ class ShopDescriptionFormatterService
 
         $labels = [];
         foreach ($propertyLabels as $label) {
-            $labels[] = trim((string) $label);
+            $labels[] = $this->normalizeLabel((string) $label);
         }
         foreach ($custom as $entry) {
-            $labels[] = trim((string) $entry->name);
+            $labels[] = $this->normalizeLabel((string) $entry->name);
             foreach ((array) $entry->aliases as $alias) {
-                $labels[] = trim((string) $alias);
+                $labels[] = $this->normalizeLabel((string) $alias);
             }
         }
 
         $labels = array_values(array_unique(array_filter($labels, fn ($label) => mb_strlen($label) >= 2)));
         usort($labels, fn ($a, $b) => mb_strlen($b) <=> mb_strlen($a));
         return $labels;
+    }
+
+    /**
+     * Пользователь может сохранить название словаря уже с двоеточием
+     * («Задний амортизатор:»). Знак является разделителем в тексте, а не
+     * частью имени характеристики, поэтому убираем его перед построением
+     * регулярного выражения.
+     */
+    private function normalizeLabel(string $label): string
+    {
+        $label = trim($label);
+        return trim((string) preg_replace('/\s*[:：\-–—]+\s*$/u', '', $label));
     }
 
     private function extractLines(string $source): array
