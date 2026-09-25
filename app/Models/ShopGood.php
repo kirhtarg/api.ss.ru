@@ -21,6 +21,12 @@ class ShopGood extends Model
         'slug',
         'sku',
         'description',
+        'formatted_description_html',
+        'description_format_hash',
+        'description_format_version',
+        'description_format_status',
+        'description_format_manual',
+        'description_formatted_at',
         'short_description',
         'price',
         'sale_price',
@@ -84,6 +90,9 @@ class ShopGood extends Model
         'is_sale' => 'boolean',
         'is_preorder' => 'boolean',
         'is_show' => 'boolean',
+        'description_format_version' => 'integer',
+        'description_format_manual' => 'boolean',
+        'description_formatted_at' => 'datetime',
         'sort_order' => 'integer',
     ];
 

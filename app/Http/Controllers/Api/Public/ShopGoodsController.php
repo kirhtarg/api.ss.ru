@@ -7,6 +7,7 @@ use App\Models\Setting;
 use App\Models\ShopCategory;
 use App\Models\ShopGood;
 use App\Models\ShopGoodVariation;
+use App\Services\ShopDescriptionFormatterService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -1849,6 +1850,10 @@ class ShopGoodsController extends Controller
                 }
             }
 
+            // Формируем и сохраняем отображаемую версию описания один раз.
+            // Исходное поле description при этом не изменяется.
+            app(ShopDescriptionFormatterService::class)->formatAndPersist($good);
+
             // Добавляем атрибуты к вариациям
             $goodData = $good->toArray();
             if (isset($goodData['variations'])) {
@@ -2028,6 +2033,9 @@ class ShopGoodsController extends Controller
             }
 
             // Добавляем поле is_favorite к товару и нормализуем свойства
+            // При первом обращении к карточке автоматически готовим кэшированное
+            // описание. Повторные открытия страницы используют сохранённый HTML.
+            app(ShopDescriptionFormatterService::class)->formatAndPersist($good);
             $goodData = $good->toArray();
             $goodData['is_favorite'] = $isFavorite;
             $goodData['slug_alias_redirect'] = $slugAliasRedirect;

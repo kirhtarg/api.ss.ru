@@ -2083,6 +2083,10 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('/stock-sources', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getStockSources']);
                 Route::get('/categories-stats', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getCategoriesStats']);
                 Route::get('/characteristics/list', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'getCharacteristicsList']);
+                Route::get('/description-dictionary', [\App\Http\Controllers\Admin\ShopDescriptionController::class, 'dictionary']);
+                Route::post('/description-dictionary', [\App\Http\Controllers\Admin\ShopDescriptionController::class, 'storeDictionary']);
+                Route::put('/description-dictionary/{dictionary}', [\App\Http\Controllers\Admin\ShopDescriptionController::class, 'updateDictionary']);
+                Route::delete('/description-dictionary/{dictionary}', [\App\Http\Controllers\Admin\ShopDescriptionController::class, 'destroyDictionary']);
                 Route::post('/categories', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createCategory']);
                 Route::post('/brands', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createBrand']);
                 Route::post('/labels', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'createLabel']);
@@ -2137,6 +2141,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 });
 
                 Route::get('/{id}/orders', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'orders']);
+                Route::get('/{id}/description-format', [\App\Http\Controllers\Admin\ShopDescriptionController::class, 'show']);
+                Route::post('/{id}/description-format/regenerate', [\App\Http\Controllers\Admin\ShopDescriptionController::class, 'regenerate']);
+                Route::put('/{id}/description-format', [\App\Http\Controllers\Admin\ShopDescriptionController::class, 'update']);
                 Route::get('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'show']);
                 Route::post('/', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'store']);
                 Route::put('/{id}', [\App\Http\Controllers\Admin\ShopGoodsController::class, 'update']);
