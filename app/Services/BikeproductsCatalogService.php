@@ -604,10 +604,9 @@ class BikeproductsCatalogService
     }
 
     /**
-     * Merges an SKU which exists as a standalone product of another supplier.
-     * A ShopGood SKU is globally unique, while supplier offers must remain
-     * independent. The existing product therefore becomes the first variation
-     * of the same card and the source row becomes the second one.
+     * Reassigns an SKU found under another supplier to the supplier of the
+     * current snapshot. Existing product/variation data is deliberately kept
+     * intact; the action must not create technical duplicate variations.
      *
      * @param array<int, int> $ids
      * @return array{affected: int, skipped: int, message: string, created: array<string, array<int, int>>, log: array<int, array<string, mixed>>, warnings: array<int, string>}
@@ -615,147 +614,106 @@ class BikeproductsCatalogService
     private function mergeOtherSupplierSkuItems(SupplierCatalogSnapshot $snapshot, array $ids): array
     {
         $items = $this->bindingParticipatingItems($snapshot->items()->whereIn('id', $ids)->get(), $snapshot->supplier_code);
-        $goodMappings = SupplierCatalogFieldMapping::query()
-            ->where('supplier_code', $snapshot->supplier_code)
-            ->where('scope', 'good')
-            ->where('is_check_enabled', true)
-            ->get();
-        $propertyMappings = SupplierCatalogFieldMapping::query()
-            ->where('supplier_code', $snapshot->supplier_code)
-            ->where('scope', 'product')
-            ->where('is_check_enabled', true)
-            ->whereNotNull('property_id')
-            ->with('property:id,property_type')
-            ->get();
         $supplierNames = $this->supplierNames($snapshot->supplier_code);
         $sourceSupplier = $supplierNames[0] ?? $snapshot->supplier_code;
-        $imageBaseUrl = $this->supplierImageBaseUrl($snapshot->supplier_code);
-        $imageSourceFields = $this->imageSourceFields($snapshot->supplier_code);
-        $contentAudit = $this->imageContentAuditStatus($snapshot);
-        $sourceAudits = $contentAudit['status'] === 'completed'
-            ? SupplierCatalogImageAudit::query()->where('snapshot_id', $snapshot->id)->get(['source_url_hash', 'status', 'content_hash', 'perceptual_hash', 'width', 'height', 'error_message'])->keyBy('source_url_hash')
-            : collect();
         $affected = 0;
         $skipped = 0;
-        $createdVariationIds = [];
-        $createdImageIds = [];
         $log = [];
 
         foreach ($items as $item) {
             $sourceSku = $this->sourceSkuForItem($item, $snapshot->supplier_code);
-            $name = $this->nullableString($this->mappedGoodAttributes($item, $goodMappings)['name'] ?? null)
-                ?? $this->nullableString($item->clean_name)
-                ?? $this->nullableString($item->name);
-            if ($sourceSku === '' || $name === null || ! $this->hasUsableSourceName($item, $snapshot->supplier_code)) {
+            if ($sourceSku === '') {
                 $skipped++;
-                $log[] = $this->catalogActionLogRow($item, 'skipped', 'missing_or_invalid_product_name');
+                $log[] = $this->catalogActionLogRow($item, 'skipped', 'missing_sku');
                 continue;
             }
 
-            $result = DB::transaction(function () use ($item, $sourceSku, $name, $supplierNames, $sourceSupplier, $snapshot, $goodMappings, $propertyMappings, $imageBaseUrl, $imageSourceFields, $contentAudit, $sourceAudits): ?array {
+            $result = DB::transaction(function () use ($sourceSku, $supplierNames, $sourceSupplier): ?array {
+                // An SKU can already belong to a variation (or to a card which
+                // has variations). It is still the same supplier offer for the
+                // purpose of this audit action: reassign the matched entity to
+                // the supplier of the imported snapshot instead of refusing the
+                // operation with `other_supplier_product_is_not_standalone`.
+                $matchedVariation = ShopGoodVariation::query()
+                    ->whereRaw('TRIM(`sku`) = ?', [trim($sourceSku)])
+                    ->with('good:id,name,slug,supplier')
+                    ->lockForUpdate()
+                    ->get()
+                    ->first(function (ShopGoodVariation $variation) use ($supplierNames): bool {
+                        $effectiveSupplier = trim((string) ($variation->supplier ?: $variation->good?->supplier));
+                        return $effectiveSupplier === '' || ! in_array($effectiveSupplier, $supplierNames, true);
+                    });
+                if ($matchedVariation) {
+                    $oldSupplier = $matchedVariation->supplier ?: $matchedVariation->good?->supplier;
+                    $matchedVariation->update(['supplier' => $sourceSupplier]);
+
+                    return [
+                        'reassigned' => true,
+                        'entity' => 'variation',
+                        'variation' => $matchedVariation->fresh('good:id,name,slug,supplier'),
+                        'oldSupplier' => $oldSupplier,
+                        'sourceSupplier' => $sourceSupplier,
+                    ];
+                }
+
                 $good = ShopGood::query()
                     ->whereRaw('TRIM(`sku`) = ?', [trim($sourceSku)])
-                    ->whereNotIn('supplier', $supplierNames)
                     ->lockForUpdate()
-                    ->first();
-                if (! $good || ShopGoodVariation::query()->where('good_id', $good->id)->lockForUpdate()->exists()) {
+                    ->get()
+                    ->first(function (ShopGood $candidate) use ($supplierNames): bool {
+                        $effectiveSupplier = trim((string) $candidate->supplier);
+                        return $effectiveSupplier === '' || ! in_array($effectiveSupplier, $supplierNames, true);
+                    });
+                if (! $good) {
                     return null;
                 }
 
+                // A direct product SKU is also reassigned in place. This keeps
+                // all existing variations, images and stock records intact.
+                // In particular, do not convert a standalone product into a
+                // technical two-variation card merely to merge suppliers.
                 $oldSupplier = $good->supplier;
-                $existingVariation = ShopGoodVariation::create([
-                    'good_id' => $good->id,
-                    'supplier' => $oldSupplier,
-                    'name' => $good->name,
-                    'sku' => $good->sku,
-                    'price' => $good->price,
-                    'sale_price' => $good->sale_price,
-                    'demping_price' => $good->demping_price,
-                    'avito_price' => $good->avito_price,
-                    'show_demping' => $good->show_demping,
-                    'stock_quantity' => $good->stock_quantity,
-                    'remote_stock_quantity' => $good->remote_stock_quantity,
-                    'fast_remote_stock_quantity' => $good->fast_remote_stock_quantity,
-                    'stock_source' => $good->stock_source,
-                    'last_stock_import_run_id' => $good->last_stock_import_run_id,
-                    'last_stock_import_at' => $good->last_stock_import_at,
-                    'weight' => $good->weight,
-                    'length' => $good->depth,
-                    'height' => $good->height,
-                    'width' => $good->width,
-                    'shipping_weight' => $good->shipping_weight,
-                    'shipping_length' => $good->shipping_length,
-                    'shipping_width' => $good->shipping_width,
-                    'shipping_height' => $good->shipping_height,
-                    'ships_separately' => $good->ships_separately,
-                    'is_active' => $good->is_active,
-                ]);
+                $good->update(['supplier' => $sourceSupplier]);
 
-                $this->moveGoodDataToVariation($good, $existingVariation);
-                $good->update([
-                    'sku' => null,
-                    'supplier' => null,
-                    'price' => 0,
-                    'sale_price' => null,
-                    'demping_price' => null,
-                    'avito_price' => null,
-                    'show_demping' => false,
-                    'stock_quantity' => 0,
-                    'remote_stock_quantity' => null,
-                    'fast_remote_stock_quantity' => null,
-                    'stock_source' => null,
-                    'last_stock_import_run_id' => null,
-                    'last_stock_import_at' => null,
-                ]);
+                return [
+                    'reassigned' => true,
+                    'entity' => 'good',
+                    'good' => $good->fresh(),
+                    'oldSupplier' => $oldSupplier,
+                    'sourceSupplier' => $sourceSupplier,
+                ];
 
-                $attributes = $this->mappedGoodAttributes($item, $goodMappings);
-                $sourceVariation = ShopGoodVariation::create([
-                    'good_id' => $good->id,
-                    'supplier' => $sourceSupplier,
-                    'name' => $name,
-                    'sku' => $sourceSku,
-                    'is_active' => false,
-                    ...collect($attributes)->only(['price', 'sale_price', 'demping_price', 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity'])->all(),
-                ]);
-                $axes = $this->creationAxesForItem($item, $snapshot->supplier_code);
-                $sourceVariation->attributeValues()->sync(collect($axes)->map(fn (array $axis) => ShopVariationAttributeValue::firstOrCreate([
-                    'attribute_id' => $axis['attribute_id'],
-                    'value' => $axis['value'],
-                ])->id)->all());
-                $this->syncMappedProperties($good, $item->raw_payload ?? [], $propertyMappings, true);
-                $imageResult = $this->attachSourceImages($good, $sourceVariation, $item, $imageBaseUrl, $imageSourceFields, $contentAudit, $sourceAudits);
-
-                return compact('good', 'existingVariation', 'sourceVariation', 'axes', 'imageResult', 'oldSupplier');
             });
 
             if ($result === null) {
                 $skipped++;
-                $log[] = $this->catalogActionLogRow($item, 'skipped', 'other_supplier_product_is_not_standalone', ['message' => 'Найдена не одиночная карточка другого поставщика; объединение требует ручной проверки.']);
+                $log[] = $this->catalogActionLogRow($item, 'skipped', 'other_supplier_product_not_found', ['message' => 'Карточка или вариация с таким SKU не найдена.']);
                 continue;
             }
 
-            $affected++;
-            $createdVariationIds[] = $result['existingVariation']->id;
-            $createdVariationIds[] = $result['sourceVariation']->id;
-            $createdImageIds = [...$createdImageIds, ...$result['imageResult']['created_image_ids']];
-            $log[] = $this->catalogActionLogRow($item, 'created', 'other_supplier_sku_merged_into_variations', [
-                'good_id' => $result['good']->id,
-                'existing_variation_id' => $result['existingVariation']->id,
-                'source_variation_id' => $result['sourceVariation']->id,
-                'existing_supplier' => $result['oldSupplier'],
-                'source_supplier' => $sourceSupplier,
-                'axes' => $result['axes'],
-                'images' => $result['imageResult'],
-            ]);
+            if (($result['reassigned'] ?? false) === true) {
+                $affected++;
+                $entity = $result['entity'] === 'variation' ? 'вариации' : 'товара';
+                $target = $result['entity'] === 'variation'
+                    ? ['variation_id' => $result['variation']->id, 'good_id' => $result['variation']->good_id]
+                    : ['good_id' => $result['good']->id];
+                $log[] = $this->catalogActionLogRow($item, 'updated', 'other_supplier_supplier_reassigned', [
+                    ...$target,
+                    'entity' => $entity,
+                    'existing_supplier' => $result['oldSupplier'] ?: null,
+                    'source_supplier' => $result['sourceSupplier'],
+                ]);
+                continue;
+            }
         }
 
         return [
             'affected' => $affected,
             'skipped' => $skipped,
-            'message' => 'Карточки другого поставщика объединены с вариациями из файла',
-            'created' => ['good_ids' => [], 'variation_ids' => array_values(array_unique($createdVariationIds)), 'image_ids' => array_values(array_unique($createdImageIds))],
+            'message' => 'Поставщик найденных товаров и вариаций переназначен по данным файла',
+            'created' => ['good_ids' => [], 'variation_ids' => [], 'image_ids' => []],
             'log' => $log,
-            'warnings' => $contentAudit['status'] === 'completed' ? [] : ['Изображения из файла не привязаны: сначала завершите аудит изображений.'],
+            'warnings' => [],
         ];
     }
 
@@ -2367,6 +2325,7 @@ class BikeproductsCatalogService
                 ]);
             }
             if ($status === 'source_sku_other_supplier') {
+                $otherSupplierLabel = $otherSupplier ? trim((string) $otherSupplier) : 'Без поставщика';
                 array_unshift($comparisons, [
                     'status' => $status,
                     'attribute' => 'Артикул',
@@ -2374,8 +2333,11 @@ class BikeproductsCatalogService
                     'database_values' => [trim(implode(' · ', array_filter([
                         $otherSupplierVariation ? 'Вариация #'.$otherSupplierVariation->id : null,
                         $otherSupplierGood ? 'Товар #'.$otherSupplierGood->id : null,
-                        $otherSupplier ? 'Поставщик: '.$otherSupplier : 'поставщик не указан',
+                        'Поставщик: '.$otherSupplierLabel,
                     ])))],
+                    'supplier' => $otherSupplierLabel,
+                    'good_id' => $otherSupplierVariation?->good_id ?? $otherSupplierGood?->id,
+                    'variation_id' => $otherSupplierVariation?->id,
                 ]);
             }
             if ($status === 'source_single_product_sku_mismatch') {
@@ -2403,6 +2365,16 @@ class BikeproductsCatalogService
                 'database_good_id' => $sameAxesVariation?->good_id ?? ($groupDatabaseGood ?? $databaseProduct)?->id,
                 'database_name' => $sameAxesVariation?->good?->name ?? ($groupDatabaseGood ?? $databaseProduct)?->name,
                 'database_slug' => $sameAxesVariation?->good?->slug ?? ($groupDatabaseGood ?? $databaseProduct)?->slug,
+                'other_supplier_good_id' => $status === 'source_sku_other_supplier'
+                    ? ($otherSupplierVariation?->good_id ?? $otherSupplierGood?->id)
+                    : null,
+                'other_supplier_variation_id' => $status === 'source_sku_other_supplier' ? $otherSupplierVariation?->id : null,
+                'other_supplier_name' => $status === 'source_sku_other_supplier'
+                    ? ($otherSupplier ? trim((string) $otherSupplier) : 'Без поставщика')
+                    : null,
+                'other_supplier_slug' => $status === 'source_sku_other_supplier'
+                    ? ($otherSupplierVariation?->good?->slug ?? $otherSupplierGood?->slug)
+                    : null,
                 'source_group_variation_count' => $sourceGroupVariationCount,
                 'database_good_variation_count' => $databaseGoodVariationCount,
                 'will_update_single_product' => $willUpdateSingleProduct,
@@ -5749,8 +5721,9 @@ class BikeproductsCatalogService
 
     private function variationAuditBaseCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        // v45: год снова является полноценной осью вариации Bikeproducts.
-        return 'supplier-catalog:variation-audit-base:v45:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot);
+        // v46 adds explicit links and supplier metadata for SKUs found under a
+        // different supplier.
+        return 'supplier-catalog:variation-audit-base:v46:'.$snapshot->id.':'.$this->snapshotAuditCacheVersion($snapshot);
     }
 
     /** @param array<int, string>|null $onlyTargets */
@@ -5771,7 +5744,7 @@ class BikeproductsCatalogService
 
     private function variationAuditStatsCacheKey(SupplierCatalogSnapshot $snapshot): string
     {
-        return 'supplier-catalog:variation-audit-stats:v6:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
+        return 'supplier-catalog:variation-audit-stats:v7:'.$snapshot->id.':'.($snapshot->updated_at?->format('Uu') ?? '0');
     }
 
     /** @return array<int, string> */

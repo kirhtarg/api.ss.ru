@@ -265,7 +265,7 @@ class ProcessExportJob implements ShouldQueue
         $filters = $this->normalizeExportFilterAliases($config['filters'] ?? []);
         $variationRelation = function ($variationQuery) use ($filters) {
             $variationQuery->select([
-                'id', 'good_id', 'name', 'sku', 'price', 'sale_price', 'demping_price', 'show_demping',
+                'id', 'good_id', 'name', 'sku', 'price', 'sale_price', 'demping_price', 'avito_price', 'show_demping',
                 'stock_quantity', 'remote_stock_quantity', 'fast_remote_stock_quantity', 'weight', 'length', 'width', 'height', 'is_active', 'supplier',
             ]);
 

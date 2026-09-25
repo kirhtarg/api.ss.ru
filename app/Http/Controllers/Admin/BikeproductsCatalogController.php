@@ -525,6 +525,23 @@ class BikeproductsCatalogController extends Controller
             'filters.*' => ['string', 'in:match,attention,attention_single_variation,delete_candidate_good,delete_candidate_variation,source_good_missing,source_variation_missing,source_single_product_update,source_single_product_sku_mismatch,source_variation_sku_mismatch,source_sku_other_supplier,source_price_excluded,source_name_missing,database_duplicate_sku'],
         ]);
 
+        // Never build the complete variation audit inside the web request. On
+        // a large supplier file this exceeds the reverse-proxy timeout and the
+        // resulting 504 response also loses CORS headers. The stats endpoint
+        // and the queue job use the same cache as the paginated audit below.
+        if ($this->catalog->cachedVariationAuditStats($snapshot) === null) {
+            $version = $snapshot->updated_at?->format('Uu') ?? '0';
+            $lockKey = 'supplier-catalog:variation-audit-warming:v5:'.$snapshot->id.':'.$version;
+            if (Cache::store('file')->add($lockKey, true, now()->addMinutes(30))) {
+                WarmSupplierCatalogVariationAuditJob::dispatch($snapshot->id, $version);
+            }
+
+            return response()->json([
+                'success' => true,
+                'data' => ['status' => 'processing'],
+            ], 202);
+        }
+
         return response()->json([
             'success' => true,
             'data' => $this->cachedAudit(
@@ -1080,7 +1097,7 @@ class BikeproductsCatalogController extends Controller
         );
         // Increment this version whenever audit semantics change. Otherwise a
         // deployed fix can keep returning a payload cached by the previous code.
-        $key = 'supplier-catalog:audit:v49:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
+        $key = 'supplier-catalog:audit:v50:'.$snapshot->id.':'.$version.':'.$section.':'.sha1(json_encode($parameters));
 
         // File cache deliberately avoids depending on Redis for heavyweight
         // audit payloads and keeps repeated navigation inexpensive.
