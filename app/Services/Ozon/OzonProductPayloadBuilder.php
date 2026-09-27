@@ -112,12 +112,16 @@ class OzonProductPayloadBuilder
         $sourceBase = max(0, (float) $item->price);
         $sourceSale = max(0, (float) $item->sale_price);
         $sourceDumping = max(0, (float) $item->demping_price);
+        $ozonOverride = max(0, (float) ($item->ozon_price ?? 0));
         $base = $this->adjustPrice($sourceBase, $mapping?->price_adjustment);
         $sale = $sourceSale > 0 ? $this->adjustPrice($sourceSale, $mapping?->price_adjustment) : 0;
         $dumping = $sourceDumping > 0 ? $this->adjustPrice($sourceDumping, $mapping?->price_adjustment) : 0;
         $dumpingActive = (bool) $item->show_demping && $dumping > 0;
 
-        if ($dumpingActive) {
+        if ($ozonOverride > 0) {
+            $final = $ozonOverride;
+            $source = 'ozon_override';
+        } elseif ($dumpingActive) {
             $final = $dumping;
             $source = 'dumping';
         } elseif ($sale > 0 && $sale < $base) {
@@ -139,6 +143,7 @@ class OzonProductPayloadBuilder
             'source_base' => $sourceBase,
             'source_sale' => $sourceSale > 0 ? $sourceSale : null,
             'source_dumping' => $sourceDumping > 0 ? $sourceDumping : null,
+            'ozon_override' => $ozonOverride > 0 ? $ozonOverride : null,
             'adjustment' => $this->normalizedPriceAdjustment($mapping?->price_adjustment),
         ];
     }

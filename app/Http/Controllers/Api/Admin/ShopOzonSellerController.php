@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\ProcessOzonSyncRunJob;
 use App\Models\ShopCategory;
 use App\Models\ShopGood;
+use App\Models\ShopGoodVariation;
 use App\Models\ShopOzonAccount;
 use App\Models\ShopOzonCategoryMapping;
 use App\Models\ShopOzonProductBinding;
@@ -621,6 +622,35 @@ class ShopOzonSellerController extends Controller
             'to' => $eligibleGoods ? min($page * $perPage, $eligibleGoods) : null,
             'selection_diagnostics' => $ids ? $this->previewSelectionDiagnostics($ids, $account, $mappings, $resolver) : [],
         ]]);
+    }
+
+    public function updateOzonPrices(Request $request)
+    {
+        $data = $request->validate([
+            'items' => ['required', 'array', 'min:1', 'max:5000'],
+            'items.*.good_id' => ['required', 'integer', 'exists:shop_goods,id'],
+            'items.*.variation_id' => ['nullable', 'integer', 'exists:shop_good_variations,id'],
+            'items.*.price' => ['nullable', 'numeric', 'min:0', 'max:100000000'],
+        ]);
+
+        $updated = 0;
+        $cleared = 0;
+        foreach ($data['items'] as $item) {
+            $goodId = (int) $item['good_id'];
+            $price = isset($item['price']) && (float) $item['price'] > 0 ? round((float) $item['price'], 2) : null;
+            if (! empty($item['variation_id'])) {
+                $variation = ShopGoodVariation::query()
+                    ->where('good_id', $goodId)
+                    ->findOrFail((int) $item['variation_id']);
+                $variation->forceFill(['ozon_price' => $price])->saveQuietly();
+            } else {
+                ShopGood::query()->whereKey($goodId)->update(['ozon_price' => $price]);
+            }
+            $updated++;
+            if ($price === null) $cleared++;
+        }
+
+        return response()->json(['success' => true, 'message' => "Обновлено цен Ozon: {$updated}. Обнулено: {$cleared}.", 'data' => compact('updated', 'cleared')]);
     }
 
     public function startSync(Request $request)

@@ -2648,6 +2648,7 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('/mappings', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'saveMapping']);
                 Route::delete('/mappings/{mapping}', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'deleteMapping']);
                 Route::post('/preview', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'preview']);
+                Route::put('/price-overrides', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'updateOzonPrices']);
                 Route::post('/sync', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'startSync']);
                 Route::get('/products', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'products']);
                 Route::post('/products/refresh', [\App\Http\Controllers\Api\Admin\ShopOzonSellerController::class, 'refreshProducts']);

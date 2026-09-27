@@ -32,6 +32,7 @@ class ShopGood extends Model
         'sale_price',
         'demping_price',
         'avito_price',
+        'ozon_price',
         'show_demping',
         'label_id',
         'supplier',
@@ -68,6 +69,7 @@ class ShopGood extends Model
         'sale_price' => 'decimal:2',
         'demping_price' => 'decimal:2',
         'avito_price' => 'decimal:2',
+        'ozon_price' => 'decimal:2',
         'show_demping' => 'boolean',
         'stock_quantity' => 'integer',
         'remote_stock_quantity' => 'string', // Может быть строкой типа ">10", поэтому не приводим к integer
